@@ -218,12 +218,14 @@ fn default_path() -> Option<PathBuf> {
 }
 
 /// Statement logging in debug builds: every SQL the engine executes for this document —
-/// migrations, autosave flushes, undo replays, live queries — prints to stderr as `[sql] …`
-/// through the engine's own trace (docs/persistence.md). On the web, file databases log from
-/// the day-sql worker to the browser console instead. Release builds trace nothing.
+/// migrations, autosave flushes, undo replays, live queries — through the engine's own trace
+/// (docs/persistence.md), at `trace!` because it is a per-statement firehose (docs/logging.md).
+/// `DAY_LOG=trace` shows it; anything less hides it, which is the point of a level. The
+/// `cfg!(debug_assertions)` guard stays: a release build should not pay to format SQL it will
+/// then discard.
 fn traced(driver: day::persistence::Sqlite) -> day::persistence::Sqlite {
     if cfg!(debug_assertions) {
-        driver.trace_sql(|sql| eprintln!("[sql] {sql}"))
+        driver.trace_sql(|sql| trace!("sql: {sql}"))
     } else {
         driver
     }

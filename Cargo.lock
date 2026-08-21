@@ -138,6 +138,7 @@ dependencies = [
  "day-spec",
  "day-uikit",
  "day-xaml",
+ "log",
 ]
 
 [[package]]
@@ -149,6 +150,7 @@ dependencies = [
  "day-spec",
  "jni",
  "linkme",
+ "log",
 ]
 
 [[package]]
@@ -162,6 +164,7 @@ dependencies = [
  "day-spec",
  "dispatch2",
  "linkme",
+ "log",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -213,6 +216,7 @@ dependencies = [
  "day-l10n",
  "day-reactive",
  "day-spec",
+ "log",
  "slotmap",
 ]
 
@@ -222,6 +226,7 @@ version = "0.2.6"
 dependencies = [
  "day-geometry",
  "day-spec",
+ "log",
 ]
 
 [[package]]
@@ -251,6 +256,7 @@ dependencies = [
  "gtk4",
  "libadwaita",
  "linkme",
+ "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -271,6 +277,7 @@ dependencies = [
  "icu_segmenter",
  "icu_time",
  "intl-memoizer",
+ "log",
  "unic-langid",
 ]
 
@@ -354,6 +361,7 @@ dependencies = [
  "day-reactive",
  "day-spec",
  "linkme",
+ "log",
 ]
 
 [[package]]
@@ -365,6 +373,7 @@ dependencies = [
  "day-qt-sys",
  "day-spec",
  "linkme",
+ "log",
 ]
 
 [[package]]
@@ -378,6 +387,7 @@ dependencies = [
 name = "day-reactive"
 version = "0.2.6"
 dependencies = [
+ "log",
  "slotmap",
 ]
 
@@ -389,6 +399,7 @@ dependencies = [
  "day-fluent",
  "day-reactive",
  "day-spec",
+ "log",
  "serde",
  "serde_json",
  "serde_norway",
@@ -409,6 +420,7 @@ version = "0.2.6"
 dependencies = [
  "day-fonts",
  "day-geometry",
+ "log",
  "memmap2",
 ]
 
@@ -417,6 +429,7 @@ name = "day-sqlite-worker"
 version = "0.2.6"
 dependencies = [
  "cc",
+ "log",
 ]
 
 [[package]]
@@ -433,6 +446,7 @@ dependencies = [
  "day-spec",
  "dispatch2",
  "linkme",
+ "log",
  "objc2",
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -450,6 +464,7 @@ dependencies = [
  "day-spec",
  "day-xaml-sys",
  "linkme",
+ "log",
 ]
 
 [[package]]
