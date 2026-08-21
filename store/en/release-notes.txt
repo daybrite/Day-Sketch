@@ -1,0 +1,1 @@
+First release: shapes, selection, drag and resize, grouping, layer ordering, unlimited undo, and per-document files.

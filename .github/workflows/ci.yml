@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 11 * * *" # daily (UTC)
+
+permissions:
+  contents: write # release-asset upload on tag builds
+  pages: write    # web-dom → GitHub Pages (deploy-web)
+  id-token: write # deploy-pages OIDC token (deploy-web)
+
+jobs:
+  app:
+    uses: daybrite/actions/.github/workflows/build-day-app.yml@main
+    secrets: inherit
+    with:
+      targets: windows-xaml, macos-appkit, linux-gtk, linux-qt, ios-uikit, android-mdc, harmony-arkui, web-dom
+      day-version: main
+      scripts: dayscript/demo.yaml
+      #launch-env: WEATHER_MOCK=1
+      locales: en
+      deploy-web: true
+      daysite-version: main
+

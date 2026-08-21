@@ -1,0 +1,1 @@
+Day Sketch is a vector drawing editor: place rectangles and ovals, drag and resize them with handles, group and arrange layers, and undo anything — every drawing is a plain SQLite file you can copy, share, and inspect.

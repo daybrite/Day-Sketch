@@ -1,0 +1,44 @@
+[package]
+name = "day-sketch"
+version = "0.1.0"
+edition = "2024"
+# Generates typed resource constants (`res::images::…`, `res::assets::…`, `res::fonts::…`) from the
+# files under `resource/` on every build — see build.rs and src/lib.rs (§18.5).
+build = "build.rs"
+
+[features]
+# The default `mock` backend lets bare `cargo build` / rust-analyzer compile out of the box;
+# `day build` always passes `--no-default-features --features <backend>`, stripping it. Without a
+# default no backend is selected at all, and `day::launch` — gated behind every backend feature —
+# is configured out, so `cargo clippy --all-targets` cannot compile the bin.
+default = ["mock"]
+appkit = ["day/appkit"]
+gtk = ["day/gtk"]
+qt = ["day/qt"]
+uikit = ["day/uikit"]
+mdc = ["day/mdc"]
+xaml = ["day/xaml"]
+arkui = ["day/arkui"]
+dom = ["day/dom"]
+mock = ["day/mock"]
+
+# rlib for the desktop bin; the mobile pipeline requests the iOS staticlib / Android cdylib
+# explicitly via `cargo rustc --crate-type` (a desktop cdylib blows past the windows-gnu PE
+# export cap).
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# The drawing is a SQLite file per document on every target — the web build opens the same
+# container over the OPFS-mirrored wasm driver (docs/persistence.md).
+day = { git = "https://github.com/daybrite/day.git", features = ["model", "persistence"] }
+day-piece-settings = { git = "https://github.com/daybrite/day.git" }
+
+[build-dependencies]
+day-build = { git = "https://github.com/daybrite/day.git" }
+
+[[bin]]
+name = "day-sketch"
+path = "src/main.rs"
+
+[workspace]

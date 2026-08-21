@@ -1,0 +1,312 @@
+//! Day Sketch — a vector drawing editor built on [Day](https://daybrite.dev), and the stress
+//! test the day-model/day-persistence design was drafted against: a drawing is a SQLite file,
+//! the scene is one observable table, drags edit it live through preview sessions, and every
+//! operation — placement, move, resize, group, arrange — is one undoable turn, fronted by the
+//! platform's own undo system where it has one.
+
+use day::prelude::*;
+
+mod canvas;
+mod model;
+
+/// Typed constants for the files under `resource/`, generated at build time by `day-build`.
+pub mod res {
+    include!(concat!(env!("OUT_DIR"), "/day_resources.rs"));
+}
+
+const THEME_KEY: &str = "app.theme";
+const LOCALE_KEY: &str = "app.locale";
+
+fn settings_body() -> AnyPiece {
+    form((day_piece_settings::settings_sections(
+        THEME_KEY,
+        LOCALE_KEY,
+        res::locales::ALL,
+    ),))
+}
+
+/// ⌘/Ctrl + the LOCALIZED key: the letter comes from the command's `.key` attribute in the
+/// catalog (docs/localization.md), so a locale may override it while every other locale
+/// inherits the default's — the modifier scheme stays semantic, here in code.
+fn cmd(key: day::LocalizedText) -> Shortcut {
+    Shortcut {
+        key: key.format(),
+        primary: true,
+        ..Default::default()
+    }
+}
+
+fn cmd_shift(key: day::LocalizedText) -> Shortcut {
+    Shortcut {
+        key: key.format(),
+        primary: true,
+        shift: true,
+        ..Default::default()
+    }
+}
+
+/// The arrange commands — one list, served three ways: the Arrange menu, the canvas context
+/// menu, and (with icons) the window toolbar.
+pub(crate) fn arrange_menu_entries() -> Vec<MenuEntry> {
+    arrange_entries(true)
+}
+
+/// `track` = read the selection reactively (the menu-bar builder re-runs on change). The
+/// canvas context menu is lowered ONCE at build, so it keeps every item enabled and lets the
+/// actions no-op on an empty selection instead of freezing the launch-time state.
+fn arrange_entries(track: bool) -> Vec<MenuEntry> {
+    let sel = if track {
+        model::selection().get()
+    } else {
+        model::selection().get_untracked()
+    };
+    let some = !track || !sel.is_empty();
+    let two = !track || sel.len() >= 2;
+    vec![
+        menu_item(res::str::menu_group().format())
+            .action(model::group_selection)
+            .shortcut(cmd(res::str::menu_group_key()))
+            .enabled(two),
+        menu_item(res::str::menu_ungroup().format())
+            .action(model::ungroup_selection)
+            .shortcut(cmd_shift(res::str::menu_ungroup_key()))
+            .enabled(some),
+        menu_separator(),
+        menu_item(res::str::menu_forward().format())
+            .action(|| model::arrange_named(model::Arrange::Up))
+            .shortcut(cmd(res::str::menu_forward_key()))
+            .enabled(some),
+        menu_item(res::str::menu_backward().format())
+            .action(|| model::arrange_named(model::Arrange::Down))
+            .shortcut(cmd(res::str::menu_backward_key()))
+            .enabled(some),
+        menu_item(res::str::menu_front().format())
+            .action(|| model::arrange_named(model::Arrange::Top))
+            .shortcut(cmd_shift(res::str::menu_front_key()))
+            .enabled(some),
+        menu_item(res::str::menu_back().format())
+            .action(|| model::arrange_named(model::Arrange::Bottom))
+            .shortcut(cmd_shift(res::str::menu_back_key()))
+            .enabled(some),
+        menu_separator(),
+        menu_item(res::str::menu_delete().format())
+            .action(model::delete_selection)
+            .enabled(some),
+    ]
+}
+
+/// The canvas right-click/long-press menu: the standard clipboard trio (role items — the
+/// platform's own commands), then the arrange set. The Arrange BAR menu deliberately carries
+/// only the arrange set; Cut/Copy/Paste live in the standard Edit menu.
+pub(crate) fn context_menu_entries() -> Vec<MenuEntry> {
+    let mut items = vec![
+        menu_role(MenuRole::Cut),
+        menu_role(MenuRole::Copy),
+        menu_role(MenuRole::Paste),
+        menu_separator(),
+    ];
+    items.extend(arrange_entries(false));
+    items
+}
+
+fn menus() -> Vec<MenuEntry> {
+    let file = vec![
+        menu_item(res::str::menu_new().format())
+            .action(model::new_doc)
+            .shortcut(cmd(res::str::menu_new_key())),
+        menu_item(res::str::menu_open().format())
+            .action(model::open_doc_dialog)
+            .shortcut(cmd(res::str::menu_open_key())),
+        menu_separator(),
+        menu_item(res::str::menu_export().format())
+            .action(model::export_copy_dialog)
+            .shortcut(cmd_shift(res::str::menu_export_key())),
+    ];
+    vec![
+        sub_menu(res::str::menu_file().format(), file).bar_role(MenuBarRole::File),
+        // Role-only Undo/Redo: the native standard commands, which on macOS/iOS resolve
+        // through the responder chain to Day's NSUndoManager front — a focused text field
+        // keeps its own typing undo, everything else reaches the document stack.
+        sub_menu(
+            res::str::menu_edit().format(),
+            vec![
+                menu_role(MenuRole::Undo),
+                menu_role(MenuRole::Redo),
+                menu_separator(),
+                // Role items: the platform's own Cut/Copy/Paste — the same menu items,
+                // shortcuts, and responder precedence its text editing uses; shapes travel
+                // as SVG through the edit bridge (docs/menus.md).
+                menu_role(MenuRole::Cut),
+                menu_role(MenuRole::Copy),
+                menu_role(MenuRole::Paste),
+                menu_role(MenuRole::SelectAll),
+                menu_separator(),
+                menu_item(res::str::menu_delete().format()).action(model::delete_selection),
+            ],
+        )
+        .bar_role(MenuBarRole::Edit),
+        sub_menu(res::str::menu_arrange().format(), arrange_menu_entries()),
+    ]
+}
+
+fn toolbar() -> Vec<ToolbarEntry> {
+    vec![
+        toolbar_button("tb-group", res::str::menu_group())
+            .icon(Symbol::Add)
+            .tooltip(res::str::menu_group())
+            .action(model::group_selection),
+        toolbar_button("tb-ungroup", res::str::menu_ungroup())
+            .icon(Symbol::Remove)
+            .tooltip(res::str::menu_ungroup())
+            .action(model::ungroup_selection),
+        toolbar_flexible_space(),
+        toolbar_button("tb-forward", res::str::menu_forward())
+            .icon(Symbol::Up)
+            .tooltip(res::str::menu_forward())
+            .action(|| model::arrange_named(model::Arrange::Up)),
+        toolbar_button("tb-backward", res::str::menu_backward())
+            .icon(Symbol::Down)
+            .tooltip(res::str::menu_backward())
+            .action(|| model::arrange_named(model::Arrange::Down)),
+    ]
+}
+
+fn tool_button(id: &'static str, text: LocalizedText, this: model::Tool) -> AnyPiece {
+    button(text)
+        .bordered()
+        .action(move || model::tool().set(this))
+        .enabled(move || model::tool().get() != this)
+        .id(id)
+        .any()
+}
+
+fn tool_row() -> AnyPiece {
+    let stack = model::undo_stack();
+    let (u1, u2, r1, r2) = (stack.clone(), stack.clone(), stack.clone(), stack);
+    row((
+        tool_button("tool-select", res::str::tool_select(), model::Tool::Select),
+        tool_button("tool-rect", res::str::tool_rect(), model::Tool::Rect),
+        tool_button("tool-oval", res::str::tool_oval(), model::Tool::Oval),
+        spacer(),
+        button(res::str::menu_undo())
+            .bordered()
+            .action(move || {
+                u1.undo();
+            })
+            .enabled(move || u2.can_undo().get())
+            .id("sk-undo"),
+        button(res::str::menu_redo())
+            .bordered()
+            .action(move || {
+                r1.redo();
+            })
+            .enabled(move || r2.can_redo().get())
+            .id("sk-redo"),
+    ))
+    .spacing(8.0)
+    // Phone widths cannot hold the whole strip on one line; wrap instead of clipping.
+    .fit(RowFit::Wrap { run_spacing: 6.0 })
+    .padding(Insets::symmetric(12.0, 8.0))
+    .any()
+}
+
+fn status_row() -> AnyPiece {
+    row((
+        label(move || {
+            let store = model::nodes();
+            store.with(|_| {});
+            let n = store.with_untracked(|k| k.items().len());
+            res::str::status_count(n as i64).format()
+        })
+        .tabular()
+        .id("sk-count"),
+        label(move || {
+            let sel = model::selection().get();
+            if sel.is_empty() {
+                res::str::status_none().format()
+            } else {
+                let ids: Vec<String> = sel.iter().map(u64::to_string).collect();
+                res::str::status_selected(ids.join(",")).format()
+            }
+        })
+        .tabular()
+        .id("sk-sel"),
+        // The single selection's frame, integer-rounded — what walkthrough drags assert on.
+        label(move || {
+            let sel = model::selection().get();
+            model::nodes().with(|_| {});
+            match sel.as_slice() {
+                [only] => match model::node_bounds(*only) {
+                    Some((x, y, w, h)) => format!(
+                        "{},{} {}x{}",
+                        x.round() as i64,
+                        y.round() as i64,
+                        w.round() as i64,
+                        h.round() as i64
+                    ),
+                    None => String::new(),
+                },
+                _ => String::new(),
+            }
+        })
+        .tabular()
+        .id("sk-frame"),
+        spacer(),
+        label(move || {
+            model::doc_rev().track();
+            model::doc_name()
+        })
+        .font(Font::Footnote)
+        .id("sk-doc"),
+    ))
+    .spacing(16.0)
+    .padding(Insets::symmetric(12.0, 6.0))
+    .any()
+}
+
+fn editor() -> AnyPiece {
+    column((tool_row(), canvas::editor_canvas(), status_row())).any()
+}
+
+pub fn root() -> AnyPiece {
+    res::locales::install();
+    day_piece_settings::apply_startup(THEME_KEY, LOCALE_KEY);
+    day::prefs::install_nav_store();
+    day::register_preferences(settings_body);
+    app_menu_reactive(menus);
+    toolbar_reactive(toolbar);
+    // Opening the (or a) document wires its undo stack to the platform — synchronously on
+    // every target; the web's day-sql worker is up before app code runs.
+    let _ = model::doc();
+    // The platform's Cut/Copy/Paste reach the shape editor as SVG (docs/menus.md); a focused
+    // text field keeps its own clipboard behavior ahead of these.
+    day::install_edit_commands(
+        || !model::selection().get().is_empty(),
+        model::copy_selection_svg,
+        model::cut_selection_svg,
+        model::paste_clipboard,
+        model::select_all,
+    );
+    // Arrow keys nudge the selection: 1px, or 10 with shift (docs/menus.md).
+    day::on_key(|ev| {
+        let (dx, dy) = match ev.key.as_str() {
+            "ArrowLeft" => (-1.0, 0.0),
+            "ArrowRight" => (1.0, 0.0),
+            "ArrowUp" => (0.0, -1.0),
+            "ArrowDown" => (0.0, 1.0),
+            _ => return,
+        };
+        let step = if ev.shift() { 10.0 } else { 1.0 };
+        model::nudge_selection(dx * step, dy * step);
+    });
+
+    // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
+    // the arms, and each arm builds fresh in its own scope.
+    when(move || model::doc_rev().get().is_multiple_of(2), editor)
+        .otherwise(editor)
+        .any()
+}
+
+// The mobile / embedded entry point. Expands to the export each platform's shell binds against —
+// and to nothing at all on a plain cargo desktop build, where src/main.rs is the entry instead.
+day::day_main!("Day Sketch", root);

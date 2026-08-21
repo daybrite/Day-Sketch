@@ -1,0 +1,34 @@
+/target
+/build
+
+# NOT Cargo.lock. This is an application, and Cargo's guidance for an end product is to commit
+# the lock: it is what makes a build reproducible for everyone who checks the repo out, and what
+# lets CI pass `--locked` (the shared `build-day-app` workflow's clippy/check/test legs do, and
+# `--locked` REFUSES to create a missing lock rather than resolving fresh). Run a build once and
+# commit the file it writes.
+
+# Machine-local: `day patch --local <day-checkout>` writes this to build against a checkout
+# instead of the git dependency. CI has no such file and resolves git.
+/.cargo/config.toml
+
+# Xcode local state. The .xcodeproj itself is source; what Xcode writes inside it is not —
+# project.xcworkspace holds the SwiftPM resolution for the pieces package day generates under
+# build/, and cannot be relocated out of the project.
+xcuserdata/
+DerivedData/
+**/*.xcodeproj/project.xcworkspace/
+
+# Gradle local state, the android counterpart of the above: platform/android/ is source, but
+# what Gradle generates inside it is not. Gradle writes its caches and per-module build/ trees
+# into the project it builds, so they cannot move under build/ with the rest of day's outputs;
+# `/build` at the top of this file is anchored to the repo root and never matches them. Left
+# untracked they fail the pristine check CI runs before packing an artifact.
+platform/android/.gradle/
+platform/android/**/build/
+platform/android/local.properties
+
+# The website is generated from repo data: the daysite template clone (local preview) and the
+# synthesized data files. Only website/site.toml and website/theme.css are source.
+website/.daysite/
+website/appindex.json
+website/gallery-manifest.json

@@ -1,0 +1,44 @@
+menu_file = File
+menu_new = New Drawing
+    .key = n
+menu_open = Open…
+    .key = o
+menu_export = Export a Copy…
+    .key = s
+menu_edit = Edit
+menu_undo = Undo
+menu_redo = Redo
+menu_arrange = Arrange
+menu_group = Group
+    .key = g
+menu_ungroup = Ungroup
+    .key = g
+menu_forward = Bring Forward
+    .key = ]
+menu_backward = Send Backward
+    .key = [
+menu_front = Bring to Front
+    .key = ]
+menu_back = Send to Back
+    .key = [
+menu_delete = Delete
+
+tool_select = Select
+tool_rect = Rectangle
+tool_oval = Oval
+
+status_count = { $n } nodes
+status_none = Nothing selected
+status_selected = Selected: { $ids }
+doc_untitled = Untitled
+
+undo_add_rect = Add Rectangle
+undo_add_oval = Add Oval
+undo_move = Move
+undo_resize = Resize
+undo_group = Group
+undo_ungroup = Ungroup
+undo_arrange = Arrange
+undo_delete = Delete
+undo_cut = Cut
+undo_paste = Paste
