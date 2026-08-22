@@ -1,8 +1,9 @@
 name: sketch-walkthrough
-description: Place, select, drag, resize, group, arrange, undo, and the inspector's live
-  geometry fields — the whole editor through the synthetic rail, with model-state asserts
-  after every gesture. Deterministic because the run starts on a fresh document (File ▸ New
-  Drawing).
+description: Place, select, drag, resize, group, arrange, and undo — with the selection
+  riding the history, so every undo/redo lands with the selection its unit sealed with — plus
+  multi-select handles and the inspector's live geometry fields. The whole editor through the
+  synthetic rail, with model-state asserts after every gesture; deterministic because the run
+  starts on a fresh document (File ▸ New Drawing).
 flow:
   - wait_for: { id: canvas }
   # A fresh numbered document every run — the walkthrough never inherits the last run's scene.
@@ -41,13 +42,20 @@ flow:
   - assert_text: { id: sk-sel, key: status_selected, args: { ids: "2" } }
   - drag: { id: canvas, from: [248, 192], to: [298, 242] }
   - assert_text: { id: sk-frame, text: "250,210 96x64" }
+  # Undo lands on shape 3's placement — the selection THAT unit sealed with; the transient
+  # switch to shape 2 is not history (docs/model.md "Transient UI state"). Re-select 2 to
+  # check its restored frame.
   - tap: { id: sk-undo }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "3" } }
+  - tap: { id: canvas, at: [248, 192] }
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
 
   # ---- Resize by the bottom-right handle: four fields, one undo step ----
   - drag: { id: canvas, from: [296, 224], to: [346, 274] }
   - assert_text: { id: sk-frame, text: "200,160 146x114" }
   - tap: { id: sk-undo }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "3" } }
+  - tap: { id: canvas, at: [248, 192] }
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
 
   # ---- Group: multi-select via the toggle, then one unit each way ----
@@ -68,14 +76,16 @@ flow:
   - tap: { id: sk-undo }
   - assert_text: { id: sk-frame, text: "40,40 136x84" }
 
-  # Ungroup, undo it, redo it.
+  # Ungroup, undo it, redo it — each landing point brings its own selection back.
   - menu: { key: menu_ungroup }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
   - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1,3" } }
   - tap: { id: sk-undo }
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "4" } }
   - tap: { id: sk-redo }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1,3" } }
 
   # ---- Delete, and back ----
   - tap: { id: canvas, at: [248, 192] }
@@ -84,6 +94,8 @@ flow:
   - assert_text: { id: sk-count, key: status_count, args: { n: 2 } }
   - tap: { id: sk-undo }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  # …landing on the ungroup's point, whose selection was the two ungrouped shapes.
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1,3" } }
 
   # ---- Edit ▸ Undo/Redo: the ROLE items drive the same document stack ----
   # (`day-undo`/`day-redo` are the core catalog keys role items are labeled by.)
@@ -92,8 +104,13 @@ flow:
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
   - menu: { key: day-undo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  # The undone delete left the timeline when the placement forked history, so this landing
+  # point is the ungroup's — which brings the two ungrouped shapes' selection with it. The
+  # redo then restores the placement's own selection, the new shape.
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1,3" } }
   - menu: { key: day-redo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "4" } }
   - menu: { key: day-undo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
 
@@ -111,6 +128,7 @@ flow:
   - assert_text: { id: sk-frame, text: "72,72 96x64" }
   - menu: { key: day-undo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk-sel, key: status_none }
 
   # ---- Select All (the platform's own Edit item) + arrow-key nudging ----
   - menu: { key: day-select-all, path: [menu_edit] }
@@ -124,6 +142,17 @@ flow:
   - key: { key: ArrowLeft }
   - key: { key: ArrowUp, modifiers: [shift] }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
+
+  # ---- Multi-select handles: every selected shape carries its own corners ----
+  - tap: { id: canvas, at: [90, 70], modifiers: [shift] }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1,3" } }
+  # Shape 3's bottom-right handle, dragged with BOTH selected: only shape 3 resizes.
+  - drag: { id: canvas, from: [176, 124], to: [196, 144] }
+  - tap: { id: canvas, at: [45, 45] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - tap: { id: canvas, at: [90, 70] }
+  - assert_text: { id: sk-frame, text: "80,60 116x84" }
+  - tap: { id: sk-undo }
 
   # ---- Inspector: live geometry fields, multi-select editing (docs/inspector.md) ----
   - tap: { id: tool-inspector }
@@ -156,8 +185,11 @@ flow:
   - input: { id: insp-x, text: "40" }
   - submit: { id: insp-x }
   - assert_text: { id: insp-x, text: "40" }
+  # Undo lands on the last nudge — shape 1 alone — so the field shows its value, not "multi":
+  # the shift-tap that widened the selection was transient, and is not history.
   - tap: { id: sk-undo }
-  - assert_text: { id: insp-x, text: "" }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1" } }
+  - assert_text: { id: insp-x, text: "40" }
   # Close the panel so the parting shot is the same canvas on every target.
   - tap: { id: tool-inspector }
 

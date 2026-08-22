@@ -13,8 +13,15 @@ use day::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Hit tolerance around a corner handle — deliberately larger than the DRAWN handle, so the
+/// grab target stays comfortable while the visuals stay small.
 const HANDLE: f64 = 12.0;
+/// The drawn handle's edge length: small and slightly translucent, so handles read as
+/// affordances over the artwork rather than as artwork.
+const HANDLE_DRAW: f64 = 8.0;
 const SELECTION: Color = Color::hex(0x2563EB);
+const HANDLE_FILL: Color = Color::rgba(1.0, 1.0, 1.0, 0.85);
+const HANDLE_STROKE: Color = Color::rgba(0.145, 0.388, 0.922, 0.9);
 
 // ---------------------------------------------------------------------------
 // Drag machine
@@ -145,20 +152,24 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
     ]
 }
 
-/// A handle of the SINGLE selected shape under the point, if any.
+/// A corner handle of ANY selected shape under the point: every selected shape carries its
+/// own handles, and dragging one resizes THAT shape alone (a multi-select drag anywhere else
+/// moves the whole selection). Groups have no handles — groups move; only shapes resize.
+/// Later selections are checked first, matching the draw order (last drawn sits on top).
 fn hit_handle(px: f64, py: f64) -> Option<(u64, Corner)> {
     let sel = model::selection().get_untracked();
-    let [only] = sel.as_slice() else {
-        return None;
-    };
     let store = model::nodes();
-    if store.elem(*only).kind().peek() == NodeKind::Group {
-        return None; // MVP: groups move; only shapes resize
-    }
-    let b = model::node_bounds(*only)?;
-    for (corner, cx, cy) in corner_points(b) {
-        if (px - cx).abs() <= HANDLE && (py - cy).abs() <= HANDLE {
-            return Some((*only, corner));
+    for id in sel.iter().rev() {
+        if store.elem(*id).kind().peek() == NodeKind::Group {
+            continue;
+        }
+        let Some(b) = model::node_bounds(*id) else {
+            continue;
+        };
+        for (corner, cx, cy) in corner_points(b) {
+            if (px - cx).abs() <= HANDLE && (py - cy).abs() <= HANDLE {
+                return Some((*id, corner));
+            }
         }
     }
     None
@@ -253,9 +264,9 @@ fn draw_scene(d: &mut Draw) {
     }
     draw_children(d, store, None);
 
-    // Selection outlines + handles, above everything.
+    // Selection outlines + handles, above everything. Every selected SHAPE carries its own
+    // handles — multi-selections included; a group shows only its union outline.
     let sel = model::selection().get();
-    let single = sel.len() == 1;
     for id in &sel {
         let Some(b) = model::node_bounds(*id) else {
             continue;
@@ -269,9 +280,9 @@ fn draw_scene(d: &mut Draw) {
             .build();
         d.stroke(outline, SELECTION, 1.5);
         let is_shape = store.elem(*id).kind().with(|k| k.copied()) != Some(NodeKind::Group);
-        if single && is_shape {
+        if is_shape {
             for (_, cx, cy) in corner_points(b) {
-                let half = HANDLE / 2.0;
+                let half = HANDLE_DRAW / 2.0;
                 let handle = PathBuilder::new()
                     .move_to(Point::new(cx - half, cy - half))
                     .line_to(Point::new(cx + half, cy - half))
@@ -279,8 +290,8 @@ fn draw_scene(d: &mut Draw) {
                     .line_to(Point::new(cx - half, cy + half))
                     .close()
                     .build();
-                d.fill(handle.clone(), Color::hex(0xFFFFFF));
-                d.stroke(handle, SELECTION, 1.5);
+                d.fill(handle.clone(), HANDLE_FILL);
+                d.stroke(handle, HANDLE_STROKE, 1.0);
             }
         }
     }

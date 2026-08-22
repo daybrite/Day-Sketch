@@ -128,11 +128,28 @@ pub(crate) fn doc() -> Rc<Doc> {
     doc
 }
 
+/// Selection rides the history transiently (docs/model.md "Transient UI state"): every
+/// undo/redo lands on the selection as it stood when that unit SEALED — so "select A, move
+/// it, select B, move it, undo" lands on A, and the switch to B (a between-units change) is
+/// nowhere. In-memory only; the base snapshot, restored when the whole history unwinds, is
+/// taken here — callers wire a document whose selection is already the fresh one.
+fn wire_selection_context(stack: &UndoStack) {
+    stack.set_transient_context(
+        || Rc::new(selection().get_untracked()),
+        |ctx| {
+            if let Some(sel) = ctx.downcast_ref::<Vec<u64>>() {
+                selection().set(sel.clone());
+            }
+        },
+    );
+}
+
 /// Wire a document's undo stack to the platform: the bridge (stock menu items, ⌘Z, shake)
 /// plus the app's undo-unit labels. Every path a document becomes CURRENT through runs this —
 /// the boot default above, and [`install_doc`] for New/Open.
 fn wire_undo(doc: &Doc) {
     day::install_undo(&doc.stack);
+    wire_selection_context(&doc.stack);
     doc.stack
         .set_label_resolver(|label: &'static str| -> String {
             match label {
@@ -171,9 +188,11 @@ pub(crate) fn doc_name() -> String {
 
 fn install_doc(doc: Doc) {
     let doc = Rc::new(doc);
+    // Clear the selection BEFORE wiring: the context hook's base snapshot must be the fresh
+    // document's empty selection, not whatever the outgoing document had selected.
+    selection().set(Vec::new());
     wire_undo(&doc);
     DOC.with(|d| *d.borrow_mut() = Some(doc));
-    selection().set(Vec::new());
     doc_rev().update(|r| *r += 1);
 }
 
@@ -1052,8 +1071,10 @@ pub(crate) fn paste_clipboard(text: &str) {
                 &mut fallback,
             ));
         }
+        // INSIDE the group: the unit's transient-selection snapshot is taken as the group
+        // seals, and it must already say "the pasted nodes" (docs/model.md).
+        selection().set(std::mem::take(&mut pasted));
     });
-    selection().set(pasted);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1121,6 +1142,9 @@ pub(crate) fn install_test_doc() -> Rc<Doc> {
     });
     DOC.with(|d| *d.borrow_mut() = Some(doc.clone()));
     selection().set(Vec::new());
+    // The selection context, but not the platform bridge — tests exercise the transient
+    // restoration exactly as the app wires it.
+    wire_selection_context(&doc.stack);
     doc
 }
 
@@ -1230,6 +1254,44 @@ mod tests {
             Some(&vec![b, a]),
             "a plain z write repaints the order at once"
         );
+    }
+
+    #[test]
+    fn undo_restores_the_selection_each_unit_sealed_with() {
+        let doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let b = place_shape(NodeKind::Rect, 100.0, 0.0);
+        day::reactive::flush_sync();
+
+        // Select A, move it; select B, move it — the selects themselves are no units.
+        selection().set(vec![a]);
+        nudge_selection(10.0, 0.0);
+        day::reactive::flush_sync();
+        selection().set(vec![b]);
+        nudge_selection(10.0, 0.0);
+        day::reactive::flush_sync();
+
+        // Undo B's move: history lands on A's move — A selected again, B back in place.
+        assert!(doc.stack.undo());
+        assert_eq!(selection().get_untracked(), vec![a]);
+        assert_eq!(nodes().elem(b).x().peek(), 100.0);
+
+        // Redo lands back on B's move, with B selected.
+        assert!(doc.stack.redo());
+        assert_eq!(selection().get_untracked(), vec![b]);
+        assert_eq!(nodes().elem(b).x().peek(), 110.0);
+
+        // A selection made BETWEEN undos is transient: the next undo restores the sealed
+        // snapshot over it.
+        selection().set(vec![a, b]);
+        assert!(doc.stack.undo());
+        assert_eq!(selection().get_untracked(), vec![a]);
+
+        // Unwinding the whole history lands on the fresh document: nothing selected.
+        while doc.stack.undo() {}
+        day::reactive::flush_sync();
+        assert!(selection().get_untracked().is_empty());
     }
 
     #[test]
