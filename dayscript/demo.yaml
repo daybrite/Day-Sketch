@@ -190,6 +190,23 @@ flow:
   - tap: { id: sk-undo }
   - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1" } }
   - assert_text: { id: insp-x, text: "40" }
+
+  # ---- Style: opacity as a slider + localized percent field, width as a stepper field ----
+  # (Color wells are exercised by unit tests and the screenshots — a native chooser has no
+  # headless rail to drive.)
+  - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 100 } }
+  - input: { id: insp-fill-op, text: "40%" }
+  - submit: { id: insp-fill-op }
+  - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 40 } }
+  - input: { id: insp-stroke-w, text: "6" }
+  - submit: { id: insp-stroke-w }
+  - assert_text: { id: insp-stroke-w, text: "6" }
+  # Each style commit is one undo unit, selection riding along as ever.
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-stroke-w, text: "1" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 100 } }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1" } }
   # Close the panel so the parting shot is the same canvas on every target.
   - tap: { id: tool-inspector }
 

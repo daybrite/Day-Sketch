@@ -255,9 +255,22 @@ fn draw_scene(d: &mut Draw) {
                         w: e.w().read(),
                         h: e.h().read(),
                         fill: e.fill().read(),
+                        fill_opacity: e.fill_opacity().read(),
+                        stroke: e.stroke().read(),
+                        stroke_width: e.stroke_width().read(),
+                        stroke_opacity: e.stroke_opacity().read(),
                     };
-                    d.fill(shape_of(&node), fill_color(&node.fill));
-                    d.stroke(shape_of(&node), Color::rgba(0.0, 0.0, 0.0, 0.35), 1.0);
+                    d.fill(
+                        shape_of(&node),
+                        fill_color(&node.fill).with_alpha(node.fill_opacity),
+                    );
+                    if node.stroke_width > 0.0 && node.stroke_opacity > 0.0 {
+                        d.stroke(
+                            shape_of(&node),
+                            fill_color(&node.stroke).with_alpha(node.stroke_opacity),
+                            node.stroke_width,
+                        );
+                    }
                 }
             }
         }

@@ -65,7 +65,7 @@ impl day::persistence::ColumnValue for NodeKind {
     }
 }
 
-#[derive(Clone, Default, PartialEq, Model)]
+#[derive(Clone, PartialEq, Model)]
 #[model(table = "nodes", index("parent", "z"))]
 pub(crate) struct Node {
     #[model(id)]
@@ -79,8 +79,39 @@ pub(crate) struct Node {
     pub y: f64,
     pub w: f64,
     pub h: f64,
-    /// `#RRGGBB` — the color well's currency, and SVG's.
+    /// `#RRGGBB` — the color well's currency, and SVG's `fill`.
     pub fill: String,
+    /// 0..=1 — SVG's `fill-opacity`.
+    pub fill_opacity: f64,
+    /// `#RRGGBB` — SVG's `stroke`.
+    pub stroke: String,
+    /// Points — SVG's `stroke-width`; 0 draws no outline.
+    pub stroke_width: f64,
+    /// 0..=1 — SVG's `stroke-opacity`.
+    pub stroke_opacity: f64,
+}
+
+/// Hand-written because these ARE the values lightweight migration backfills into a file from
+/// before the style columns existed (docs/persistence.md) — and the stroke trio reproduces the
+/// hairline every drawing had then: black at 35%, one point wide.
+impl Default for Node {
+    fn default() -> Self {
+        Node {
+            id: 0,
+            parent: None,
+            z: 0.0,
+            kind: NodeKind::default(),
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            fill: String::new(),
+            fill_opacity: 1.0,
+            stroke: "#000000".into(),
+            stroke_width: 1.0,
+            stroke_opacity: 0.35,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +194,7 @@ fn wire_undo(doc: &Doc) {
                 "delete" => crate::res::str::undo_delete().format(),
                 "cut" => crate::res::str::undo_cut().format(),
                 "paste" => crate::res::str::undo_paste().format(),
+                "style" => crate::res::str::undo_style().format(),
                 other => other.to_string(),
             }
         });
@@ -614,6 +646,7 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             w: DEFAULT_W,
             h: DEFAULT_H,
             fill,
+            ..Node::default()
         });
     });
     id
@@ -738,12 +771,18 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                 let _ = std::fmt::Write::write_fmt(
                     out,
                     format_args!(
-                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" \
+                         fill-opacity=\"{}\" stroke=\"{}\" stroke-width=\"{}\" \
+                         stroke-opacity=\"{}\"/>",
                         e.x().peek(),
                         e.y().peek(),
                         e.w().peek(),
                         e.h().peek(),
                         e.fill().with(|f| f.cloned().unwrap_or_default()),
+                        e.fill_opacity().peek(),
+                        e.stroke().with(|s| s.cloned().unwrap_or_default()),
+                        e.stroke_width().peek(),
+                        e.stroke_opacity().peek(),
                     ),
                 );
             }
@@ -752,12 +791,18 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                 let _ = std::fmt::Write::write_fmt(
                     out,
                     format_args!(
-                        "<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\"/>",
+                        "<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\" \
+                         fill-opacity=\"{}\" stroke=\"{}\" stroke-width=\"{}\" \
+                         stroke-opacity=\"{}\"/>",
                         x + w / 2.0,
                         y + h / 2.0,
                         w / 2.0,
                         h / 2.0,
                         e.fill().with(|f| f.cloned().unwrap_or_default()),
+                        e.fill_opacity().peek(),
+                        e.stroke().with(|s| s.cloned().unwrap_or_default()),
+                        e.stroke_width().peek(),
+                        e.stroke_opacity().peek(),
                     ),
                 );
             }
@@ -776,7 +821,8 @@ pub(crate) fn selection_to_svg() -> Option<String> {
     ))
 }
 
-/// A shape or group parsed out of pasted SVG.
+/// A shape or group parsed out of pasted SVG. Style attributes are optional — a foreign
+/// fragment without them pastes with the document defaults.
 #[derive(Debug, PartialEq)]
 enum SvgNode {
     Shape {
@@ -786,6 +832,10 @@ enum SvgNode {
         w: f64,
         h: f64,
         fill: Option<String>,
+        fill_opacity: Option<f64>,
+        stroke: Option<String>,
+        stroke_width: Option<f64>,
+        stroke_opacity: Option<f64>,
     },
     Group(Vec<SvgNode>),
 }
@@ -842,13 +892,8 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
             .find(|(n, _)| n == name)
             .and_then(|(_, v)| v.trim().trim_end_matches("px").parse().ok())
     }
-    fn fill(attrs: &[(String, String)]) -> Option<String> {
-        let v = attrs
-            .iter()
-            .find(|(n, _)| n == "fill")?
-            .1
-            .trim()
-            .to_string();
+    fn color_attr(attrs: &[(String, String)], name: &str) -> Option<String> {
+        let v = attrs.iter().find(|(n, _)| n == name)?.1.trim().to_string();
         let hex = v.strip_prefix('#')?;
         match hex.len() {
             6 if hex.chars().all(|c| c.is_ascii_hexdigit()) => {
@@ -860,6 +905,17 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
             }
             _ => None,
         }
+    }
+    /// The four style attributes any shape tag may carry, opacities clamped to 0..=1.
+    fn style_of(
+        a: &[(String, String)],
+    ) -> (Option<f64>, Option<String>, Option<f64>, Option<f64>) {
+        (
+            num(a, "fill-opacity").map(|v| v.clamp(0.0, 1.0)),
+            color_attr(a, "stroke"),
+            num(a, "stroke-width").map(|v| v.max(0.0)),
+            num(a, "stroke-opacity").map(|v| v.clamp(0.0, 1.0)),
+        )
     }
 
     // One pass over the tags, keeping a stack of open groups.
@@ -897,36 +953,53 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                 stack.push(Vec::new());
                 continue;
             }
-            "rect" => Some(SvgNode::Shape {
-                kind: NodeKind::Rect,
-                x: num(&a, "x").unwrap_or(0.0),
-                y: num(&a, "y").unwrap_or(0.0),
-                w: num(&a, "width").unwrap_or(0.0),
-                h: num(&a, "height").unwrap_or(0.0),
-                fill: fill(&a),
-            }),
+            "rect" => {
+                let (fill_opacity, stroke, stroke_width, stroke_opacity) = style_of(&a);
+                Some(SvgNode::Shape {
+                    kind: NodeKind::Rect,
+                    x: num(&a, "x").unwrap_or(0.0),
+                    y: num(&a, "y").unwrap_or(0.0),
+                    w: num(&a, "width").unwrap_or(0.0),
+                    h: num(&a, "height").unwrap_or(0.0),
+                    fill: color_attr(&a, "fill"),
+                    fill_opacity,
+                    stroke,
+                    stroke_width,
+                    stroke_opacity,
+                })
+            }
             "ellipse" => {
                 let (cx, cy) = (num(&a, "cx").unwrap_or(0.0), num(&a, "cy").unwrap_or(0.0));
                 let (rx, ry) = (num(&a, "rx").unwrap_or(0.0), num(&a, "ry").unwrap_or(0.0));
+                let (fill_opacity, stroke, stroke_width, stroke_opacity) = style_of(&a);
                 Some(SvgNode::Shape {
                     kind: NodeKind::Oval,
                     x: cx - rx,
                     y: cy - ry,
                     w: rx * 2.0,
                     h: ry * 2.0,
-                    fill: fill(&a),
+                    fill: color_attr(&a, "fill"),
+                    fill_opacity,
+                    stroke,
+                    stroke_width,
+                    stroke_opacity,
                 })
             }
             "circle" => {
                 let (cx, cy) = (num(&a, "cx").unwrap_or(0.0), num(&a, "cy").unwrap_or(0.0));
                 let r = num(&a, "r").unwrap_or(0.0);
+                let (fill_opacity, stroke, stroke_width, stroke_opacity) = style_of(&a);
                 Some(SvgNode::Shape {
                     kind: NodeKind::Oval,
                     x: cx - r,
                     y: cy - r,
                     w: r * 2.0,
                     h: r * 2.0,
-                    fill: fill(&a),
+                    fill: color_attr(&a, "fill"),
+                    fill_opacity,
+                    stroke,
+                    stroke_width,
+                    stroke_opacity,
                 })
             }
             _ => None, // unknown element: skipped, children (if any) still scan
@@ -1018,7 +1091,12 @@ pub(crate) fn paste_clipboard(text: &str) {
                 w,
                 h,
                 fill,
+                fill_opacity,
+                stroke,
+                stroke_width,
+                stroke_opacity,
             } => {
+                let defaults = Node::default();
                 let node = Node {
                     id,
                     parent,
@@ -1029,6 +1107,10 @@ pub(crate) fn paste_clipboard(text: &str) {
                     w: w.max(crate::model::MIN_SIZE),
                     h: h.max(crate::model::MIN_SIZE),
                     fill: fill.clone().unwrap_or_else(|| fallback_fill(id)),
+                    fill_opacity: fill_opacity.unwrap_or(defaults.fill_opacity),
+                    stroke: stroke.clone().unwrap_or(defaults.stroke),
+                    stroke_width: stroke_width.unwrap_or(defaults.stroke_width),
+                    stroke_opacity: stroke_opacity.unwrap_or(defaults.stroke_opacity),
                 };
                 store.restructure("paste", Op::Insert, id, move |v| v.push(node.clone()));
             }
@@ -1344,6 +1426,44 @@ mod tests {
         assert!(undo_stack().undo());
         day::reactive::flush_sync();
         assert_eq!(store.with_untracked(|k| k.items().len()), 4);
+    }
+
+    #[test]
+    fn style_attributes_round_trip_as_svg_and_default_when_absent() {
+        let _doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 10.0, 20.0);
+        day::reactive::flush_sync();
+        let e = nodes().elem(a);
+        e.fill_opacity().write(0.5);
+        e.stroke().write("#112233".into());
+        e.stroke_width().write(3.0);
+        e.stroke_opacity().write(0.8);
+        day::reactive::flush_sync();
+        selection().set(vec![a]);
+
+        let svg = selection_to_svg().expect("serializes");
+        assert!(svg.contains("fill-opacity=\"0.5\""), "{svg}");
+        assert!(svg.contains("stroke=\"#112233\""), "{svg}");
+        assert!(svg.contains("stroke-width=\"3\""), "{svg}");
+        assert!(svg.contains("stroke-opacity=\"0.8\""), "{svg}");
+
+        paste_clipboard(&svg);
+        day::reactive::flush_sync();
+        let p = nodes().elem(selection().get_untracked()[0]);
+        assert_eq!(p.fill_opacity().peek(), 0.5);
+        assert_eq!(p.stroke().with(|s| s.cloned()).as_deref(), Some("#112233"));
+        assert_eq!(p.stroke_width().peek(), 3.0);
+        assert_eq!(p.stroke_opacity().peek(), 0.8);
+
+        // A foreign fragment carrying no style attributes pastes with the document defaults —
+        // the same values migration backfills into pre-style files.
+        paste_clipboard(r##"<svg><rect x="0" y="0" width="30" height="30"/></svg>"##);
+        day::reactive::flush_sync();
+        let q = nodes().elem(selection().get_untracked()[0]);
+        assert_eq!(q.fill_opacity().peek(), 1.0);
+        assert_eq!(q.stroke().with(|s| s.cloned()).as_deref(), Some("#000000"));
+        assert_eq!(q.stroke_width().peek(), 1.0);
+        assert_eq!(q.stroke_opacity().peek(), 0.35);
     }
 
     #[test]

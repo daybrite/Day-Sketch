@@ -397,6 +397,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "day-piece-colorpicker"
+version = "0.2.6"
+dependencies = [
+ "cc",
+ "day-core",
+ "day-l10n",
+ "day-pieces",
+ "day-reactive",
+ "day-spec",
+ "day-toolchain",
+ "linkme",
+]
+
+[[package]]
 name = "day-piece-settings"
 version = "0.2.6"
 dependencies = [
@@ -406,6 +420,18 @@ dependencies = [
  "day-pieces",
  "day-reactive",
  "day-spec",
+]
+
+[[package]]
+name = "day-piece-stepper"
+version = "0.2.6"
+dependencies = [
+ "cc",
+ "day-core",
+ "day-pieces",
+ "day-reactive",
+ "day-spec",
+ "linkme",
 ]
 
 [[package]]
@@ -469,7 +495,9 @@ version = "0.1.0"
 dependencies = [
  "day",
  "day-build",
+ "day-piece-colorpicker",
  "day-piece-settings",
+ "day-piece-stepper",
 ]
 
 [[package]]
