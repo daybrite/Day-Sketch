@@ -8,7 +8,7 @@
 //! the pointer lifts, when committing all touched fields in ONE turn makes the whole drag one
 //! undo step and one SQL statement per row (https://daybrite.dev/docs/model).
 
-use crate::model::{self, Node, NodeFields, NodeKind, Tool};
+use crate::model::{self, Node, NodeFields, NodeKind};
 use day::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -88,6 +88,19 @@ pub(crate) fn zoom_step(factor: f64) {
 
 pub(crate) fn zoom_reset() {
     zoom_to(1.0, viewport_center());
+}
+
+/// Place a shape centered in the VIEWPORT — the visible middle of the scrolled canvas, in
+/// model coordinates, so a zoomed or panned view still puts the new shape where the user is
+/// looking. Selects it, the way every placement does.
+pub(crate) fn place_centered(kind: NodeKind) {
+    let c = to_model(viewport_center());
+    let id = model::place_shape(
+        kind,
+        c.x - model::DEFAULT_W / 2.0,
+        c.y - model::DEFAULT_H / 2.0,
+    );
+    model::selection().set(vec![id]);
 }
 
 fn to_model(p: Point) -> Point {
@@ -194,6 +207,15 @@ fn apply_resize(id: u64, frame: (f64, f64, f64, f64), commit: bool) {
 fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool {
     let e = store.elem(id);
     let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+    // A rotated shape is drawn through a transform, so the POINT rides the inverse back into
+    // the shape's own upright space — where the frame test below is the geometry again.
+    let rot = e.rotation().peek();
+    let (px, py) = if rot.abs() > f64::EPSILON {
+        let p = rotation_about_center(x, y, w, h, -rot).apply(Point::new(px, py));
+        (p.x, p.y)
+    } else {
+        (px, py)
+    };
     if px < x || py < y || px > x + w || py > y + h {
         return false;
     }
@@ -268,8 +290,58 @@ fn shape_of(node: &Node) -> Shape {
             // let the path's own cubics carry the aspect via control-point scaling.
             oval_shape(node.x, node.y, node.w, node.h)
         }
-        _ => rect_shape(node.x, node.y, node.w, node.h),
+        _ => round_rect_shape(node.x, node.y, node.w, node.h, node.corner_radius),
     }
+}
+
+/// A rectangle with rounded corners — plain when the radius is 0, and the radius clamped to
+/// half the shorter side so the corners can never cross.
+fn round_rect_shape(x: f64, y: f64, w: f64, h: f64, r: f64) -> Shape {
+    let r = r.min(w / 2.0).min(h / 2.0);
+    if r <= 0.0 {
+        return rect_shape(x, y, w, h);
+    }
+    // The circular-arc kappa, as the ellipse below uses: a corner is a quarter circle.
+    const K: f64 = 0.552_284_749_830_793_4;
+    let c = r * K;
+    let (r1, b1) = (x + w, y + h);
+    PathBuilder::new()
+        .move_to(Point::new(x + r, y))
+        .line_to(Point::new(r1 - r, y))
+        .cubic_to(
+            Point::new(r1 - r + c, y),
+            Point::new(r1, y + r - c),
+            Point::new(r1, y + r),
+        )
+        .line_to(Point::new(r1, b1 - r))
+        .cubic_to(
+            Point::new(r1, b1 - r + c),
+            Point::new(r1 - r + c, b1),
+            Point::new(r1 - r, b1),
+        )
+        .line_to(Point::new(x + r, b1))
+        .cubic_to(
+            Point::new(x + r - c, b1),
+            Point::new(x, b1 - r + c),
+            Point::new(x, b1 - r),
+        )
+        .line_to(Point::new(x, y + r))
+        .cubic_to(
+            Point::new(x, y + r - c),
+            Point::new(x + r - c, y),
+            Point::new(x + r, y),
+        )
+        .close()
+        .build()
+}
+
+/// A shape's rotation as an affine about its own center — the transform the draw concats and
+/// the hit test inverts.
+fn rotation_about_center(x: f64, y: f64, w: f64, h: f64, degrees: f64) -> Affine {
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    Affine::translate(-cx, -cy)
+        .then(Affine::rotate(degrees.to_radians()))
+        .then(Affine::translate(cx, cy))
 }
 
 /// A full ellipse from four cubic arcs (the standard 0.5523 kappa).
@@ -356,17 +428,32 @@ fn draw_scene(d: &mut Draw, size: Size) {
                         stroke: e.stroke().read(),
                         stroke_width: e.stroke_width().read(),
                         stroke_opacity: e.stroke_opacity().read(),
+                        rotation: e.rotation().read(),
+                        corner_radius: e.corner_radius().read(),
                     };
-                    d.fill(
-                        shape_of(&node),
-                        fill_color(&node.fill).with_alpha(node.fill_opacity),
-                    );
-                    if node.stroke_width > 0.0 && node.stroke_opacity > 0.0 {
-                        d.stroke(
+                    let paint = |d: &mut Draw| {
+                        d.fill(
                             shape_of(&node),
-                            fill_color(&node.stroke).with_alpha(node.stroke_opacity),
-                            node.stroke_width,
+                            fill_color(&node.fill).with_alpha(node.fill_opacity),
                         );
+                        if node.stroke_width > 0.0 && node.stroke_opacity > 0.0 {
+                            d.stroke(
+                                shape_of(&node),
+                                fill_color(&node.stroke).with_alpha(node.stroke_opacity),
+                                node.stroke_width,
+                            );
+                        }
+                    };
+                    // A rotation is a transform about the shape's own center, so the stored
+                    // frame stays axis-aligned — what the inspector edits and the selection
+                    // outline draws.
+                    if node.rotation.abs() > f64::EPSILON {
+                        d.transformed(
+                            rotation_about_center(node.x, node.y, node.w, node.h, node.rotation),
+                            paint,
+                        );
+                    } else {
+                        paint(d);
                     }
                 }
             }
@@ -437,21 +524,11 @@ fn handle_click(p_screen: Point, source: ClickSource) {
     on_tap(to_model(p_screen));
 }
 
-/// `p` is in MODEL space — callers convert from screen coordinates first.
+/// `p` is in MODEL space — callers convert from screen coordinates first. A canvas tap always
+/// SELECTS: shapes are placed from the toolbar's shape menu (centered in the viewport), so
+/// there is no armed-tool mode to be in.
 fn on_tap(p: Point) {
-    match model::tool().get_untracked() {
-        Tool::Rect => {
-            let id = model::place_shape(NodeKind::Rect, p.x, p.y);
-            model::selection().set(vec![id]);
-            model::tool().set(Tool::Select);
-        }
-        Tool::Oval => {
-            let id = model::place_shape(NodeKind::Oval, p.x, p.y);
-            model::selection().set(vec![id]);
-            model::tool().set(Tool::Select);
-        }
-        Tool::Select => select_at(p, day::modifiers()),
-    }
+    select_at(p, day::modifiers());
 }
 
 /// The select tool's tap rule, with the modifiers that were held: shift or the platform's

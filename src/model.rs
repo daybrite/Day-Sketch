@@ -21,8 +21,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 pub(crate) const MIN_SIZE: f64 = 8.0;
-const DEFAULT_W: f64 = 96.0;
-const DEFAULT_H: f64 = 64.0;
+pub(crate) const DEFAULT_W: f64 = 96.0;
+pub(crate) const DEFAULT_H: f64 = 64.0;
 const PALETTE: [&str; 6] = [
     "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
 ];
@@ -89,6 +89,11 @@ pub(crate) struct Node {
     pub stroke_width: f64,
     /// 0..=1 — SVG's `stroke-opacity`.
     pub stroke_opacity: f64,
+    /// Degrees clockwise about the shape's own center, 0..360 — SVG's `transform="rotate(…)"`.
+    pub rotation: f64,
+    /// Corner rounding in points — SVG's `rx`/`ry` on a `<rect>`. Rectangles only: an oval has
+    /// no corners, and the inspector hides the row rather than showing a dead field.
+    pub corner_radius: f64,
 }
 
 /// Document-level settings: ONE row (id 1), seeded at open. A second model in the same
@@ -136,6 +141,8 @@ impl Default for Node {
             stroke: "#000000".into(),
             stroke_width: 1.0,
             stroke_opacity: 0.35,
+            rotation: 0.0,
+            corner_radius: 0.0,
         }
     }
 }
@@ -222,6 +229,8 @@ fn wire_undo(doc: &Doc) {
                 "cut" => crate::res::str::undo_cut().format(),
                 "paste" => crate::res::str::undo_paste().format(),
                 "style" => crate::res::str::undo_style().format(),
+                "rotate" => crate::res::str::undo_rotate().format(),
+                "corner" => crate::res::str::undo_corner().format(),
                 "background" => crate::res::str::undo_background().format(),
                 other => other.to_string(),
             }
@@ -544,21 +553,6 @@ pub(crate) fn export_copy_dialog() {
 // never an undo step and never a row)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum Tool {
-    #[default]
-    Select,
-    Rect,
-    Oval,
-}
-
-pub(crate) fn tool() -> Signal<Tool> {
-    thread_local! {
-        static TOOL: Signal<Tool> = Signal::global(Tool::Select);
-    }
-    TOOL.with(|s| *s)
-}
-
 /// The selected TOP-LEVEL node ids, in selection order.
 pub(crate) fn selection() -> Signal<Vec<u64>> {
     thread_local! {
@@ -826,6 +820,20 @@ pub(crate) fn selection_to_svg() -> Option<String> {
     }
     let (vx, vy, vw, vh) = bounds?;
 
+    /// SVG's own way to say "turned about its center": `transform="rotate(a cx cy)"`, empty
+    /// at zero so an unrotated shape's markup is unchanged.
+    fn rotate_attr(deg: f64, x: f64, y: f64, w: f64, h: f64) -> String {
+        if deg.abs() <= f64::EPSILON {
+            return String::new();
+        }
+        format!(
+            " transform=\"rotate({} {} {})\"",
+            deg,
+            x + w / 2.0,
+            y + h / 2.0
+        )
+    }
+
     fn write_node(out: &mut String, store: Store<Keyed<Node>>, id: u64) {
         let e = store.elem(id);
         match e.kind().peek() {
@@ -837,21 +845,30 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                 out.push_str("</g>");
             }
             NodeKind::Rect => {
+                let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+                let r = e.corner_radius().peek();
+                let radius = if r > 0.0 {
+                    format!(" rx=\"{r}\" ry=\"{r}\"")
+                } else {
+                    String::new()
+                };
                 let _ = std::fmt::Write::write_fmt(
                     out,
                     format_args!(
-                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" \
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{} fill=\"{}\" \
                          fill-opacity=\"{}\" stroke=\"{}\" stroke-width=\"{}\" \
-                         stroke-opacity=\"{}\"/>",
-                        e.x().peek(),
-                        e.y().peek(),
-                        e.w().peek(),
-                        e.h().peek(),
+                         stroke-opacity=\"{}\"{}/>",
+                        x,
+                        y,
+                        w,
+                        h,
+                        radius,
                         e.fill().with(|f| f.cloned().unwrap_or_default()),
                         e.fill_opacity().peek(),
                         e.stroke().with(|s| s.cloned().unwrap_or_default()),
                         e.stroke_width().peek(),
                         e.stroke_opacity().peek(),
+                        rotate_attr(e.rotation().peek(), x, y, w, h),
                     ),
                 );
             }
@@ -862,7 +879,7 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                     format_args!(
                         "<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\" \
                          fill-opacity=\"{}\" stroke=\"{}\" stroke-width=\"{}\" \
-                         stroke-opacity=\"{}\"/>",
+                         stroke-opacity=\"{}\"{}/>",
                         x + w / 2.0,
                         y + h / 2.0,
                         w / 2.0,
@@ -872,6 +889,7 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                         e.stroke().with(|s| s.cloned().unwrap_or_default()),
                         e.stroke_width().peek(),
                         e.stroke_opacity().peek(),
+                        rotate_attr(e.rotation().peek(), x, y, w, h),
                     ),
                 );
             }
@@ -905,6 +923,8 @@ enum SvgNode {
         stroke: Option<String>,
         stroke_width: Option<f64>,
         stroke_opacity: Option<f64>,
+        rotation: Option<f64>,
+        corner_radius: Option<f64>,
     },
     Group(Vec<SvgNode>),
 }
@@ -985,6 +1005,25 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
         )
     }
 
+    /// The angle out of `transform="rotate(a …)"`, normalized to 0..360. Only the rotate form
+    /// is read — a general matrix would need a decomposition this editor has no field for, so
+    /// such a shape pastes upright rather than wrong.
+    fn rotation_of(a: &[(String, String)]) -> Option<f64> {
+        let t = a
+            .iter()
+            .find(|(n, _)| n == "transform")?
+            .1
+            .trim()
+            .to_string();
+        let inner = t.strip_prefix("rotate(")?.split(')').next()?.to_string();
+        let deg: f64 = inner
+            .split([',', ' '])
+            .find(|s| !s.is_empty())?
+            .parse()
+            .ok()?;
+        Some(deg.rem_euclid(360.0))
+    }
+
     // One pass over the tags, keeping a stack of open groups.
     let mut roots: Vec<SvgNode> = Vec::new();
     let mut stack: Vec<Vec<SvgNode>> = Vec::new();
@@ -1033,6 +1072,10 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     stroke,
                     stroke_width,
                     stroke_opacity,
+                    rotation: rotation_of(&a),
+                    // SVG allows rx and ry to differ; this editor has one radius, so the
+                    // horizontal one wins and a foreign ellipse-cornered rect pastes close.
+                    corner_radius: num(&a, "rx").or_else(|| num(&a, "ry")).map(|v| v.max(0.0)),
                 })
             }
             "ellipse" => {
@@ -1050,6 +1093,8 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     stroke,
                     stroke_width,
                     stroke_opacity,
+                    rotation: rotation_of(&a),
+                    corner_radius: None,
                 })
             }
             "circle" => {
@@ -1067,6 +1112,8 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     stroke,
                     stroke_width,
                     stroke_opacity,
+                    rotation: rotation_of(&a),
+                    corner_radius: None,
                 })
             }
             _ => None, // unknown element: skipped, children (if any) still scan
@@ -1162,6 +1209,8 @@ pub(crate) fn paste_clipboard(text: &str) {
                 stroke,
                 stroke_width,
                 stroke_opacity,
+                rotation,
+                corner_radius,
             } => {
                 let defaults = Node::default();
                 let node = Node {
@@ -1178,6 +1227,8 @@ pub(crate) fn paste_clipboard(text: &str) {
                     stroke: stroke.clone().unwrap_or(defaults.stroke),
                     stroke_width: stroke_width.unwrap_or(defaults.stroke_width),
                     stroke_opacity: stroke_opacity.unwrap_or(defaults.stroke_opacity),
+                    rotation: rotation.unwrap_or(defaults.rotation),
+                    corner_radius: corner_radius.unwrap_or(defaults.corner_radius),
                 };
                 store.restructure("paste", Op::Insert, id, move |v| v.push(node.clone()));
             }
@@ -1759,6 +1810,60 @@ mod tests {
         }
         assert_eq!(undone, 6, "three placements + three arranges");
         assert_eq!(children_of(None), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn rotation_and_corner_radius_round_trip_as_svg() {
+        let _doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 10.0, 20.0);
+        day::reactive::flush_sync();
+        let e = nodes().elem(a);
+        e.rotation().write(45.0);
+        e.corner_radius().write(8.0);
+        day::reactive::flush_sync();
+        selection().set(vec![a]);
+
+        let svg = selection_to_svg().expect("serializes");
+        assert!(svg.contains("rx=\"8\" ry=\"8\""), "{svg}");
+        // Rotation is SVG's own transform, about the shape's center.
+        assert!(svg.contains("transform=\"rotate(45 58 52)\""), "{svg}");
+
+        paste_clipboard(&svg);
+        day::reactive::flush_sync();
+        let p = nodes().elem(selection().get_untracked()[0]);
+        assert_eq!(p.rotation().peek(), 45.0);
+        assert_eq!(p.corner_radius().peek(), 8.0);
+
+        // An oval carries rotation but never a radius, and a fragment with neither pastes
+        // upright and square-cornered (the migration defaults).
+        paste_clipboard(r##"<svg><rect x="0" y="0" width="30" height="30"/></svg>"##);
+        day::reactive::flush_sync();
+        let q = nodes().elem(selection().get_untracked()[0]);
+        assert_eq!(q.rotation().peek(), 0.0);
+        assert_eq!(q.corner_radius().peek(), 0.0);
+    }
+
+    #[test]
+    fn a_rotated_shape_is_hit_where_it_is_drawn() {
+        use crate::canvas::select_at;
+        let _doc = test_doc();
+        // A wide, short rectangle at the origin: 96×64 with its center at (48, 32).
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let plain = day::Modifiers::default();
+
+        // Upright, a point past the right edge misses…
+        select_at(Point::new(48.0, 60.0), plain);
+        assert_eq!(selection().get_untracked(), vec![a], "inside upright");
+        select_at(Point::new(48.0, 75.0), plain);
+        assert!(selection().get_untracked().is_empty(), "below upright");
+
+        // …and turned a quarter turn, the same point is inside the shape as drawn: the
+        // 96-long axis now runs vertically through the center.
+        nodes().elem(a).rotation().write(90.0);
+        day::reactive::flush_sync();
+        select_at(Point::new(48.0, 75.0), plain);
+        assert_eq!(selection().get_untracked(), vec![a], "inside once rotated");
     }
 
     #[test]

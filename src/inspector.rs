@@ -368,6 +368,32 @@ impl Binding<Color> for StyleColor {
     }
 }
 
+/// The rotation stepper's value, shown as localized degrees ("45°") and accepting one typed
+/// back with or without the suffix. The stepper drives a `Binding<f64>`, so this wraps the
+/// bound number rather than replacing it.
+#[derive(Clone, Copy)]
+struct DegField {
+    num: StyleNum,
+}
+
+impl Binding<f64> for DegField {
+    fn read(&self) -> f64 {
+        self.num.read()
+    }
+    fn peek(&self) -> f64 {
+        self.num.peek()
+    }
+    fn write(&self, v: f64) {
+        self.num.write(v.rem_euclid(360.0));
+    }
+    fn write_preview(&self, v: f64) {
+        self.num.write_preview(v.rem_euclid(360.0));
+    }
+    fn write_commit(&self, v: f64) {
+        self.num.write_commit(v.rem_euclid(360.0));
+    }
+}
+
 /// The opacity row's percentage field: the same bound value, shown as a localized percent
 /// ("85%") and accepting one typed back with or without the suffix.
 #[derive(Clone, Copy)]
@@ -429,6 +455,38 @@ const STROKE_WIDTH: StyleNum = StyleNum {
     },
 };
 
+const ROTATION: StyleNum = StyleNum {
+    read: |t| model::nodes().elem(t).rotation().read(),
+    preview: |t, v| {
+        model::nodes()
+            .elem(t)
+            .rotation()
+            .write_preview(v.rem_euclid(360.0))
+    },
+    commit: |t, v| {
+        model::nodes()
+            .elem(t)
+            .rotation()
+            .write_commit(v.rem_euclid(360.0))
+    },
+};
+
+const CORNER_RADIUS: StyleNum = StyleNum {
+    read: |t| model::nodes().elem(t).corner_radius().read(),
+    preview: |t, v| {
+        model::nodes()
+            .elem(t)
+            .corner_radius()
+            .write_preview(v.max(0.0))
+    },
+    commit: |t, v| {
+        model::nodes()
+            .elem(t)
+            .corner_radius()
+            .write_commit(v.max(0.0))
+    },
+};
+
 const FILL_COLOR: StyleColor = StyleColor {
     read: |t| {
         model::nodes()
@@ -482,6 +540,17 @@ fn opacity_row(num: StyleNum, id: &'static str) -> AnyPiece {
     .any()
 }
 
+/// Whether every shape the style section would edit is a rectangle — the condition for
+/// showing a corner-radius row at all. An oval has no corners, and a mixed selection has no
+/// one answer, so both hide the row rather than offering a field that does nothing.
+fn selection_is_rects() -> bool {
+    let targets = style_targets(true);
+    !targets.is_empty()
+        && targets
+            .iter()
+            .all(|t| model::nodes().elem(*t).kind().read() == NodeKind::Rect)
+}
+
 fn style_section() -> AnyPiece {
     section((
         labeled(
@@ -513,12 +582,56 @@ fn style_section() -> AnyPiece {
     .any()
 }
 
+/// The geometry section's transform rows: rotation always, corner radius only where it means
+/// something. Both are steppers over the same fan-out binding the style numbers use.
+fn transform_rows() -> AnyPiece {
+    column((
+        labeled(
+            crate::res::str::insp_rotation(),
+            day_piece_stepper::stepper(DegField { num: ROTATION })
+                // 360 is IN the range so the stepper's own up-arrow can reach it; the
+                // binding wraps it back to 0, which is what a full turn means.
+                .range(0.0..=360.0)
+                .step(1.0)
+                .decimals(0)
+                .key("insp-rotation"),
+        ),
+        // `when` mounts and disposes the row with the selection's kind — a hidden field would
+        // still be a dayscript target, and a disabled one still reads as a property ovals have.
+        when(selection_is_rects, || {
+            labeled(
+                crate::res::str::insp_corner(),
+                day_piece_stepper::stepper(CORNER_RADIUS)
+                    .range(0.0..=200.0)
+                    .step(1.0)
+                    .decimals(0)
+                    .key("insp-corner"),
+            )
+        }),
+    ))
+    .spacing(0.0)
+    .any()
+}
+
+/// The two tab labels. The second counts the selection, pluralized by the catalog — Fluent's
+/// plural selector, so a language with more forms than English adds them there, not here.
+fn tab_labels() -> Vec<String> {
+    let n = model::selection().get().len() as i64;
+    vec![
+        crate::res::str::insp_tab_canvas().format(),
+        crate::res::str::insp_tab_selected(n).format(),
+    ]
+}
+
 /// The Selected tab: one form, one section per property group of the selection. New
 /// per-selection sections slot in here.
 fn selected_panel() -> AnyPiece {
-    let rows = PieceVec((0..geometry_props().len()).map(prop_row).collect());
+    // The four frame fields, then the transform rows — one flat run of labeled rows in one
+    // section.
+    let mut rows: Vec<AnyPiece> = (0..geometry_props().len()).map(prop_row).collect();
+    rows.push(transform_rows());
     form((
-        section(rows).title(crate::res::str::insp_geometry()),
+        section(PieceVec(rows)).title(crate::res::str::insp_geometry()),
         style_section(),
     ))
 }
@@ -536,15 +649,12 @@ fn canvas_panel() -> AnyPiece {
 /// lives here, once, for every target.
 pub(crate) fn panel() -> AnyPiece {
     column((
-        picker(
-            [
-                crate::res::str::insp_tab_canvas().format(),
-                crate::res::str::insp_tab_selected().format(),
-            ],
-            active_tab(),
-        )
-        .segmented()
-        .id("insp-tab"),
+        picker(tab_labels(), active_tab())
+            .segmented()
+            // The Selected tab NAMES its selection ("No Items" / "1 Item" / "3 Items"), so
+            // its label changes with the count — a reactive option list (docs/picker.md).
+            .options_reactive(tab_labels)
+            .id("insp-tab"),
         when(|| active_tab().get() == TAB_SELECTED, selected_panel).otherwise(canvas_panel),
     ))
     .spacing(10.0)
@@ -713,6 +823,68 @@ mod tests {
         assert!(doc.stack.undo(), "one unit takes it back");
         day::reactive::flush_sync();
         assert_eq!(model::background(), "#FFFFFF");
+    }
+
+    #[test]
+    fn the_selected_tab_names_its_count_pluralized() {
+        let _doc = install_test_doc();
+        crate::res::locales::install();
+        fn visible(s: String) -> String {
+            s.chars()
+                .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
+                .collect()
+        }
+        let label = || visible(tab_labels()[1].clone());
+
+        model::selection().set(Vec::new());
+        assert_eq!(label(), "No Items");
+        let a = model::place_shape(NodeKind::Rect, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let b = model::place_shape(NodeKind::Oval, 200.0, 0.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![a]);
+        assert_eq!(label(), "1 Item");
+        model::selection().set(vec![a, b]);
+        assert_eq!(label(), "2 Items");
+    }
+
+    #[test]
+    fn corner_radius_shows_for_rectangles_only_and_rotation_wraps() {
+        let _doc = install_test_doc();
+        let r = model::place_shape(NodeKind::Rect, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let o = model::place_shape(NodeKind::Oval, 200.0, 0.0);
+        day::reactive::flush_sync();
+
+        model::selection().set(vec![r]);
+        assert!(selection_is_rects(), "a rectangle has corners");
+        model::selection().set(vec![o]);
+        assert!(!selection_is_rects(), "an oval has none");
+        model::selection().set(vec![r, o]);
+        assert!(!selection_is_rects(), "a mixed selection has no one answer");
+        model::selection().set(Vec::new());
+        assert!(!selection_is_rects(), "nothing selected shows nothing");
+
+        // Rotation is an angle on a circle: 360 is 0, and −1 is 359.
+        model::selection().set(vec![r]);
+        let deg = DegField { num: ROTATION };
+        deg.write_commit(45.0);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(r).rotation().peek(), 45.0);
+        deg.write_commit(360.0);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(r).rotation().peek(), 0.0);
+        deg.write_commit(-1.0);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(r).rotation().peek(), 359.0);
+
+        // Corner radius fans out and floors at 0, as one undo unit.
+        CORNER_RADIUS.write_commit(12.0);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(r).corner_radius().peek(), 12.0);
+        CORNER_RADIUS.write_commit(-5.0);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(r).corner_radius().peek(), 0.0);
     }
 
     #[test]

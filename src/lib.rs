@@ -187,6 +187,12 @@ fn toolbar() -> Vec<ToolbarEntry> {
             .icon(Symbol::Remove)
             .tooltip(res::str::menu_ungroup())
             .action(model::ungroup_selection),
+        // Insert: a pull-down of the shape vocabulary, each item drawn with the platform's
+        // own glyph. Placing is a command, not a mode — the shape lands in the middle of the
+        // visible canvas, selected and ready to style.
+        toolbar_menu("tb-shape", res::str::tool_shape(), shape_menu_entries())
+            .icon(Symbol::Add)
+            .tooltip(res::str::tool_shape()),
         toolbar_separator(),
         // The zoom group: out, actual size, in — the separator sets the trio off from its
         // neighbors, and the reset button carries text (there is no glyph for "100%").
@@ -221,21 +227,51 @@ fn toolbar() -> Vec<ToolbarEntry> {
     ]
 }
 
-fn tool_button(id: &'static str, text: LocalizedText, this: model::Tool) -> impl Piece {
-    button(text)
-        .bordered()
-        .action(move || model::tool().set(this))
-        .enabled(move || model::tool().get() != this)
-        .id(id)
+/// The shape vocabulary, served twice. Choosing one places it in the middle of the visible
+/// canvas and selects it — placing is a command, not an armed-tool mode.
+///
+/// The window toolbar's pull-down is the desktop form, each item drawn with the platform's own
+/// glyph. Phones have no window toolbar (`Cap::Toolbar` is Unsupported there), so the tool row
+/// carries the same two choices as a native action sheet — the mobile idiom for exactly this,
+/// and docs/toolbars.md's own advice for a command that has nowhere on the chrome to live.
+fn shape_menu_entries() -> Vec<MenuEntry> {
+    vec![
+        menu_item(res::str::tool_rect().format())
+            .icon(Symbol::Rectangle)
+            .action(|| canvas::place_centered(model::NodeKind::Rect)),
+        menu_item(res::str::tool_oval().format())
+            .icon(Symbol::Oval)
+            .action(|| canvas::place_centered(model::NodeKind::Oval)),
+    ]
+}
+
+/// The tool row's shape button: the same two choices as an action sheet, so every target can
+/// place a shape (and one id, `tool-shape`, drives it in the walkthrough everywhere).
+fn choose_shape() {
+    day::task(async {
+        let picked = Alert::<model::NodeKind>::new(res::str::tool_shape())
+            .sheet()
+            .button(res::str::tool_rect(), model::NodeKind::Rect)
+            .button(res::str::tool_oval(), model::NodeKind::Oval)
+            .cancel(res::str::menu_cancel())
+            .present()
+            .await;
+        if let Some(kind) = picked {
+            canvas::place_centered(kind);
+        }
+    });
 }
 
 fn tool_row() -> impl Piece {
     let stack = model::undo_stack();
     let (u1, u2, r1, r2) = (stack.clone(), stack.clone(), stack.clone(), stack);
     row((
-        tool_button("tool-select", res::str::tool_select(), model::Tool::Select),
-        tool_button("tool-rect", res::str::tool_rect(), model::Tool::Rect),
-        tool_button("tool-oval", res::str::tool_oval(), model::Tool::Oval),
+        // The same shape choices as the window toolbar's item, for the targets that have no
+        // window toolbar (`Cap::Toolbar` is Unsupported on mobile and the web).
+        button(res::str::tool_shape())
+            .bordered()
+            .action(choose_shape)
+            .id("tool-shape"),
         spacer(),
         button(res::str::menu_undo())
             .bordered()

@@ -23,9 +23,10 @@ menu_back = Send to Back
     .key = [
 menu_delete = Delete
 
-tool_select = Select
+tool_shape = Shape
 tool_rect = Rectangle
 tool_oval = Oval
+menu_cancel = Cancel
 
 status_count = { $n } nodes
 status_none = Nothing selected
@@ -44,7 +45,14 @@ menu_inspector = Inspector
     .key = i
 tool_inspector = Inspector
 insp_tab_canvas = Canvas
-insp_tab_selected = Selected
+# The Selected tab names its own contents: "No Items" / "1 Item" / "N Items". Fluent's plural
+# selector picks the CLDR category for the locale, so a language with more than two forms
+# (Polish's few/many, Arabic's six) adds them here without touching the app.
+insp_tab_selected = { $n ->
+    [0] No Items
+    [one] { $n } Item
+   *[other] { $n } Items
+}
 insp_background = Background
 insp_geometry = Geometry
 insp_x = X
@@ -59,6 +67,9 @@ insp_fill_opacity = Fill Opacity
 insp_stroke = Stroke
 insp_stroke_width = Stroke Width
 insp_stroke_opacity = Stroke Opacity
+insp_rotation = Rotation
+insp_corner = Corner Radius
+insp_degrees = { $deg }°
 insp_percent = { $pct }%
 
 undo_add_rect = Add Rectangle
@@ -73,3 +84,5 @@ undo_cut = Cut
 undo_paste = Paste
 undo_style = Style
 undo_background = Background
+undo_rotate = Rotate
+undo_corner = Corner Radius

@@ -2,8 +2,8 @@ name: sketch-walkthrough
 description: >-
   Place, select, drag, resize, group, arrange, and undo — with the selection riding the
   history, so every undo/redo lands with the selection its unit sealed with — plus
-  multi-select handles, the tabbed inspector (Canvas ⇄ Selected following the selection), and
-  the menu-driven canvas zoom. The whole editor through the synthetic rail, with model-state
+  multi-select handles, the tabbed inspector (Canvas ⇄ the counted Selected tab, following
+  the selection), rotation and corner radius, and the menu-driven canvas zoom. The whole editor through the synthetic rail, with model-state
   asserts after every gesture; deterministic because the run starts on a fresh document
   (File ▸ New Drawing). Selection state is asserted through what it SHOWS: `sk-frame` names a
   single selection by its frame, the Selected tab's fields name a multi-selection by its
@@ -11,26 +11,42 @@ description: >-
 flow:
   - wait_for: { id: canvas }
   # The inspector shows by default; nothing is selected, so it boots on the CANVAS tab —
-  # the Background well is the panel's first frame.
+  # the Background well is the panel's first frame, and the tab reads "No Items".
   - wait_for: { id: insp-bg }
   # A fresh numbered document every run — the walkthrough never inherits the last run's scene.
   - menu: { key: menu_new }
   - assert_text: { id: sk-count, key: status_count, args: { n: 0 } }
 
-  # ---- Place: armed tool + tap, re-arming Select after each ----
-  - tap: { id: tool-rect }
-  - tap: { id: canvas, at: [40, 40] }
+  # ---- Place: the shape menu, then the inspector puts each shape where this script wants it ----
+  # A placement lands in the middle of the VISIBLE canvas, which differs per target (a phone's
+  # viewport is not a desktop's), so every shape's frame is set through the inspector right
+  # after — from here on the geometry is identical everywhere.
+  - tap: { id: tool-shape }
+  - respond: { button: 0 }
   - assert_text: { id: sk-count, key: status_count, args: { n: 1 } }
   # Placing selects the new shape, and selecting flips the inspector to the SELECTED tab.
   - wait_for: { id: insp-x }
+  - input: { id: insp-x, text: "40" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "40" }
+  - submit: { id: insp-y }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - tap: { id: tool-oval }
-  - tap: { id: canvas, at: [200, 160] }
+  - tap: { id: tool-shape }
+  - respond: { button: 1 }
   - assert_text: { id: sk-count, key: status_count, args: { n: 2 } }
+  - input: { id: insp-x, text: "200" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "160" }
+  - submit: { id: insp-y }
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
-  - tap: { id: tool-rect }
-  - tap: { id: canvas, at: [80, 60] }
+  - tap: { id: tool-shape }
+  - respond: { button: 0 }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - input: { id: insp-x, text: "80" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "60" }
+  - submit: { id: insp-y }
+  - assert_text: { id: sk-frame, text: "80,60 96x64" }
 
   # ---- Hit testing honors z: the overlap point selects the TOP shape ----
   - tap: { id: canvas, at: [90, 70] }
@@ -74,6 +90,8 @@ flow:
   - tap: { id: canvas, at: [90, 110], modifiers: [shift] }
   - assert_text: { id: insp-x, text: "" }
   - assert_text: { id: insp-w, text: "96" }
+  # Two selected, so the tab counts them — pluralized by the catalog.
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
   - menu: { key: menu_group }
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
   - assert_text: { id: sk-frame, text: "40,40 136x84" }
@@ -110,8 +128,8 @@ flow:
 
   # ---- Edit ▸ Undo/Redo: the ROLE items drive the same document stack ----
   # (`day-undo`/`day-redo` are the core catalog keys role items are labeled by.)
-  - tap: { id: tool-rect }
-  - tap: { id: canvas, at: [340, 60] }
+  - tap: { id: tool-shape }
+  - respond: { button: 0 }
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
   - menu: { key: day-undo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
@@ -122,7 +140,9 @@ flow:
   - assert_text: { id: insp-w, text: "96" }
   - menu: { key: day-redo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
-  - assert_text: { id: sk-frame, text: "340,60 96x64" }
+  # (The redone placement's own frame is viewport-centered, so it is target-dependent; the
+  # selection it restores is what this leg is about.)
+  - assert_text: { id: insp-w, text: "96" }
   - menu: { key: day-undo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
 
@@ -223,6 +243,41 @@ flow:
   - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 100 } }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
 
+  # ---- Rotation and corner radius: a stepper each, one undo unit each ----
+  # The Selected tab NAMES its count, so the strip reads "1 Item" here.
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
+  - assert_text: { id: insp-rotation, text: "0" }
+  - input: { id: insp-rotation, text: "45" }
+  - submit: { id: insp-rotation }
+  - assert_text: { id: insp-rotation, text: "45" }
+  # A rotation is a VIEW transform about the shape's own center: the stored frame is untouched.
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  # 360° is 0° — the angle wraps rather than growing without bound.
+  - input: { id: insp-rotation, text: "360" }
+  - submit: { id: insp-rotation }
+  - assert_text: { id: insp-rotation, text: "0" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-rotation, text: "45" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-rotation, text: "0" }
+  # Corner radius belongs to rectangles: shape 1 is one, so the row is there…
+  - assert_text: { id: insp-corner, text: "0" }
+  - input: { id: insp-corner, text: "12" }
+  - submit: { id: insp-corner }
+  - assert_text: { id: insp-corner, text: "12" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-corner, text: "0" }
+  # …and the OVAL has no corners, so the row is not in its inspector at all.
+  - tap: { id: canvas, at: [248, 192] }
+  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
+  - assert_missing: { id: insp-corner }
+  - assert_text: { id: insp-rotation, text: "0" }
+  # Back to the rectangle for the zoom section.
+  - tap: { id: canvas, at: [45, 45] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - wait_for: { id: insp-corner }
+
   # ---- Zoom: menu-driven, center-anchored; in and out are exact inverses ----
   - assert_text: { id: sk-zoom, key: status_zoom, args: { pct: 100 } }
   - menu: { key: menu_zoom_in, path: [menu_view] }
@@ -241,6 +296,12 @@ flow:
   # follows it to the Canvas tab…
   - tap: { id: canvas, at: [600, 400] }
   - wait_for: { id: insp-bg }
+  # The strip now SHOWS Canvas (a picker's text is the option it is showing)…
+  - assert_text: { id: insp-tab, key: insp_tab_canvas }
+  # …and the other tab, chosen by hand, names the empty selection in the catalog's zero form.
+  - select: { id: insp-tab, index: 1 }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 0 } }
+  - select: { id: insp-tab, index: 0 }
   # …and re-selecting flips it back and gives the parting shot its handles.
   - tap: { id: canvas, at: [45, 45] }
   - wait_for: { id: insp-x }
