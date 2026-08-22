@@ -387,12 +387,27 @@ const STROKE_OPACITY: StyleNum = StyleNum {
 
 const STROKE_WIDTH: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).stroke_width().read(),
-    preview: |t, v| model::nodes().elem(t).stroke_width().write_preview(v.max(0.0)),
-    commit: |t, v| model::nodes().elem(t).stroke_width().write_commit(v.max(0.0)),
+    preview: |t, v| {
+        model::nodes()
+            .elem(t)
+            .stroke_width()
+            .write_preview(v.max(0.0))
+    },
+    commit: |t, v| {
+        model::nodes()
+            .elem(t)
+            .stroke_width()
+            .write_commit(v.max(0.0))
+    },
 };
 
 const FILL_COLOR: StyleColor = StyleColor {
-    read: |t| model::nodes().elem(t).fill().with(|f| f.cloned().unwrap_or_default()),
+    read: |t| {
+        model::nodes()
+            .elem(t)
+            .fill()
+            .with(|f| f.cloned().unwrap_or_default())
+    },
     commit: |t, hex| model::nodes().elem(t).fill().write_commit(hex.to_string()),
 };
 
@@ -403,7 +418,12 @@ const STROKE_COLOR: StyleColor = StyleColor {
             .stroke()
             .with(|s| s.cloned().unwrap_or_default())
     },
-    commit: |t, hex| model::nodes().elem(t).stroke().write_commit(hex.to_string()),
+    commit: |t, hex| {
+        model::nodes()
+            .elem(t)
+            .stroke()
+            .write_commit(hex.to_string())
+    },
 };
 
 /// A slider with its attached percentage field — the opacity rows' control.
@@ -543,7 +563,11 @@ mod tests {
         // A selected GROUP restyles its member shapes.
         let (ea, eb) = (model::nodes().elem(a), model::nodes().elem(b));
         FILL_OPACITY.write_preview(0.4);
-        assert_eq!(ea.fill_opacity().peek(), 0.4, "previews reach the canvas live");
+        assert_eq!(
+            ea.fill_opacity().peek(),
+            0.4,
+            "previews reach the canvas live"
+        );
         FILL_OPACITY.write_commit(0.5);
         day::reactive::flush_sync();
         assert_eq!(ea.fill_opacity().peek(), 0.5);

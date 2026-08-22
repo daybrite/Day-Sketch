@@ -907,9 +907,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
         }
     }
     /// The four style attributes any shape tag may carry, opacities clamped to 0..=1.
-    fn style_of(
-        a: &[(String, String)],
-    ) -> (Option<f64>, Option<String>, Option<f64>, Option<f64>) {
+    fn style_of(a: &[(String, String)]) -> (Option<f64>, Option<String>, Option<f64>, Option<f64>) {
         (
             num(a, "fill-opacity").map(|v| v.clamp(0.0, 1.0)),
             color_attr(a, "stroke"),
