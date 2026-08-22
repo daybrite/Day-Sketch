@@ -133,6 +133,16 @@ fn menus() -> Vec<MenuEntry> {
             .shortcut(cmd_shift(res::str::menu_export_key())),
     ];
     let view = vec![
+        menu_item(res::str::menu_zoom_in().format())
+            .action(|| canvas::zoom_step(1.25))
+            .shortcut(cmd(res::str::menu_zoom_in_key())),
+        menu_item(res::str::menu_zoom_reset().format())
+            .action(canvas::zoom_reset)
+            .shortcut(cmd(res::str::menu_zoom_reset_key())),
+        menu_item(res::str::menu_zoom_out().format())
+            .action(|| canvas::zoom_step(0.8))
+            .shortcut(cmd(res::str::menu_zoom_out_key())),
+        menu_separator(),
         // One stable label ("Inspector"), not a Show/Hide flip: dayscript targets menu items
         // by catalog key, and a flipping label would break `menu: { key: menu_inspector }`.
         menu_item(res::str::menu_inspector().format())
@@ -177,6 +187,20 @@ fn toolbar() -> Vec<ToolbarEntry> {
             .icon(Symbol::Remove)
             .tooltip(res::str::menu_ungroup())
             .action(model::ungroup_selection),
+        toolbar_separator(),
+        // The zoom group: out, actual size, in — the separator sets the trio off from its
+        // neighbors, and the reset button carries text (there is no glyph for "100%").
+        toolbar_button("tb-zoom-out", res::str::menu_zoom_out())
+            .icon(Symbol::ZoomOut)
+            .tooltip(res::str::menu_zoom_out())
+            .action(|| canvas::zoom_step(0.8)),
+        toolbar_button("tb-zoom-reset", res::str::menu_zoom_reset())
+            .tooltip(res::str::menu_zoom_reset())
+            .action(canvas::zoom_reset),
+        toolbar_button("tb-zoom-in", res::str::menu_zoom_in())
+            .icon(Symbol::ZoomIn)
+            .tooltip(res::str::menu_zoom_in())
+            .action(|| canvas::zoom_step(1.25)),
         toolbar_flexible_space(),
         toolbar_button("tb-forward", res::str::menu_forward())
             .icon(Symbol::Up)
@@ -282,6 +306,11 @@ fn status_row() -> impl Piece {
         })
         .tabular()
         .id("sk-frame"),
+        label(move || {
+            res::str::status_zoom((canvas::zoom().get() * 100.0).round() as i64).format()
+        })
+        .tabular()
+        .id("sk-zoom"),
         spacer(),
         label(move || {
             model::doc_rev().track();
@@ -291,6 +320,9 @@ fn status_row() -> impl Piece {
         .id("sk-doc"),
     ))
     .spacing(16.0)
+    // Phone widths cannot hold every readout on one line (the tool row's rule): wrap, or
+    // the trailing doc name squeezes into a one-character-wide column.
+    .fit(RowFit::Wrap { run_spacing: 4.0 })
     .padding(Insets::symmetric(12.0, 6.0))
 }
 

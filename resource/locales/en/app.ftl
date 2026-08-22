@@ -33,6 +33,13 @@ status_selected = Selected: { $ids }
 doc_untitled = Untitled
 
 menu_view = View
+menu_zoom_in = Zoom In
+    .key = +
+menu_zoom_out = Zoom Out
+    .key = -
+menu_zoom_reset = Actual Size
+    .key = 0
+status_zoom = { $pct }%
 menu_inspector = Inspector
     .key = i
 tool_inspector = Inspector

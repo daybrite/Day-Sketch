@@ -10,7 +10,7 @@
 
 use crate::model::{self, Node, NodeFields, NodeKind, Tool};
 use day::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// Hit tolerance around a corner handle — deliberately larger than the DRAWN handle, so the
@@ -22,6 +22,86 @@ const HANDLE_DRAW: f64 = 8.0;
 const SELECTION: Color = Color::hex(0x2563EB);
 const HANDLE_FILL: Color = Color::rgba(1.0, 1.0, 1.0, 0.85);
 const HANDLE_STROKE: Color = Color::rgba(0.145, 0.388, 0.922, 0.9);
+
+// ---------------------------------------------------------------------------
+// The view transform
+// ---------------------------------------------------------------------------
+
+/// The zoom range: far enough out to see a whole drawing, close enough in for pixel work.
+const ZOOM_MIN: f64 = 0.25;
+const ZOOM_MAX: f64 = 4.0;
+
+thread_local! {
+    /// The canvas's last laid-out size — the anchor for menu/toolbar zoom (its center).
+    static VIEWPORT: Cell<(f64, f64)> = const { Cell::new((800.0, 600.0)) };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    /// The last click this canvas acted on, and which recognizer reported it — see
+    /// [`handle_click`].
+    static LAST_CLICK: Cell<Option<(std::time::Instant, f64, f64, ClickSource)>> =
+        const { Cell::new(None) };
+}
+
+/// The canvas magnification: screen = model × zoom + pan. Transient view state — never
+/// persisted and never undoable; unlike the selection it is not even restored by undo.
+pub(crate) fn zoom() -> Signal<f64> {
+    thread_local! {
+        static Z: Signal<f64> = Signal::global(1.0);
+    }
+    Z.with(|s| *s)
+}
+
+/// The canvas translation, in screen pixels — where the model's origin sits in the viewport.
+fn pan() -> Signal<Point> {
+    thread_local! {
+        static P: Signal<Point> = Signal::global(Point::ZERO);
+    }
+    P.with(|s| *s)
+}
+
+fn viewport_center() -> Point {
+    let (w, h) = VIEWPORT.with(|v| v.get());
+    Point::new(w / 2.0, h / 2.0)
+}
+
+/// Set the zoom, keeping the model point under `anchor` (screen coords) fixed on screen —
+/// the pinch stays under the fingers, the menu zoom stays centered.
+fn zoom_to(target: f64, anchor: Point) {
+    let z0 = zoom().get_untracked();
+    let z1 = target.clamp(ZOOM_MIN, ZOOM_MAX);
+    let p0 = pan().get_untracked();
+    let f = z1 / z0;
+    pan().set(Point::new(
+        anchor.x - (anchor.x - p0.x) * f,
+        anchor.y - (anchor.y - p0.y) * f,
+    ));
+    zoom().set(z1);
+}
+
+/// The menu/toolbar zoom step, anchored at the viewport center. In (×1.25) and out (×0.8)
+/// are exact inverses, so a step each way lands back on the starting view.
+pub(crate) fn zoom_step(factor: f64) {
+    zoom_to(zoom().get_untracked() * factor, viewport_center());
+}
+
+pub(crate) fn zoom_reset() {
+    zoom_to(1.0, viewport_center());
+}
+
+fn to_model(p: Point) -> Point {
+    let z = zoom().get_untracked();
+    let pn = pan().get_untracked();
+    Point::new((p.x - pn.x) / z, (p.y - pn.y) / z)
+}
+
+/// A model-space frame's screen-space frame, under the CURRENT (untracked) transform.
+fn screen_bounds(b: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+    let z = zoom().get_untracked();
+    let pn = pan().get_untracked();
+    (b.0 * z + pn.x, b.1 * z + pn.y, b.2 * z, b.3 * z)
+}
 
 // ---------------------------------------------------------------------------
 // Drag machine
@@ -152,10 +232,12 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
     ]
 }
 
-/// A corner handle of ANY selected shape under the point: every selected shape carries its
-/// own handles, and dragging one resizes THAT shape alone (a multi-select drag anywhere else
-/// moves the whole selection). Groups have no handles — groups move; only shapes resize.
-/// Later selections are checked first, matching the draw order (last drawn sits on top).
+/// A corner handle of ANY selected shape under the SCREEN point: every selected shape
+/// carries its own handles, and dragging one resizes THAT shape alone (a multi-select drag
+/// anywhere else moves the whole selection). Groups have no handles — groups move; only
+/// shapes resize. Later selections are checked first, matching the draw order (last drawn
+/// sits on top). Handles live in screen space — their size and grab target stay constant at
+/// every zoom, so the test transforms the corners, not the pointer.
 fn hit_handle(px: f64, py: f64) -> Option<(u64, Corner)> {
     let sel = model::selection().get_untracked();
     let store = model::nodes();
@@ -166,7 +248,7 @@ fn hit_handle(px: f64, py: f64) -> Option<(u64, Corner)> {
         let Some(b) = model::node_bounds(*id) else {
             continue;
         };
-        for (corner, cx, cy) in corner_points(b) {
+        for (corner, cx, cy) in corner_points(screen_bounds(b)) {
             if (px - cx).abs() <= HANDLE && (py - cy).abs() <= HANDLE {
                 return Some((*id, corner));
             }
@@ -186,13 +268,7 @@ fn shape_of(node: &Node) -> Shape {
             // let the path's own cubics carry the aspect via control-point scaling.
             oval_shape(node.x, node.y, node.w, node.h)
         }
-        _ => PathBuilder::new()
-            .move_to(Point::new(node.x, node.y))
-            .line_to(Point::new(node.x + node.w, node.y))
-            .line_to(Point::new(node.x + node.w, node.y + node.h))
-            .line_to(Point::new(node.x, node.y + node.h))
-            .close()
-            .build(),
+        _ => rect_shape(node.x, node.y, node.w, node.h),
     }
 }
 
@@ -233,7 +309,21 @@ fn fill_color(hex: &str) -> Color {
         .unwrap_or(Color::hex(0x888888))
 }
 
-fn draw_scene(d: &mut Draw) {
+fn rect_shape(x: f64, y: f64, w: f64, h: f64) -> Shape {
+    PathBuilder::new()
+        .move_to(Point::new(x, y))
+        .line_to(Point::new(x + w, y))
+        .line_to(Point::new(x + w, y + h))
+        .line_to(Point::new(x, y + h))
+        .close()
+        .build()
+}
+
+fn draw_scene(d: &mut Draw, size: Size) {
+    // Everything clips to the viewport: panned/zoomed content otherwise escapes the canvas
+    // in OFFSCREEN captures (the live window clips it; cacheDisplayInRect does not).
+    d.clip(rect_shape(0.0, 0.0, size.width, size.height));
+
     let store = model::nodes();
     // TRACKED walk: shape + z reads through the collection, field reads per shape.
     let _shape_of_collection = store.keys();
@@ -275,34 +365,29 @@ fn draw_scene(d: &mut Draw) {
             }
         }
     }
-    draw_children(d, store, None);
+    // The scene under the view transform; TRACKED zoom/pan reads, so a gesture repaints.
+    let z = zoom().get();
+    let pn = pan().get();
+    d.transformed(
+        Affine::scale(z, z).then(Affine::translate(pn.x, pn.y)),
+        |d| draw_children(d, store, None),
+    );
 
-    // Selection outlines + handles, above everything. Every selected SHAPE carries its own
-    // handles — multi-selections included; a group shows only its union outline.
+    // Selection outlines + handles, above everything, drawn in SCREEN space at the
+    // transformed positions — constant weight and size at every zoom. Every selected SHAPE
+    // carries its own handles — multi-selections included; a group shows only its union
+    // outline.
     let sel = model::selection().get();
     for id in &sel {
-        let Some(b) = model::node_bounds(*id) else {
+        let Some(b) = model::node_bounds(*id).map(screen_bounds) else {
             continue;
         };
-        let outline = PathBuilder::new()
-            .move_to(Point::new(b.0, b.1))
-            .line_to(Point::new(b.0 + b.2, b.1))
-            .line_to(Point::new(b.0 + b.2, b.1 + b.3))
-            .line_to(Point::new(b.0, b.1 + b.3))
-            .close()
-            .build();
-        d.stroke(outline, SELECTION, 1.5);
+        d.stroke(rect_shape(b.0, b.1, b.2, b.3), SELECTION, 1.5);
         let is_shape = store.elem(*id).kind().with(|k| k.copied()) != Some(NodeKind::Group);
         if is_shape {
             for (_, cx, cy) in corner_points(b) {
                 let half = HANDLE_DRAW / 2.0;
-                let handle = PathBuilder::new()
-                    .move_to(Point::new(cx - half, cy - half))
-                    .line_to(Point::new(cx + half, cy - half))
-                    .line_to(Point::new(cx + half, cy + half))
-                    .line_to(Point::new(cx - half, cy + half))
-                    .close()
-                    .build();
+                let handle = rect_shape(cx - half, cy - half, HANDLE_DRAW, HANDLE_DRAW);
                 d.fill(handle.clone(), HANDLE_FILL);
                 d.stroke(handle, HANDLE_STROKE, 1.0);
             }
@@ -310,6 +395,42 @@ fn draw_scene(d: &mut Draw) {
     }
 }
 
+/// Which recognizer reported a click — the dedup key in [`handle_click`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClickSource {
+    Tap,
+    DragEnd,
+}
+
+/// One physical click, from whichever recognizer reported it. On desktop a click that
+/// wiggles a pixel arrives as a DRAG, not a tap — the pan recognizer claims it and the click
+/// recognizer fails — so [`on_drag`] routes a drag that never really moved here too. Some
+/// backends (qt) deliver BOTH events for one stationary click; the guard drops the second
+/// report of the same press. It only ever pairs ACROSS sources — two taps are two clicks
+/// however close together (a double-click, a fast scripted run) — and a dropped report is
+/// not recorded, so it cannot chain into dropping the next press's.
+fn handle_click(p_screen: Point, source: ClickSource) {
+    // On wasm the guard compiles out: std::time is unavailable there, and the dom shim's 4px
+    // slop already makes tap and drag exclusive, so a double report cannot happen.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = std::time::Instant::now();
+        if let Some((t, x, y, s)) = LAST_CLICK.with(|c| c.get())
+            && s != source
+            && now.duration_since(t).as_millis() < 30
+            && (p_screen.x - x).abs() < 5.0
+            && (p_screen.y - y).abs() < 5.0
+        {
+            return;
+        }
+        LAST_CLICK.with(|c| c.set(Some((now, p_screen.x, p_screen.y, source))));
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = source;
+    on_tap(to_model(p_screen));
+}
+
+/// `p` is in MODEL space — callers convert from screen coordinates first.
 fn on_tap(p: Point) {
     match model::tool().get_untracked() {
         Tool::Rect => {
@@ -328,6 +449,7 @@ fn on_tap(p: Point) {
 
 /// The select tool's tap rule, with the modifiers that were held: shift or the platform's
 /// command key toggles membership (the desktop multi-select idiom); a plain tap replaces.
+/// `p` is in model space.
 pub(crate) fn select_at(p: Point, mods: day::Modifiers) {
     match hit_top_level(p.x, p.y) {
         None => model::selection().set(Vec::new()),
@@ -350,9 +472,14 @@ pub(crate) fn select_at(p: Point, mods: day::Modifiers) {
 
 fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
     let store = model::nodes();
+    // The drag arrives in screen pixels; the model lives behind the view transform. Handles
+    // are hit in screen space (constant grab target), shapes in model space, and every
+    // translation is divided by the zoom so the shape tracks the pointer 1:1 on screen.
+    let zf = zoom().get_untracked();
     match drag.phase {
         DragPhase::Began => {
             let p = drag.location;
+            let m = to_model(p);
             let next = if let Some((id, corner)) = hit_handle(p.x, p.y) {
                 let e = store.elem(id);
                 DragOp::Resize {
@@ -360,7 +487,7 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                     corner,
                     start: (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek()),
                 }
-            } else if let Some(top) = hit_top_level(p.x, p.y) {
+            } else if let Some(top) = hit_top_level(m.x, m.y) {
                 // Dragging an unselected shape selects it first (single), then moves the
                 // WHOLE selection if the hit is part of it.
                 let mut sel = model::selection().get_untracked();
@@ -383,10 +510,15 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
         }
         DragPhase::Changed => match &*op.borrow() {
             DragOp::Move { starts } => {
-                field_previews_move(drag.translation.x, drag.translation.y, starts)
+                field_previews_move(drag.translation.x / zf, drag.translation.y / zf, starts)
             }
             DragOp::Resize { id, corner, start } => {
-                let f = resized(*start, *corner, drag.translation.x, drag.translation.y);
+                let f = resized(
+                    *start,
+                    *corner,
+                    drag.translation.x / zf,
+                    drag.translation.y / zf,
+                );
                 apply_resize(*id, f, false);
             }
             DragOp::Idle => {}
@@ -395,13 +527,25 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
             let finished = std::mem::replace(&mut *op.borrow_mut(), DragOp::Idle);
             match finished {
                 DragOp::Move { starts } => model::undo_stack().grouped("move", || {
-                    field_commits_move(drag.translation.x, drag.translation.y, &starts)
+                    field_commits_move(drag.translation.x / zf, drag.translation.y / zf, &starts)
                 }),
                 DragOp::Resize { id, corner, start } => {
-                    let f = resized(start, corner, drag.translation.x, drag.translation.y);
+                    let f = resized(
+                        start,
+                        corner,
+                        drag.translation.x / zf,
+                        drag.translation.y / zf,
+                    );
                     model::undo_stack().grouped("resize", || apply_resize(id, f, true));
                 }
-                DragOp::Idle => {}
+                // A blank-canvas press that never really moved is a CLICK the tap recognizer
+                // lost to the pan recognizer — act on it, or deselection (and placement)
+                // silently fails on about half of real desktop clicks.
+                DragOp::Idle => {
+                    if drag.translation.x.hypot(drag.translation.y) <= 3.0 {
+                        handle_click(drag.location, ClickSource::DragEnd);
+                    }
+                }
             }
         }
     }
@@ -410,10 +554,30 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
 pub(crate) fn editor_canvas() -> impl Piece {
     let op: Rc<RefCell<DragOp>> = Rc::new(RefCell::new(DragOp::Idle));
     let op2 = op.clone();
-    canvas(move |d, _size| draw_scene(d))
-        .on_tap_at(on_tap)
-        .on_drag(move |drag| on_drag(drag, &op2))
-        .context_menu(crate::context_menu_entries())
-        .id("canvas")
-        .grow()
+    // The pinch scales against the zoom captured at Began (Pinch.scale is cumulative), and
+    // anchors at the gesture's START point — a moving anchor would feed the transform back
+    // into itself.
+    let pinch_base: Rc<Cell<(f64, Point)>> = Rc::new(Cell::new((1.0, Point::ZERO)));
+    canvas(move |d, size| {
+        VIEWPORT.with(|v| v.set((size.width, size.height)));
+        draw_scene(d, size)
+    })
+    .on_tap_at(|p| handle_click(p, ClickSource::Tap))
+    .on_drag(move |drag| on_drag(drag, &op2))
+    .on_pinch(move |g| {
+        if g.phase == DragPhase::Began {
+            pinch_base.set((zoom().get_untracked(), g.location));
+        }
+        let (z0, anchor) = pinch_base.get();
+        zoom_to(z0 * g.scale, anchor);
+    })
+    .on_pan(|g| {
+        pan().update(|p| {
+            p.x += g.delta.x;
+            p.y += g.delta.y;
+        });
+    })
+    .context_menu(crate::context_menu_entries())
+    .id("canvas")
+    .grow()
 }

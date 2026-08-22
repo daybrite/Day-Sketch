@@ -10,11 +10,12 @@
 use crate::model::{self, NodeFields, NodeKind};
 use day::prelude::*;
 
-/// Whether the inspector pane is showing. Deliberately per-run and default-hidden: the
-/// walkthrough opens it explicitly, so every target starts from the same state.
+/// Whether the inspector pane is showing. Shown by default — the panel is the app's main
+/// property surface — and deliberately per-run (not persisted): every target starts from the
+/// same state, which is what the walkthrough scripts assume.
 pub(crate) fn visible() -> Signal<bool> {
     thread_local! {
-        static VIS: Signal<bool> = Signal::global(false);
+        static VIS: Signal<bool> = Signal::global(true);
     }
     VIS.with(|s| *s)
 }
@@ -469,12 +470,16 @@ fn style_section() -> AnyPiece {
 }
 
 /// The panel content: one form, one section per property group. New sections slot in here.
+/// The padding is the pane's breathing room — the inspector hosts hand the panel the full
+/// pane rect, so the inset lives here, once, for every target.
 pub(crate) fn panel() -> AnyPiece {
     let rows = PieceVec((0..geometry_props().len()).map(prop_row).collect());
     form((
         section(rows).title(crate::res::str::insp_geometry()),
         style_section(),
     ))
+    .padding(Insets::symmetric(14.0, 12.0))
+    .any()
 }
 
 #[cfg(test)]
