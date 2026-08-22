@@ -171,16 +171,15 @@ fn toolbar() -> Vec<ToolbarEntry> {
     ]
 }
 
-fn tool_button(id: &'static str, text: LocalizedText, this: model::Tool) -> AnyPiece {
+fn tool_button(id: &'static str, text: LocalizedText, this: model::Tool) -> impl Piece {
     button(text)
         .bordered()
         .action(move || model::tool().set(this))
         .enabled(move || model::tool().get() != this)
         .id(id)
-        .any()
 }
 
-fn tool_row() -> AnyPiece {
+fn tool_row() -> impl Piece {
     let stack = model::undo_stack();
     let (u1, u2, r1, r2) = (stack.clone(), stack.clone(), stack.clone(), stack);
     row((
@@ -207,10 +206,9 @@ fn tool_row() -> AnyPiece {
     // Phone widths cannot hold the whole strip on one line; wrap instead of clipping.
     .fit(RowFit::Wrap { run_spacing: 6.0 })
     .padding(Insets::symmetric(12.0, 8.0))
-    .any()
 }
 
-fn status_row() -> AnyPiece {
+fn status_row() -> impl Piece {
     row((
         label(move || {
             let store = model::nodes();
@@ -261,14 +259,13 @@ fn status_row() -> AnyPiece {
     ))
     .spacing(16.0)
     .padding(Insets::symmetric(12.0, 6.0))
-    .any()
 }
 
-fn editor() -> AnyPiece {
-    column((tool_row(), canvas::editor_canvas(), status_row())).any()
+fn editor() -> impl Piece {
+    column((tool_row(), canvas::editor_canvas(), status_row()))
 }
 
-pub fn root() -> AnyPiece {
+pub fn root() -> impl Piece {
     res::locales::install();
     day_piece_settings::apply_startup(THEME_KEY, LOCALE_KEY);
     day::prefs::install_nav_store();
@@ -302,9 +299,7 @@ pub fn root() -> AnyPiece {
 
     // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
     // the arms, and each arm builds fresh in its own scope.
-    when(move || model::doc_rev().get().is_multiple_of(2), editor)
-        .otherwise(editor)
-        .any()
+    when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor)
 }
 
 // The mobile / embedded entry point. Expands to the export each platform's shell binds against —

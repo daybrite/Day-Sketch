@@ -383,7 +383,7 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
     }
 }
 
-pub(crate) fn editor_canvas() -> AnyPiece {
+pub(crate) fn editor_canvas() -> impl Piece {
     let op: Rc<RefCell<DragOp>> = Rc::new(RefCell::new(DragOp::Idle));
     let op2 = op.clone();
     canvas(move |d, _size| draw_scene(d))
@@ -392,5 +392,4 @@ pub(crate) fn editor_canvas() -> AnyPiece {
         .context_menu(crate::context_menu_entries())
         .id("canvas")
         .grow()
-        .any()
 }
