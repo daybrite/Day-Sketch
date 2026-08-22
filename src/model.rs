@@ -1102,28 +1102,34 @@ pub(crate) fn arrange_named(op: Arrange) {
     undo_stack().grouped("arrange", move || arrange_selection(op));
 }
 
+/// A container-backed memory doc WITHOUT the platform undo bridge (no tree headless),
+/// installed as current — the fixture the model and inspector tests share.
+#[cfg(test)]
+pub(crate) fn install_test_doc() -> Rc<Doc> {
+    let container = day::persistence::ModelContainer::open(
+        day::persistence::Sqlite::memory(),
+        day::persistence::schema![Node],
+    )
+    .expect("open");
+    let store = container.store::<Node>();
+    let stack = container.undo(1000);
+    let doc = Rc::new(Doc {
+        store,
+        container: Some(container),
+        stack,
+        path: None,
+    });
+    DOC.with(|d| *d.borrow_mut() = Some(doc.clone()));
+    selection().set(Vec::new());
+    doc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn test_doc() -> Rc<Doc> {
-        // A container-backed memory doc WITHOUT the platform undo bridge (no tree headless).
-        let container = day::persistence::ModelContainer::open(
-            day::persistence::Sqlite::memory(),
-            day::persistence::schema![Node],
-        )
-        .expect("open");
-        let store = container.store::<Node>();
-        let stack = container.undo(1000);
-        let doc = Rc::new(Doc {
-            store,
-            container: Some(container),
-            stack,
-            path: None,
-        });
-        DOC.with(|d| *d.borrow_mut() = Some(doc.clone()));
-        selection().set(Vec::new());
-        doc
+        install_test_doc()
     }
 
     #[test]

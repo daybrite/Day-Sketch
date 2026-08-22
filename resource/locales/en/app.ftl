@@ -32,6 +32,18 @@ status_none = Nothing selected
 status_selected = Selected: { $ids }
 doc_untitled = Untitled
 
+menu_view = View
+menu_inspector = Inspector
+    .key = i
+tool_inspector = Inspector
+insp_geometry = Geometry
+insp_x = X
+insp_y = Y
+insp_w = Width
+insp_h = Height
+insp_multi = multi
+insp_done = Done
+
 undo_add_rect = Add Rectangle
 undo_add_oval = Add Oval
 undo_move = Move

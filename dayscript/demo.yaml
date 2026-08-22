@@ -1,7 +1,8 @@
 name: sketch-walkthrough
-description: Place, select, drag, resize, group, arrange, and undo — the whole editor through
-  the synthetic rail, with model-state asserts after every gesture. Deterministic because the
-  run starts on a fresh document (File ▸ New Drawing).
+description: Place, select, drag, resize, group, arrange, undo, and the inspector's live
+  geometry fields — the whole editor through the synthetic rail, with model-state asserts
+  after every gesture. Deterministic because the run starts on a fresh document (File ▸ New
+  Drawing).
 flow:
   - wait_for: { id: canvas }
   # A fresh numbered document every run — the walkthrough never inherits the last run's scene.
@@ -123,6 +124,42 @@ flow:
   - key: { key: ArrowLeft }
   - key: { key: ArrowUp, modifiers: [shift] }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
+
+  # ---- Inspector: live geometry fields, multi-select editing (docs/inspector.md) ----
+  - tap: { id: tool-inspector }
+  - wait_for: { id: insp-x }
+  # The single selection's live frame, field by field.
+  - assert_text: { id: insp-x, text: "40" }
+  - assert_text: { id: insp-y, text: "40" }
+  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp-h, text: "64" }
+  # A typed value commits on submit and moves the shape — the status readout agrees…
+  - input: { id: insp-x, text: "120" }
+  - submit: { id: insp-x }
+  - assert_text: { id: insp-x, text: "120" }
+  - assert_text: { id: sk-frame, text: "120,40 96x64" }
+  # …and one undo takes the whole edit back.
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-x, text: "40" }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  # A canvas drag live-updates the fields (previews flow through the same bindings).
+  - drag: { id: canvas, from: [45, 45], to: [65, 75] }
+  - assert_text: { id: insp-x, text: "60" }
+  - assert_text: { id: insp-y, text: "70" }
+  - tap: { id: sk-undo }
+  # Multi-select: widths agree, x positions differ — x reads empty behind its "multi"
+  # placeholder, and typing into it aligns EVERY selected shape in one undo step.
+  - tap: { id: canvas, at: [90, 70], modifiers: [shift] }
+  - assert_text: { id: sk-sel, key: status_selected, args: { ids: "1,3" } }
+  - assert_text: { id: insp-x, text: "" }
+  - assert_text: { id: insp-w, text: "96" }
+  - input: { id: insp-x, text: "40" }
+  - submit: { id: insp-x }
+  - assert_text: { id: insp-x, text: "40" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-x, text: "" }
+  # Close the panel so the parting shot is the same canvas on every target.
+  - tap: { id: tool-inspector }
 
   - screenshot:
       name: editor

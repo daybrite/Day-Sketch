@@ -7,6 +7,7 @@
 use day::prelude::*;
 
 mod canvas;
+mod inspector;
 mod model;
 
 /// Typed constants for the files under `resource/`, generated at build time by `day-build`.
@@ -41,6 +42,15 @@ fn cmd_shift(key: day::LocalizedText) -> Shortcut {
         key: key.format(),
         primary: true,
         shift: true,
+        ..Default::default()
+    }
+}
+
+fn cmd_alt(key: day::LocalizedText) -> Shortcut {
+    Shortcut {
+        key: key.format(),
+        primary: true,
+        alt: true,
         ..Default::default()
     }
 }
@@ -122,6 +132,13 @@ fn menus() -> Vec<MenuEntry> {
             .action(model::export_copy_dialog)
             .shortcut(cmd_shift(res::str::menu_export_key())),
     ];
+    let view = vec![
+        // One stable label ("Inspector"), not a Show/Hide flip: dayscript targets menu items
+        // by catalog key, and a flipping label would break `menu: { key: menu_inspector }`.
+        menu_item(res::str::menu_inspector().format())
+            .action(inspector::toggle)
+            .shortcut(cmd_alt(res::str::menu_inspector_key())),
+    ];
     vec![
         sub_menu(res::str::menu_file().format(), file).bar_role(MenuBarRole::File),
         // Role-only Undo/Redo: the native standard commands, which on macOS/iOS resolve
@@ -145,6 +162,7 @@ fn menus() -> Vec<MenuEntry> {
             ],
         )
         .bar_role(MenuBarRole::Edit),
+        sub_menu(res::str::menu_view().format(), view).bar_role(MenuBarRole::View),
         sub_menu(res::str::menu_arrange().format(), arrange_menu_entries()),
     ]
 }
@@ -168,6 +186,14 @@ fn toolbar() -> Vec<ToolbarEntry> {
             .icon(Symbol::Down)
             .tooltip(res::str::menu_backward())
             .action(|| model::arrange_named(model::Arrange::Down)),
+        // Two-way: a menu/button toggle elsewhere re-checks this item through the signal.
+        toolbar_toggle(
+            "tb-inspector",
+            res::str::menu_inspector(),
+            inspector::visible(),
+        )
+        .icon(Symbol::Info)
+        .tooltip(res::str::menu_inspector()),
     ]
 }
 
@@ -201,6 +227,13 @@ fn tool_row() -> impl Piece {
             })
             .enabled(move || r2.can_redo().get())
             .id("sk-redo"),
+        // The inspector's in-content toggle: the mobile targets have no window toolbar
+        // (`Cap::Toolbar` is Unsupported there), so the tool row is where the affordance
+        // lives — and one id everywhere keeps the walkthrough portable.
+        button(res::str::tool_inspector())
+            .bordered()
+            .action(inspector::toggle)
+            .id("tool-inspector"),
     ))
     .spacing(8.0)
     // Phone widths cannot hold the whole strip on one line; wrap instead of clipping.
@@ -298,8 +331,14 @@ pub fn root() -> impl Piece {
     });
 
     // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
-    // the arms, and each arm builds fresh in its own scope.
-    when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor)
+    // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
+    // the pane (and its visibility) survives a document switch.
+    inspector(
+        inspector::visible(),
+        when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor),
+        inspector::panel,
+    )
+    .sheet_done(res::str::insp_done())
 }
 
 // The mobile / embedded entry point. Expands to the export each platform's shell binds against —
