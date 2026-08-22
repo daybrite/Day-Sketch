@@ -24,6 +24,33 @@ pub(crate) fn toggle() {
     visible().update(|v| *v = !*v);
 }
 
+// ---------------------------------------------------------------------------
+// Tabs: Canvas (document settings) and Selected (the selection's properties). The selection
+// drives which one shows — see [`retarget`] — and the segmented control on top of the panel
+// lets the user look at the other one until the selection next changes.
+// ---------------------------------------------------------------------------
+
+pub(crate) const TAB_CANVAS: usize = 0;
+pub(crate) const TAB_SELECTED: usize = 1;
+
+pub(crate) fn active_tab() -> Signal<usize> {
+    thread_local! {
+        static TAB: Signal<usize> = Signal::global(TAB_CANVAS);
+    }
+    TAB.with(|s| *s)
+}
+
+/// Follow the selection: any selection change lands the inspector on the tab that talks about
+/// it — Selected while something is selected, Canvas when nothing is. Called from the
+/// selection bind in `root()`, so every path that selects (taps, drags, paste, undo/redo's
+/// transient restoration) retargets without knowing about tabs.
+pub(crate) fn retarget(selected: bool) {
+    let want = if selected { TAB_SELECTED } else { TAB_CANVAS };
+    if active_tab().get_untracked() != want {
+        active_tab().set(want);
+    }
+}
+
 /// Re-runs the field bindings without a model change — bumped after a rejected or clamped
 /// edit, so the canonical text paints back over whatever was typed. A global `Signal` rather
 /// than a `Trigger`, which has no scope-free constructor.
@@ -412,6 +439,23 @@ const FILL_COLOR: StyleColor = StyleColor {
     commit: |t, hex| model::nodes().elem(t).fill().write_commit(hex.to_string()),
 };
 
+/// The Canvas tab's background well: the document's single settings row, committed as one
+/// labeled undo unit — [`model::set_background`] owns the grouping.
+#[derive(Clone, Copy)]
+struct BgColor;
+
+impl Binding<Color> for BgColor {
+    fn read(&self) -> Color {
+        parse_hex(&model::background())
+    }
+    fn peek(&self) -> Color {
+        parse_hex(&model::background())
+    }
+    fn write(&self, c: Color) {
+        model::set_background(&to_hex(c));
+    }
+}
+
 const STROKE_COLOR: StyleColor = StyleColor {
     read: |t| {
         model::nodes()
@@ -469,15 +513,41 @@ fn style_section() -> AnyPiece {
     .any()
 }
 
-/// The panel content: one form, one section per property group. New sections slot in here.
-/// The padding is the pane's breathing room — the inspector hosts hand the panel the full
-/// pane rect, so the inset lives here, once, for every target.
-pub(crate) fn panel() -> AnyPiece {
+/// The Selected tab: one form, one section per property group of the selection. New
+/// per-selection sections slot in here.
+fn selected_panel() -> AnyPiece {
     let rows = PieceVec((0..geometry_props().len()).map(prop_row).collect());
     form((
         section(rows).title(crate::res::str::insp_geometry()),
         style_section(),
     ))
+}
+
+/// The Canvas tab: the document's own properties. New document-level settings slot in here.
+fn canvas_panel() -> AnyPiece {
+    form((section((labeled(
+        crate::res::str::insp_background(),
+        day_piece_colorpicker::color_picker(BgColor).key("insp-bg"),
+    ),)),))
+}
+
+/// The panel content: the tab strip over whichever tab is active. The padding is the pane's
+/// breathing room — the inspector hosts hand the panel the full pane rect, so the inset
+/// lives here, once, for every target.
+pub(crate) fn panel() -> AnyPiece {
+    column((
+        picker(
+            [
+                crate::res::str::insp_tab_canvas().format(),
+                crate::res::str::insp_tab_selected().format(),
+            ],
+            active_tab(),
+        )
+        .segmented()
+        .id("insp-tab"),
+        when(|| active_tab().get() == TAB_SELECTED, selected_panel).otherwise(canvas_panel),
+    ))
+    .spacing(10.0)
     .padding(Insets::symmetric(14.0, 12.0))
     .any()
 }
@@ -630,6 +700,30 @@ mod tests {
         pct.write_commit("opaque".into());
         day::reactive::flush_sync();
         assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 1.0);
+    }
+
+    #[test]
+    fn the_background_well_writes_one_labeled_unit_and_reads_back() {
+        let doc = install_test_doc();
+        assert_eq!(to_hex(Binding::<Color>::peek(&BgColor)), "#FFFFFF", "seed");
+        Binding::<Color>::write(&BgColor, Color::hex(0x336699));
+        day::reactive::flush_sync();
+        assert_eq!(model::background(), "#336699");
+        assert_eq!(to_hex(Binding::<Color>::peek(&BgColor)), "#336699");
+        assert!(doc.stack.undo(), "one unit takes it back");
+        day::reactive::flush_sync();
+        assert_eq!(model::background(), "#FFFFFF");
+    }
+
+    #[test]
+    fn retargeting_lands_on_the_tab_that_matches_the_selection() {
+        let _doc = install_test_doc();
+        retarget(false);
+        assert_eq!(active_tab().get_untracked(), TAB_CANVAS);
+        retarget(true);
+        assert_eq!(active_tab().get_untracked(), TAB_SELECTED);
+        retarget(false);
+        assert_eq!(active_tab().get_untracked(), TAB_CANVAS);
     }
 
     #[test]

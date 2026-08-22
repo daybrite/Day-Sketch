@@ -91,6 +91,32 @@ pub(crate) struct Node {
     pub stroke_opacity: f64,
 }
 
+/// Document-level settings: ONE row (id 1), seeded at open. A second model in the same
+/// container, so its writes ride the same change log, autosave, and undo stack as the scene —
+/// a background change is one UPDATE and one undo unit with zero extra wiring.
+#[derive(Clone, PartialEq, Model)]
+#[model(table = "doc")]
+pub(crate) struct DocMeta {
+    #[model(id)]
+    pub id: u64,
+    /// `#RRGGBB` — the canvas background.
+    pub background: String,
+}
+
+/// White: a drawing is paper, in both themes — and the value migration seeds into files from
+/// before the `doc` table existed.
+impl Default for DocMeta {
+    fn default() -> Self {
+        DocMeta {
+            id: 0,
+            background: "#FFFFFF".into(),
+        }
+    }
+}
+
+/// The settings row's fixed id.
+const META_ROW: u64 = 1;
+
 /// Hand-written because these ARE the values lightweight migration backfills into a file from
 /// before the style columns existed (docs/persistence.md) — and the stroke trio reproduces the
 /// hairline every drawing had then: black at 35%, one point wide.
@@ -120,6 +146,7 @@ impl Default for Node {
 
 pub(crate) struct Doc {
     pub store: Store<Keyed<Node>>,
+    pub meta: Store<Keyed<DocMeta>>,
     pub container: Option<day::persistence::ModelContainer>,
     pub stack: UndoStack,
     pub path: Option<PathBuf>,
@@ -195,6 +222,7 @@ fn wire_undo(doc: &Doc) {
                 "cut" => crate::res::str::undo_cut().format(),
                 "paste" => crate::res::str::undo_paste().format(),
                 "style" => crate::res::str::undo_style().format(),
+                "background" => crate::res::str::undo_background().format(),
                 other => other.to_string(),
             }
         });
@@ -202,6 +230,40 @@ fn wire_undo(doc: &Doc) {
 
 pub(crate) fn nodes() -> Store<Keyed<Node>> {
     doc().store
+}
+
+pub(crate) fn meta() -> Store<Keyed<DocMeta>> {
+    doc().meta
+}
+
+/// The canvas background, tracked — the draw and the color well both follow a change live.
+pub(crate) fn background() -> String {
+    meta()
+        .elem(META_ROW)
+        .background()
+        .with(|b| b.cloned().unwrap_or_else(|| DocMeta::default().background))
+}
+
+/// Set the background as ONE labeled undo unit — the Canvas tab's color well.
+pub(crate) fn set_background(hex: &str) {
+    let hex = hex.to_string();
+    undo_stack().grouped("background", || {
+        meta().elem(META_ROW).background().write_commit(hex);
+    });
+}
+
+/// Seed the settings row into a store that lacks it. Runs BEFORE the undo stack watches the
+/// store, so a fresh (or pre-`doc`-table) file opens without an undoable unit — the seed is
+/// backfill, like a migration.
+fn ensure_meta(meta: Store<Keyed<DocMeta>>) {
+    if meta.with_untracked(|k| k.get(META_ROW).is_none()) {
+        meta.restructure("background", Op::Insert, META_ROW, |v| {
+            v.push(DocMeta {
+                id: META_ROW,
+                ..Default::default()
+            });
+        });
+    }
 }
 
 pub(crate) fn undo_stack() -> UndoStack {
@@ -283,15 +345,18 @@ fn traced(driver: day::persistence::Sqlite) -> day::persistence::Sqlite {
 }
 
 fn doc_from_driver(driver: day::persistence::Sqlite, path: Option<PathBuf>) -> Doc {
-    match day::persistence::ModelContainer::open(driver, day::persistence::schema![Node]) {
+    match day::persistence::ModelContainer::open(driver, day::persistence::schema![Node, DocMeta]) {
         Ok(container) => {
             let store = container.store::<Node>();
+            let meta = container.store::<DocMeta>();
+            ensure_meta(meta);
             let stack = container.undo(1000);
             if let Some(p) = &path {
                 day::prefs::set(LAST_DOC_KEY, &p.to_string_lossy());
             }
             Doc {
                 store,
+                meta,
                 container: Some(container),
                 stack,
                 path,
@@ -309,10 +374,14 @@ fn open_file_doc(path: PathBuf) -> Doc {
 
 fn memory_doc() -> Doc {
     let store = Store::new(Keyed::new(Vec::new()));
+    let meta = Store::new(Keyed::new(Vec::new()));
+    ensure_meta(meta);
     let stack = UndoStack::new(1000);
     stack.watch(store);
+    stack.watch(meta);
     Doc {
         store,
+        meta,
         container: None,
         stack,
         path: None,
@@ -1209,13 +1278,19 @@ pub(crate) fn arrange_named(op: Arrange) {
 pub(crate) fn install_test_doc() -> Rc<Doc> {
     let container = day::persistence::ModelContainer::open(
         day::persistence::Sqlite::memory(),
-        day::persistence::schema![Node],
+        day::persistence::schema![Node, DocMeta],
     )
     .expect("open");
     let store = container.store::<Node>();
+    let meta = container.store::<DocMeta>();
+    ensure_meta(meta);
+    // Flush the seed now: the SQL-counting tests must start from a settled file, the way a
+    // real document is settled by the first autosave.
+    container.save().expect("flush the seed");
     let stack = container.undo(1000);
     let doc = Rc::new(Doc {
         store,
+        meta,
         container: Some(container),
         stack,
         path: None,
@@ -1684,6 +1759,25 @@ mod tests {
         }
         assert_eq!(undone, 6, "three placements + three arranges");
         assert_eq!(children_of(None), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn background_seeds_without_a_unit_and_edits_as_one() {
+        let doc = test_doc();
+        assert_eq!(background(), "#FFFFFF", "seeded default");
+        assert!(
+            !doc.stack.can_undo().get_untracked(),
+            "the seed is backfill, not history"
+        );
+        set_background("#112233");
+        day::reactive::flush_sync();
+        assert_eq!(background(), "#112233");
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!(background(), "#FFFFFF");
+        assert!(doc.stack.redo());
+        day::reactive::flush_sync();
+        assert_eq!(background(), "#112233");
     }
 
     #[test]

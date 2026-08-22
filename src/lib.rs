@@ -275,17 +275,6 @@ fn status_row() -> impl Piece {
         })
         .tabular()
         .id("sk-count"),
-        label(move || {
-            let sel = model::selection().get();
-            if sel.is_empty() {
-                res::str::status_none().format()
-            } else {
-                let ids: Vec<String> = sel.iter().map(u64::to_string).collect();
-                res::str::status_selected(ids.join(",")).format()
-            }
-        })
-        .tabular()
-        .id("sk-sel"),
         // The single selection's frame, integer-rounded — what walkthrough drags assert on.
         label(move || {
             let sel = model::selection().get();
@@ -348,6 +337,14 @@ pub fn root() -> impl Piece {
         model::cut_selection_svg,
         model::paste_clipboard,
         model::select_all,
+    );
+    // The selection drives the inspector's tab: any change lands it on the tab that talks
+    // about the current state — Selected while something is, Canvas when nothing is. The
+    // bind fires on every selection change (taps, paste, undo/redo restoration), and only
+    // on change, so a manual tab choice stands until the selection next moves.
+    day::reactive::bind(
+        || model::selection().get(),
+        |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
     );
     // Arrow keys nudge the selection: 1px, or 10 with shift (docs/menus.md).
     day::on_key(|ev| {

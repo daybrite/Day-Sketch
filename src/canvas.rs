@@ -323,6 +323,13 @@ fn draw_scene(d: &mut Draw, size: Size) {
     // Everything clips to the viewport: panned/zoomed content otherwise escapes the canvas
     // in OFFSCREEN captures (the live window clips it; cacheDisplayInRect does not).
     d.clip(rect_shape(0.0, 0.0, size.width, size.height));
+    // The document's background, under everything and across the whole viewport — the canvas
+    // is an unbounded plane, so the background is not part of the zoomable content. TRACKED:
+    // the Canvas tab's well repaints it live.
+    d.fill(
+        rect_shape(0.0, 0.0, size.width, size.height),
+        fill_color(&model::background()),
+    );
 
     let store = model::nodes();
     // TRACKED walk: shape + z reads through the collection, field reads per shape.
