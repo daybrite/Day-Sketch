@@ -324,6 +324,53 @@ flow:
   - wait_for: { id: insp-x }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
 
+  # ---- Lines: two endpoint handles, and an inspector with only what a line has ----
+  # Insert ▸ Line — the app menu's own shape list, the same entries the toolbar pull-down and
+  # the mobile sheet carry. It lands centered in the visible canvas and selected.
+  - menu: { key: tool_line, path: [menu_insert] }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - wait_for: { id: insp-x }
+  # Put it somewhere this script knows: a horizontal line 144 long, so the frame reads 144x0.
+  - input: { id: insp-x, text: "300" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "300" }
+  - submit: { id: insp-y }
+  - assert_text: { id: sk-frame, text: "300,300 144x0" }
+  # A line IS its stroke, so the fill rows, the angle and the corner radius are not in its
+  # inspector at all — while the stroke trio is.
+  - assert_missing: { id: insp-fill }
+  - assert_missing: { id: insp-fill-op }
+  - assert_missing: { id: insp-rotation }
+  - assert_missing: { id: insp-corner }
+  - assert_text: { id: insp-stroke-w, text: "2" }
+  - assert_text: { id: insp-stroke-op, key: insp_percent, args: { pct: 100 } }
+  # Its handles are the two ENDS: dragging the far one moves that point alone, so the frame
+  # grows from the start rather than around a center.
+  - drag: { id: canvas, from: [444, 300], to: [444, 380] }
+  - assert_text: { id: sk-frame, text: "300,300 144x80" }
+  # Dragging the START end holds the far end still: the origin moves and the frame shrinks to
+  # meet it.
+  - drag: { id: canvas, from: [300, 300], to: [350, 300] }
+  - assert_text: { id: sk-frame, text: "350,300 94x80" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: sk-frame, text: "300,300 144x80" }
+  # A press near the segment selects it; the same distance from the segment but inside its
+  # bounding box is bare canvas — a line has no interior.
+  - tap: { id: canvas, at: [600, 400] }
+  - wait_for: { id: insp-bg }
+  - tap: { id: canvas, at: [372, 340] }
+  - wait_for: { id: insp-x }
+  - assert_text: { id: sk-frame, text: "300,300 144x80" }
+  - tap: { id: canvas, at: [430, 310] }
+  - wait_for: { id: insp-bg }
+  # Delete it, so the parting shot is the same three shapes on every target.
+  - tap: { id: canvas, at: [372, 340] }
+  - menu: { key: menu_delete, path: [menu_edit] }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - tap: { id: canvas, at: [45, 45] }
+  - wait_for: { id: insp-x }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+
   # ---- Tabs by hand: a manual switch shows the other tab until the selection next moves ----
   - select: { id: insp-tab, index: 0 }
   - wait_for: { id: insp-bg }

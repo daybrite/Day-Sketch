@@ -26,6 +26,8 @@ menu_delete = Delete
 tool_shape = Shape
 tool_rect = Rectangle
 tool_oval = Oval
+tool_line = Line
+menu_insert = Insert
 menu_cancel = Cancel
 
 status_count = { $n } nodes
@@ -74,6 +76,7 @@ insp_percent = { $pct }%
 
 undo_add_rect = Add Rectangle
 undo_add_oval = Add Oval
+undo_add_line = Add Line
 undo_move = Move
 undo_resize = Resize
 undo_group = Group

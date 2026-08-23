@@ -23,6 +23,9 @@ use std::rc::Rc;
 pub(crate) const MIN_SIZE: f64 = 8.0;
 pub(crate) const DEFAULT_W: f64 = 96.0;
 pub(crate) const DEFAULT_H: f64 = 64.0;
+/// A new line's length — longer than a rectangle is wide, since a line has only the one
+/// dimension to read.
+pub(crate) const DEFAULT_LINE: f64 = 144.0;
 const PALETTE: [&str; 6] = [
     "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
 ];
@@ -31,11 +34,19 @@ const PALETTE: [&str; 6] = [
 // The scene model
 // ---------------------------------------------------------------------------
 
+/// What a node IS. Every `match` on this in the app is exhaustive on purpose — no `_` arm —
+/// so adding a kind here makes the compiler walk you through drawing it, hitting it, writing
+/// it out, and inspecting it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum NodeKind {
     #[default]
     Rect,
     Oval,
+    /// A segment from the frame's ORIGIN to its far point: `(x, y)` is the start and
+    /// `(x + w, y + h)` the end, so `w`/`h` are SIGNED and a line can run in any direction.
+    /// [`node_bounds`] normalizes that into the rectangle everything else (selection, group
+    /// unions, the inspector's fields) works in.
+    Line,
     Group,
 }
 
@@ -47,6 +58,7 @@ impl day::persistence::ColumnValue for NodeKind {
             match self {
                 NodeKind::Rect => "rect",
                 NodeKind::Oval => "oval",
+                NodeKind::Line => "line",
                 NodeKind::Group => "group",
             }
             .into(),
@@ -56,6 +68,7 @@ impl day::persistence::ColumnValue for NodeKind {
         match v.as_text()? {
             "rect" => Ok(NodeKind::Rect),
             "oval" => Ok(NodeKind::Oval),
+            "line" => Ok(NodeKind::Line),
             "group" => Ok(NodeKind::Group),
             other => Err(day::persistence::DbError::new(
                 day::persistence::DbErrorKind::Decode,
@@ -220,6 +233,7 @@ fn wire_undo(doc: &Doc) {
             match label {
                 "add-rect" => crate::res::str::undo_add_rect().format(),
                 "add-oval" => crate::res::str::undo_add_oval().format(),
+                "add-line" => crate::res::str::undo_add_line().format(),
                 "move" => crate::res::str::undo_move().format(),
                 "resize" => crate::res::str::undo_resize().format(),
                 "group" => crate::res::str::undo_group().format(),
@@ -659,18 +673,35 @@ pub(crate) fn top_level_ancestor(id: u64) -> u64 {
     cur
 }
 
+/// One SHAPE's rectangle, always normalized. A line stores signed deltas (its start is the
+/// origin, its end is `origin + (w, h)`), so the rectangle it occupies is the absolute one —
+/// which is what selection, group unions and the inspector's fields all mean by "the frame".
+pub(crate) fn shape_frame(id: u64) -> (f64, f64, f64, f64) {
+    let e = nodes().elem(id);
+    let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+    match e.kind().peek() {
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => (x, y, w, h),
+        NodeKind::Line => (x.min(x + w), y.min(y + h), w.abs(), h.abs()),
+    }
+}
+
+/// A line's two ends, in model space — the RAW fields, before normalization.
+pub(crate) fn line_ends(id: u64) -> ((f64, f64), (f64, f64)) {
+    let e = nodes().elem(id);
+    let (x, y) = (e.x().peek(), e.y().peek());
+    ((x, y), (x + e.w().peek(), y + e.h().peek()))
+}
+
 /// A node's frame: its own for shapes, the union of its shape descendants for groups.
 /// `None` for an empty group.
 pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
     let store = nodes();
     if store.elem(id).kind().peek() != NodeKind::Group {
-        let e = store.elem(id);
-        return Some((e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek()));
+        return Some(shape_frame(id));
     }
     let mut acc: Option<(f64, f64, f64, f64)> = None;
     for s in shape_descendants(id) {
-        let e = store.elem(s);
-        let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+        let (x, y, w, h) = shape_frame(s);
         acc = Some(match acc {
             None => (x, y, w, h),
             Some((ax, ay, aw, ah)) => {
@@ -693,10 +724,34 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
     let id = next_id(store);
     let z = max_z(store, None) + 1.0;
     let fill = PALETTE[(id as usize) % PALETTE.len()].to_string();
-    let label = if kind == NodeKind::Oval {
-        "add-oval"
-    } else {
-        "add-rect"
+    let defaults = Node::default();
+    // Per kind: the undo label, the starting geometry, and the stroke. A line IS its stroke,
+    // so it starts visible and solid where a filled shape starts with the hairline outline.
+    let (label, w, h, stroke_width, stroke_opacity) = match kind {
+        NodeKind::Rect => (
+            "add-rect",
+            DEFAULT_W,
+            DEFAULT_H,
+            defaults.stroke_width,
+            defaults.stroke_opacity,
+        ),
+        NodeKind::Oval => (
+            "add-oval",
+            DEFAULT_W,
+            DEFAULT_H,
+            defaults.stroke_width,
+            defaults.stroke_opacity,
+        ),
+        NodeKind::Line => ("add-line", DEFAULT_LINE, 0.0, 2.0, 1.0),
+        // A group is made by grouping a selection, never placed — but the arm is written out
+        // rather than defaulted, so a new kind cannot slip through this table unnoticed.
+        NodeKind::Group => (
+            "group",
+            DEFAULT_W,
+            DEFAULT_H,
+            defaults.stroke_width,
+            defaults.stroke_opacity,
+        ),
     };
     store.restructure(label, Op::Insert, id, move |v| {
         v.push(Node {
@@ -706,9 +761,11 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             kind,
             x,
             y,
-            w: DEFAULT_W,
-            h: DEFAULT_H,
+            w,
+            h,
             fill,
+            stroke_width,
+            stroke_opacity,
             ..Node::default()
         });
     });
@@ -869,6 +926,21 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                         e.stroke_width().peek(),
                         e.stroke_opacity().peek(),
                         rotate_attr(e.rotation().peek(), x, y, w, h),
+                    ),
+                );
+            }
+            NodeKind::Line => {
+                // SVG's own line: two endpoints, no fill — the raw (signed) fields, so the
+                // direction survives the round trip.
+                let ((x1, y1), (x2, y2)) = line_ends(id);
+                let _ = std::fmt::Write::write_fmt(
+                    out,
+                    format_args!(
+                        "<line x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" \
+                         stroke=\"{}\" stroke-width=\"{}\" stroke-opacity=\"{}\"/>",
+                        e.stroke().with(|s| s.cloned().unwrap_or_default()),
+                        e.stroke_width().peek(),
+                        e.stroke_opacity().peek(),
                     ),
                 );
             }
@@ -1078,6 +1150,26 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     corner_radius: num(&a, "rx").or_else(|| num(&a, "ry")).map(|v| v.max(0.0)),
                 })
             }
+            "line" => {
+                let (fill_opacity, stroke, stroke_width, stroke_opacity) = style_of(&a);
+                let (x1, y1) = (num(&a, "x1").unwrap_or(0.0), num(&a, "y1").unwrap_or(0.0));
+                let (x2, y2) = (num(&a, "x2").unwrap_or(0.0), num(&a, "y2").unwrap_or(0.0));
+                Some(SvgNode::Shape {
+                    kind: NodeKind::Line,
+                    x: x1,
+                    y: y1,
+                    // SIGNED: the deltas to the far end, which is how a line is stored.
+                    w: x2 - x1,
+                    h: y2 - y1,
+                    fill: None,
+                    fill_opacity,
+                    stroke,
+                    stroke_width,
+                    stroke_opacity,
+                    rotation: None,
+                    corner_radius: None,
+                })
+            }
             "ellipse" => {
                 let (cx, cy) = (num(&a, "cx").unwrap_or(0.0), num(&a, "cy").unwrap_or(0.0));
                 let (rx, ry) = (num(&a, "rx").unwrap_or(0.0), num(&a, "ry").unwrap_or(0.0));
@@ -1119,10 +1211,18 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
             _ => None, // unknown element: skipped, children (if any) still scan
         };
         if let Some(s) = shape {
-            // Zero-sized shapes carry no geometry worth pasting.
+            // Zero-sized shapes carry no geometry worth pasting — but a line is allowed one
+            // zero dimension (a horizontal or vertical one has exactly that), so it only
+            // needs SOME length.
             let keep = match &s {
+                SvgNode::Shape {
+                    kind: NodeKind::Line,
+                    w,
+                    h,
+                    ..
+                } => *w != 0.0 || *h != 0.0,
                 SvgNode::Shape { w, h, .. } => *w > 0.0 && *h > 0.0,
-                _ => true,
+                SvgNode::Group(_) => true,
             };
             if keep {
                 match stack.last_mut() {
@@ -1220,8 +1320,20 @@ pub(crate) fn paste_clipboard(text: &str) {
                     kind: *kind,
                     x: x + offset,
                     y: y + offset,
-                    w: w.max(crate::model::MIN_SIZE),
-                    h: h.max(crate::model::MIN_SIZE),
+                    // A line's deltas are signed and may be zero on one axis; every other
+                    // shape gets the size floor.
+                    w: match kind {
+                        NodeKind::Line => *w,
+                        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => {
+                            w.max(crate::model::MIN_SIZE)
+                        }
+                    },
+                    h: match kind {
+                        NodeKind::Line => *h,
+                        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => {
+                            h.max(crate::model::MIN_SIZE)
+                        }
+                    },
                     fill: fill.clone().unwrap_or_else(|| fallback_fill(id)),
                     fill_opacity: fill_opacity.unwrap_or(defaults.fill_opacity),
                     stroke: stroke.clone().unwrap_or(defaults.stroke),
@@ -1810,6 +1922,93 @@ mod tests {
         }
         assert_eq!(undone, 6, "three placements + three arranges");
         assert_eq!(children_of(None), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn a_line_stores_signed_deltas_and_normalizes_its_frame() {
+        let _doc = test_doc();
+        let id = place_shape(NodeKind::Line, 100.0, 100.0);
+        day::reactive::flush_sync();
+        let e = nodes().elem(id);
+        // It starts horizontal, and a line IS its stroke: visible and solid, not a hairline.
+        assert_eq!((e.w().peek(), e.h().peek()), (DEFAULT_LINE, 0.0));
+        assert_eq!(e.stroke_width().peek(), 2.0);
+        assert_eq!(e.stroke_opacity().peek(), 1.0);
+
+        // Point it up and to the LEFT: the fields go negative, and the frame everything else
+        // works in is still the rectangle it occupies.
+        e.w().write(-40.0);
+        e.h().write(-30.0);
+        day::reactive::flush_sync();
+        assert_eq!(line_ends(id), ((100.0, 100.0), (60.0, 70.0)));
+        assert_eq!(node_bounds(id), Some((60.0, 70.0, 40.0, 30.0)));
+
+        // A group's union takes the occupied rectangle, not the raw fields.
+        let r = place_shape(NodeKind::Rect, 200.0, 200.0);
+        day::reactive::flush_sync();
+        selection().set(vec![id, r]);
+        group_selection();
+        day::reactive::flush_sync();
+        let gid = selection().get_untracked()[0];
+        assert_eq!(node_bounds(gid), Some((60.0, 70.0, 236.0, 194.0)));
+    }
+
+    #[test]
+    fn a_line_round_trips_as_svg_with_its_direction() {
+        let _doc = test_doc();
+        let id = place_shape(NodeKind::Line, 100.0, 100.0);
+        day::reactive::flush_sync();
+        let e = nodes().elem(id);
+        e.w().write(-40.0);
+        e.h().write(60.0);
+        e.stroke().write("#112233".into());
+        day::reactive::flush_sync();
+        selection().set(vec![id]);
+
+        let svg = selection_to_svg().expect("serializes");
+        assert!(
+            svg.contains(r#"<line x1="100" y1="100" x2="60" y2="160""#),
+            "{svg}"
+        );
+        assert!(!svg.contains("fill="), "a line has no fill: {svg}");
+
+        paste_clipboard(&svg);
+        day::reactive::flush_sync();
+        let p = nodes().elem(selection().get_untracked()[0]);
+        assert_eq!(p.kind().peek(), NodeKind::Line);
+        // The signed deltas survive — and are NOT floored to MIN_SIZE the way a rect's are.
+        assert_eq!((p.w().peek(), p.h().peek()), (-40.0, 60.0));
+        assert_eq!(p.stroke().with(|s| s.cloned()).as_deref(), Some("#112233"));
+
+        // A foreign horizontal line has a zero dimension and must still paste.
+        paste_clipboard(r##"<svg><line x1="0" y1="5" x2="80" y2="5"/></svg>"##);
+        day::reactive::flush_sync();
+        let q = nodes().elem(selection().get_untracked()[0]);
+        assert_eq!(q.kind().peek(), NodeKind::Line);
+        assert_eq!((q.w().peek(), q.h().peek()), (80.0, 0.0));
+    }
+
+    #[test]
+    fn a_line_is_hit_near_the_segment_not_across_its_bounding_box() {
+        use crate::canvas::select_at;
+        let _doc = test_doc();
+        let id = place_shape(NodeKind::Line, 0.0, 0.0);
+        day::reactive::flush_sync();
+        // A diagonal from (0,0) to (100,100).
+        let e = nodes().elem(id);
+        e.w().write(100.0);
+        e.h().write(100.0);
+        day::reactive::flush_sync();
+        let plain = day::Modifiers::default();
+
+        select_at(Point::new(50.0, 52.0), plain);
+        assert_eq!(selection().get_untracked(), vec![id], "on the segment");
+        // Inside the bounding box, far from the line itself: a rectangle would catch this.
+        select_at(Point::new(90.0, 10.0), plain);
+        assert!(
+            selection().get_untracked().is_empty(),
+            "the box is not the shape"
+        );
     }
 
     #[test]

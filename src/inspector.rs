@@ -103,18 +103,27 @@ fn set_y(id: u64, v: f64) {
 
 /// Width/height apply to shapes only — groups keep their derived union, the canvas's own
 /// resize rule (groups move; only shapes resize).
-fn set_w(id: u64, v: f64) {
+///
+/// A line's fields are SIGNED deltas to its far end, and the inspector shows the rectangle it
+/// occupies: a typed extent therefore sets the delta's MAGNITUDE and leaves its direction
+/// alone (a line running up-left keeps running up-left), and it may legitimately be zero — a
+/// horizontal line has no height, where a rectangle floors at [`model::MIN_SIZE`].
+fn set_extent(id: u64, v: f64, horizontal: bool) {
     let e = model::nodes().elem(id);
-    if e.kind().peek() != NodeKind::Group {
-        e.w().write_commit(v.max(model::MIN_SIZE));
+    let field = if horizontal { e.w() } else { e.h() };
+    match e.kind().peek() {
+        NodeKind::Group => {}
+        NodeKind::Line => field.write_commit(v.max(0.0).copysign(field.peek())),
+        NodeKind::Rect | NodeKind::Oval => field.write_commit(v.max(model::MIN_SIZE)),
     }
 }
 
+fn set_w(id: u64, v: f64) {
+    set_extent(id, v, true);
+}
+
 fn set_h(id: u64, v: f64) {
-    let e = model::nodes().elem(id);
-    if e.kind().peek() != NodeKind::Group {
-        e.h().write_commit(v.max(model::MIN_SIZE));
-    }
+    set_extent(id, v, false);
 }
 
 fn geometry_props() -> [NumProp; 4] {
@@ -544,23 +553,57 @@ fn opacity_row(num: StyleNum, id: &'static str) -> AnyPiece {
 /// showing a corner-radius row at all. An oval has no corners, and a mixed selection has no
 /// one answer, so both hide the row rather than offering a field that does nothing.
 fn selection_is_rects() -> bool {
+    every_target(|k| match k {
+        NodeKind::Rect => true,
+        NodeKind::Oval | NodeKind::Line | NodeKind::Group => false,
+    })
+}
+
+/// Every shape the style section would edit answers `yes` — and there is at least one. The
+/// panel asks this before offering a property, so a row is present exactly when it applies to
+/// the WHOLE selection; a mixed selection has no one answer and shows nothing rather than a
+/// field that edits only some of what is selected.
+fn every_target(applies: impl Fn(NodeKind) -> bool) -> bool {
     let targets = style_targets(true);
     !targets.is_empty()
         && targets
             .iter()
-            .all(|t| model::nodes().elem(*t).kind().read() == NodeKind::Rect)
+            .all(|t| applies(model::nodes().elem(*t).kind().read()))
+}
+
+/// A fill needs an interior. A line has none — it IS its stroke.
+fn selection_has_fill() -> bool {
+    every_target(|k| match k {
+        NodeKind::Rect | NodeKind::Oval => true,
+        NodeKind::Line | NodeKind::Group => false,
+    })
+}
+
+/// A rotation turns a frame about its center. A line has no frame of its own — its direction
+/// is where its two ends are — so it is turned by dragging them, not by an angle field.
+fn selection_can_rotate() -> bool {
+    every_target(|k| match k {
+        NodeKind::Rect | NodeKind::Oval => true,
+        NodeKind::Line | NodeKind::Group => false,
+    })
 }
 
 fn style_section() -> AnyPiece {
     section((
-        labeled(
-            crate::res::str::insp_fill(),
-            day_piece_colorpicker::color_picker(FILL_COLOR).key("insp-fill"),
-        ),
-        labeled(
-            crate::res::str::insp_fill_opacity(),
-            opacity_row(FILL_OPACITY, "insp-fill-op"),
-        ),
+        // The fill pair mounts only for shapes that have an interior (docs: `when` disposes
+        // the arm, so a line's inspector has no fill rows at all rather than dead ones).
+        when(selection_has_fill, || {
+            labeled(
+                crate::res::str::insp_fill(),
+                day_piece_colorpicker::color_picker(FILL_COLOR).key("insp-fill"),
+            )
+        }),
+        when(selection_has_fill, || {
+            labeled(
+                crate::res::str::insp_fill_opacity(),
+                opacity_row(FILL_OPACITY, "insp-fill-op"),
+            )
+        }),
         labeled(
             crate::res::str::insp_stroke(),
             day_piece_colorpicker::color_picker(STROKE_COLOR).key("insp-stroke"),
@@ -571,7 +614,9 @@ fn style_section() -> AnyPiece {
                 .range(0.0..=64.0)
                 .step(1.0)
                 .decimals(0)
-                .key("insp-stroke-w"),
+                .key("insp-stroke-w")
+                // Same right edge as the opacity rows below it.
+                .grow(),
         ),
         labeled(
             crate::res::str::insp_stroke_opacity(),
@@ -585,6 +630,11 @@ fn style_section() -> AnyPiece {
 /// The geometry section's transform rows: rotation always, corner radius only where it means
 /// something. Both are steppers over the same fan-out binding the style numbers use.
 fn rotation_row() -> AnyPiece {
+    when(selection_can_rotate, rotation_field).any()
+}
+
+/// The angle field itself — see [`rotation_row`] for when it is shown.
+fn rotation_field() -> impl Piece {
     labeled(
         crate::res::str::insp_rotation(),
         day_piece_stepper::stepper(DegField { num: ROTATION })
@@ -893,6 +943,66 @@ mod tests {
         CORNER_RADIUS.write_commit(-5.0);
         day::reactive::flush_sync();
         assert_eq!(model::nodes().elem(r).corner_radius().peek(), 0.0);
+    }
+
+    #[test]
+    fn a_line_offers_only_the_properties_it_has() {
+        let _doc = install_test_doc();
+        let line = model::place_shape(NodeKind::Line, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let rect = model::place_shape(NodeKind::Rect, 200.0, 0.0);
+        day::reactive::flush_sync();
+
+        // A line is its stroke: no fill, no angle field, no corners.
+        model::selection().set(vec![line]);
+        assert!(!selection_has_fill());
+        assert!(!selection_can_rotate());
+        assert!(!selection_is_rects());
+
+        // A rectangle has all three.
+        model::selection().set(vec![rect]);
+        assert!(selection_has_fill());
+        assert!(selection_can_rotate());
+        assert!(selection_is_rects());
+
+        // A mixed selection has no one answer, so it offers none of them rather than editing
+        // half of what is selected.
+        model::selection().set(vec![line, rect]);
+        assert!(!selection_has_fill());
+        assert!(!selection_can_rotate());
+        assert!(!selection_is_rects());
+    }
+
+    #[test]
+    fn a_typed_extent_sets_a_lines_length_and_keeps_its_direction() {
+        let _doc = install_test_doc();
+        let id = model::place_shape(NodeKind::Line, 100.0, 100.0);
+        day::reactive::flush_sync();
+        let e = model::nodes().elem(id);
+        e.w().write(-40.0);
+        e.h().write(30.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![id]);
+
+        // The fields show the rectangle the line occupies…
+        assert_eq!(W.peek(), "40");
+        // …and typing an extent scales the delta without turning the line around.
+        W.write_commit("80".into());
+        day::reactive::flush_sync();
+        assert_eq!(e.w().peek(), -80.0, "still running leftward");
+        // A line may legitimately have no height, where a rectangle floors at MIN_SIZE.
+        let h: PropField = PropField { ix: 3 };
+        h.write_commit("0".into());
+        day::reactive::flush_sync();
+        assert_eq!(e.h().peek(), 0.0);
+        model::selection().set(vec![model::place_shape(NodeKind::Rect, 0.0, 0.0)]);
+        day::reactive::flush_sync();
+        W.write_commit("1".into());
+        day::reactive::flush_sync();
+        assert_eq!(
+            model::node_bounds(model::selection().get_untracked()[0]).map(|b| b.2),
+            Some(model::MIN_SIZE)
+        );
     }
 
     #[test]

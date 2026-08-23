@@ -95,11 +95,13 @@ pub(crate) fn zoom_reset() {
 /// looking. Selects it, the way every placement does.
 pub(crate) fn place_centered(kind: NodeKind) {
     let c = to_model(viewport_center());
-    let id = model::place_shape(
-        kind,
-        c.x - model::DEFAULT_W / 2.0,
-        c.y - model::DEFAULT_H / 2.0,
-    );
+    // Offset by half the kind's own starting extent, so what lands is CENTERED rather than
+    // hung off the middle by a rectangle's proportions.
+    let (w, h) = match kind {
+        NodeKind::Line => (model::DEFAULT_LINE, 0.0),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => (model::DEFAULT_W, model::DEFAULT_H),
+    };
+    let id = model::place_shape(kind, c.x - w / 2.0, c.y - h / 2.0);
     model::selection().set(vec![id]);
 }
 
@@ -130,6 +132,21 @@ enum Corner {
     BottomRight,
 }
 
+/// Which end of a line a handle drives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LineEnd {
+    Start,
+    End,
+}
+
+/// What the pointer grabbed: a rectangle's corner, or one end of a line. The two shapes of
+/// handle a selection can wear — a line has no corners to resize, only two points to move.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Handle {
+    Corner(Corner),
+    End(LineEnd),
+}
+
 enum DragOp {
     Idle,
     /// Every affected SHAPE with its starting origin (a group drags its descendants).
@@ -143,6 +160,29 @@ enum DragOp {
         start: (f64, f64, f64, f64),
         rotation: f64,
     },
+    /// One END of a line, with the line's starting fields. Moving a point, not resizing a
+    /// frame: the other end stays exactly where it is.
+    Endpoint {
+        id: u64,
+        end: LineEnd,
+        start: (f64, f64, f64, f64),
+    },
+}
+
+/// A line's fields after one of its ends has moved by (dx, dy) in model space. Moving the
+/// START also moves the origin, and the deltas absorb the difference so the far end holds
+/// still; moving the END is the deltas alone.
+fn line_dragged(
+    start: (f64, f64, f64, f64),
+    end: LineEnd,
+    dx: f64,
+    dy: f64,
+) -> (f64, f64, f64, f64) {
+    let (x, y, w, h) = start;
+    match end {
+        LineEnd::Start => (x + dx, y + dy, w - dx, h - dy),
+        LineEnd::End => (x, y, w + dx, h + dy),
+    }
 }
 
 fn field_previews_move(dx: f64, dy: f64, starts: &[(u64, f64, f64)]) {
@@ -250,11 +290,28 @@ fn apply_resize(id: u64, frame: (f64, f64, f64, f64), commit: bool) {
 // Hit testing
 // ---------------------------------------------------------------------------
 
+/// How near the pointer must come to a line to count as on it, in MODEL units at 1:1 — a
+/// stroke is thin, so the grab is the tolerance rather than the geometry.
+const LINE_TOLERANCE: f64 = 6.0;
+
+/// The distance from `p` to the segment `a`–`b`.
+fn distance_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+    let len2 = vx * vx + vy * vy;
+    // A zero-length line is a point.
+    let t = if len2 <= f64::EPSILON {
+        0.0
+    } else {
+        (((p.0 - a.0) * vx + (p.1 - a.1) * vy) / len2).clamp(0.0, 1.0)
+    };
+    (p.0 - (a.0 + vx * t)).hypot(p.1 - (a.1 + vy * t))
+}
+
 fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool {
     let e = store.elem(id);
     let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
     // A rotated shape is drawn through a transform, so the POINT rides the inverse back into
-    // the shape's own upright space — where the frame test below is the geometry again.
+    // the shape's own upright space — where the frame tests below are the geometry again.
     let rot = e.rotation().peek();
     let (px, py) = if rot.abs() > f64::EPSILON {
         let p = rotation_about_center(x, y, w, h, -rot).apply(Point::new(px, py));
@@ -262,16 +319,25 @@ fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool 
     } else {
         (px, py)
     };
-    if px < x || py < y || px > x + w || py > y + h {
-        return false;
-    }
     match e.kind().peek() {
+        // A line has no interior: near the segment IS on it, and the tolerance shrinks as the
+        // view zooms in so the grab stays the same size under the pointer.
+        NodeKind::Line => {
+            let ((ax, ay), (bx, by)) = model::line_ends(id);
+            distance_to_segment((px, py), (ax, ay), (bx, by))
+                <= LINE_TOLERANCE / zoom().get_untracked()
+        }
         NodeKind::Oval => {
+            if px < x || py < y || px > x + w || py > y + h {
+                return false;
+            }
             let (cx, cy) = (x + w / 2.0, y + h / 2.0);
             let (nx, ny) = ((px - cx) / (w / 2.0), (py - cy) / (h / 2.0));
             nx * nx + ny * ny <= 1.0
         }
-        _ => true,
+        // A group is never tested directly — `hit_top_level` walks its shape descendants —
+        // but the arm is written out so a new kind must decide its own hit shape.
+        NodeKind::Rect | NodeKind::Group => px >= x && py >= y && px <= x + w && py <= y + h,
     }
 }
 
@@ -304,11 +370,21 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
 /// its members and turns with none of them.
 fn rotation_of(id: u64) -> f64 {
     let e = model::nodes().elem(id);
-    if e.kind().peek() == NodeKind::Group {
-        0.0
-    } else {
-        e.rotation().peek()
+    match e.kind().peek() {
+        NodeKind::Rect | NodeKind::Oval => e.rotation().peek(),
+        // A group's frame is the axis-aligned union of its members and turns with none of
+        // them; a line's direction IS its two endpoints, so it carries no separate angle
+        // (and the inspector offers it none).
+        NodeKind::Group | NodeKind::Line => 0.0,
     }
+}
+
+/// A line's two ends in SCREEN space — where its handles are drawn and grabbed.
+fn screen_ends(id: u64) -> [(LineEnd, f64, f64); 2] {
+    let ((ax, ay), (bx, by)) = model::line_ends(id);
+    let a = to_screen(Point::new(ax, ay));
+    let b = to_screen(Point::new(bx, by));
+    [(LineEnd::Start, a.x, a.y), (LineEnd::End, b.x, b.y)]
 }
 
 /// A selected node's four corners in SCREEN space, turned by the shape's own rotation about
@@ -336,19 +412,30 @@ fn screen_corners(b: (f64, f64, f64, f64), rotation: f64) -> [(Corner, f64, f64)
 /// shapes resize. Later selections are checked first, matching the draw order (last drawn
 /// sits on top). Handles live in screen space — their size and grab target stay constant at
 /// every zoom, so the test transforms the corners, not the pointer.
-fn hit_handle(px: f64, py: f64) -> Option<(u64, Corner)> {
+fn hit_handle(px: f64, py: f64) -> Option<(u64, Handle)> {
     let sel = model::selection().get_untracked();
     let store = model::nodes();
+    let near = |cx: f64, cy: f64| (px - cx).abs() <= HANDLE && (py - cy).abs() <= HANDLE;
     for id in sel.iter().rev() {
-        if store.elem(*id).kind().peek() == NodeKind::Group {
-            continue;
-        }
-        let Some(b) = model::node_bounds(*id) else {
-            continue;
-        };
-        for (corner, cx, cy) in screen_corners(b, rotation_of(*id)) {
-            if (px - cx).abs() <= HANDLE && (py - cy).abs() <= HANDLE {
-                return Some((*id, corner));
+        match store.elem(*id).kind().peek() {
+            // Groups move; only shapes carry handles.
+            NodeKind::Group => continue,
+            NodeKind::Line => {
+                for (end, cx, cy) in screen_ends(*id) {
+                    if near(cx, cy) {
+                        return Some((*id, Handle::End(end)));
+                    }
+                }
+            }
+            NodeKind::Rect | NodeKind::Oval => {
+                let Some(b) = model::node_bounds(*id) else {
+                    continue;
+                };
+                for (corner, cx, cy) in screen_corners(b, rotation_of(*id)) {
+                    if near(cx, cy) {
+                        return Some((*id, Handle::Corner(corner)));
+                    }
+                }
             }
         }
     }
@@ -366,8 +453,22 @@ fn shape_of(node: &Node) -> Shape {
             // let the path's own cubics carry the aspect via control-point scaling.
             oval_shape(node.x, node.y, node.w, node.h)
         }
-        _ => round_rect_shape(node.x, node.y, node.w, node.h, node.corner_radius),
+        // Signed deltas: origin to far point, whichever way it runs.
+        NodeKind::Line => segment_shape((node.x, node.y), (node.x + node.w, node.y + node.h)),
+        // A group draws nothing of its own — its members draw themselves — but the arm is
+        // written out so a new kind must say what it looks like.
+        NodeKind::Rect | NodeKind::Group => {
+            round_rect_shape(node.x, node.y, node.w, node.h, node.corner_radius)
+        }
     }
+}
+
+/// An open path from `a` to `b` — a line's whole geometry.
+fn segment_shape(a: (f64, f64), b: (f64, f64)) -> Shape {
+    PathBuilder::new()
+        .move_to(Point::new(a.0, a.1))
+        .line_to(Point::new(b.0, b.1))
+        .build()
 }
 
 /// A rectangle with rounded corners — plain when the radius is 0, and the radius clamped to
@@ -503,9 +604,10 @@ fn draw_scene(d: &mut Draw, size: Size) {
         // selection next changes.
         for id in crate::model::children_of_tracked(parent) {
             let e = store.elem(id);
-            match e.kind().with(|k| k.copied().unwrap_or_default()) {
+            let kind = e.kind().with(|k| k.copied().unwrap_or_default());
+            match kind {
                 NodeKind::Group => draw_children(d, store, Some(id)),
-                kind => {
+                NodeKind::Rect | NodeKind::Oval | NodeKind::Line => {
                     let node = Node {
                         id,
                         parent: None,
@@ -524,10 +626,18 @@ fn draw_scene(d: &mut Draw, size: Size) {
                         corner_radius: e.corner_radius().read(),
                     };
                     let paint = |d: &mut Draw| {
-                        d.fill(
-                            shape_of(&node),
-                            fill_color(&node.fill).with_alpha(node.fill_opacity),
-                        );
+                        // A line has no interior to fill — it IS its stroke. Everything else
+                        // fills, then strokes its outline.
+                        let fills = match node.kind {
+                            NodeKind::Rect | NodeKind::Oval | NodeKind::Group => true,
+                            NodeKind::Line => false,
+                        };
+                        if fills {
+                            d.fill(
+                                shape_of(&node),
+                                fill_color(&node.fill).with_alpha(node.fill_opacity),
+                            );
+                        }
                         if node.stroke_width > 0.0 && node.stroke_opacity > 0.0 {
                             d.stroke(
                                 shape_of(&node),
@@ -569,11 +679,41 @@ fn draw_scene(d: &mut Draw, size: Size) {
         let Some(b) = model::node_bounds(*id) else {
             continue;
         };
-        // TRACKED, like every other field the scene draws from: turning a shape must repaint
-        // its outline in the same frame.
+        // TRACKED, like every other field the scene draws from: turning a shape (or dragging
+        // an end of a line) must repaint its outline in the same frame.
         let rotation = store.elem(*id).rotation().read();
-        let is_shape = store.elem(*id).kind().with(|k| k.copied()) != Some(NodeKind::Group);
-        let pts = screen_corners(b, if is_shape { rotation } else { 0.0 });
+        let kind = store
+            .elem(*id)
+            .kind()
+            .with(|k| k.copied().unwrap_or_default());
+        // What a selection LOOKS like is per kind, so a new one has to say for itself.
+        let handles = match kind {
+            // A line wears its own selection: the segment itself, marked at both ends. A
+            // frame around it would say "resize me" about a shape that has no frame to
+            // resize.
+            NodeKind::Line => {
+                // TRACKED reads of the raw fields — a dragged endpoint previews through
+                // them, so the overlay must follow the same frame the segment does.
+                let e = store.elem(*id);
+                let (x, y, w, h) = (e.x().read(), e.y().read(), e.w().read(), e.h().read());
+                let a = to_screen(Point::new(x, y));
+                let z = to_screen(Point::new(x + w, y + h));
+                let ends = [(a.x, a.y), (z.x, z.y)];
+                d.stroke(segment_shape(ends[0], ends[1]), SELECTION, 1.5);
+                for (cx, cy) in ends {
+                    let handle = handle_shape(cx, cy, 0.0);
+                    d.fill(handle.clone(), HANDLE_FILL);
+                    d.stroke(handle, HANDLE_STROKE, 1.0);
+                }
+                continue;
+            }
+            // A frame, with corner handles to resize by.
+            NodeKind::Rect | NodeKind::Oval => true,
+            // A group shows the union it occupies and no handles: groups move, their members
+            // resize.
+            NodeKind::Group => false,
+        };
+        let pts = screen_corners(b, if handles { rotation } else { 0.0 });
         let p = |i: usize| Point::new(pts[i].1, pts[i].2);
         // Ring order: the corners come back TL, TR, BL, BR.
         d.stroke(
@@ -587,7 +727,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
             SELECTION,
             1.5,
         );
-        if is_shape {
+        if handles {
             for (_, cx, cy) in pts {
                 let handle = handle_shape(cx, cy, rotation);
                 d.fill(handle.clone(), HANDLE_FILL);
@@ -672,13 +812,17 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
         DragPhase::Began => {
             let p = drag.location;
             let m = to_model(p);
-            let next = if let Some((id, corner)) = hit_handle(p.x, p.y) {
+            let next = if let Some((id, handle)) = hit_handle(p.x, p.y) {
                 let e = store.elem(id);
-                DragOp::Resize {
-                    id,
-                    corner,
-                    start: (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek()),
-                    rotation: rotation_of(id),
+                let start = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+                match handle {
+                    Handle::Corner(corner) => DragOp::Resize {
+                        id,
+                        corner,
+                        start,
+                        rotation: rotation_of(id),
+                    },
+                    Handle::End(end) => DragOp::Endpoint { id, end, start },
                 }
             } else if let Some(top) = hit_top_level(m.x, m.y) {
                 // Dragging an unselected shape selects it first (single), then moves the
@@ -720,6 +864,15 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                 );
                 apply_resize(*id, f, false);
             }
+            DragOp::Endpoint { id, end, start } => {
+                let f = line_dragged(
+                    *start,
+                    *end,
+                    drag.translation.x / zf,
+                    drag.translation.y / zf,
+                );
+                apply_resize(*id, f, false);
+            }
             DragOp::Idle => {}
         },
         DragPhase::Ended => {
@@ -741,6 +894,11 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                         drag.translation.y / zf,
                         rotation,
                     );
+                    model::undo_stack().grouped("resize", || apply_resize(id, f, true));
+                }
+                DragOp::Endpoint { id, end, start } => {
+                    let f =
+                        line_dragged(start, end, drag.translation.x / zf, drag.translation.y / zf);
                     model::undo_stack().grouped("resize", || apply_resize(id, f, true));
                 }
                 // A blank-canvas press that never really moved is a CLICK the tap recognizer
@@ -826,12 +984,59 @@ mod tests {
         );
 
         // The grab follows the drawing: the turned position hits, the old one does not.
-        assert_eq!(hit_handle(bx, by), Some((id, Corner::BottomRight)));
+        assert_eq!(
+            hit_handle(bx, by),
+            Some((id, Handle::Corner(Corner::BottomRight)))
+        );
         assert_eq!(
             hit_handle(96.0, 64.0),
             None,
             "the un-turned corner is bare canvas"
         );
+    }
+
+    #[test]
+    fn a_line_carries_two_endpoint_handles_and_no_corners() {
+        let _doc = install_test_doc();
+        let id = model::place_shape(NodeKind::Line, 10.0, 20.0);
+        day::reactive::flush_sync();
+        let e = model::nodes().elem(id);
+        e.w().write(60.0);
+        e.h().write(40.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![id]);
+
+        // Its handles are the two ENDS…
+        assert_eq!(
+            hit_handle(10.0, 20.0),
+            Some((id, Handle::End(LineEnd::Start)))
+        );
+        assert_eq!(
+            hit_handle(70.0, 60.0),
+            Some((id, Handle::End(LineEnd::End)))
+        );
+        // …and the corners of the box it happens to occupy are not handles at all.
+        assert_eq!(hit_handle(70.0, 20.0), None, "no corner handles on a line");
+    }
+
+    #[test]
+    fn dragging_one_end_of_a_line_leaves_the_other_alone() {
+        let start = (10.0, 20.0, 60.0, 40.0); // (10,20) → (70,60)
+
+        // The END follows the pointer; the start is untouched.
+        let f = line_dragged(start, LineEnd::End, 5.0, -10.0);
+        assert_eq!(f, (10.0, 20.0, 65.0, 30.0));
+
+        // Moving the START moves the origin, and the deltas absorb it so the far end holds
+        // exactly still.
+        let f = line_dragged(start, LineEnd::Start, 5.0, -10.0);
+        assert_eq!(f, (15.0, 10.0, 55.0, 50.0));
+        assert_eq!((f.0 + f.2, f.1 + f.3), (70.0, 60.0), "the far end is fixed");
+
+        // A drag past the far end simply flips the direction — the fields go negative and the
+        // frame normalizes, rather than the line refusing to cross itself.
+        let f = line_dragged(start, LineEnd::Start, 100.0, 0.0);
+        assert!(f.2 < 0.0, "{f:?}");
     }
 
     #[test]

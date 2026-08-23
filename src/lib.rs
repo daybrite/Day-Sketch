@@ -173,6 +173,9 @@ fn menus() -> Vec<MenuEntry> {
         )
         .bar_role(MenuBarRole::Edit),
         sub_menu(res::str::menu_view().format(), view).bar_role(MenuBarRole::View),
+        // Insert: the shape vocabulary, one item per kind — the same entries the toolbar's
+        // pull-down and the mobile sheet serve, so a new shape appears in all three at once.
+        sub_menu(res::str::menu_insert().format(), shape_menu_entries()),
         sub_menu(res::str::menu_arrange().format(), arrange_menu_entries()),
     ]
 }
@@ -242,6 +245,9 @@ fn shape_menu_entries() -> Vec<MenuEntry> {
         menu_item(res::str::tool_oval().format())
             .icon(Symbol::Oval)
             .action(|| canvas::place_centered(model::NodeKind::Oval)),
+        menu_item(res::str::tool_line().format())
+            .icon(Symbol::Line)
+            .action(|| canvas::place_centered(model::NodeKind::Line)),
     ]
 }
 
@@ -253,6 +259,7 @@ fn choose_shape() {
             .sheet()
             .button(res::str::tool_rect(), model::NodeKind::Rect)
             .button(res::str::tool_oval(), model::NodeKind::Oval)
+            .button(res::str::tool_line(), model::NodeKind::Line)
             .cancel(res::str::menu_cancel())
             .present()
             .await;
