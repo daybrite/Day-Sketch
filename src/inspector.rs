@@ -539,14 +539,13 @@ const STROKE_COLOR: StyleColor = StyleColor {
 };
 
 /// A slider with its attached percentage field — the opacity rows' control.
-fn opacity_row(num: StyleNum, id: &'static str) -> AnyPiece {
+fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
     row((
         slider(num).range(0.0..=1.0).step(0.01).grow(),
         text_field(PctField { num }).id(id).width(64.0),
     ))
     .spacing(6.0)
     .align(VAlign::Center)
-    .any()
 }
 
 /// Whether every shape the style section would edit is a rectangle — the condition for
@@ -588,7 +587,7 @@ fn selection_can_rotate() -> bool {
     })
 }
 
-fn style_section() -> AnyPiece {
+fn style_section() -> impl Piece {
     section((
         // The fill pair mounts only for shapes that have an interior (docs: `when` disposes
         // the arm, so a line's inspector has no fill rows at all rather than dead ones).
@@ -624,7 +623,6 @@ fn style_section() -> AnyPiece {
         ),
     ))
     .title(crate::res::str::insp_style())
-    .any()
 }
 
 /// The geometry section's transform rows: rotation always, corner radius only where it means
@@ -705,7 +703,7 @@ fn canvas_panel() -> AnyPiece {
 /// The panel content: the tab strip over whichever tab is active. The padding is the pane's
 /// breathing room — the inspector hosts hand the panel the full pane rect, so the inset
 /// lives here, once, for every target.
-pub(crate) fn panel() -> AnyPiece {
+pub(crate) fn panel() -> impl Piece {
     column((
         picker(tab_labels(), active_tab())
             .segmented()
@@ -717,7 +715,6 @@ pub(crate) fn panel() -> AnyPiece {
     ))
     .spacing(10.0)
     .padding(Insets::symmetric(14.0, 12.0))
-    .any()
 }
 
 #[cfg(test)]
