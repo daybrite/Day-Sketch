@@ -252,6 +252,23 @@ flow:
   - assert_text: { id: insp-rotation, text: "45" }
   # A rotation is a VIEW transform about the shape's own center: the stored frame is untouched.
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
+
+  # The selection outline and its handles TURN with the shape, and the grab follows the
+  # drawing. Shape 1 is 96×64 at (40,40), so its center is (88,72); a quarter turn swings the
+  # bottom-right corner from (136,104) to (88-32, 72+48) = (56,120). Dragging THERE resizes,
+  # which it could only do if the handle moved with the outline — and the drag is read in the
+  # shape's own frame, so a downward pull lengthens its (now vertical) long edge. (That the
+  # un-turned corner is now bare is a unit test's job: here it sits inside shape 3.)
+  - input: { id: insp-rotation, text: "90" }
+  - submit: { id: insp-rotation }
+  - drag: { id: canvas, from: [56, 120], to: [56, 140] }
+  - assert_text: { id: sk-frame, text: "30,50 116x64" }
+  # Both units back out, leaving the history exactly where this section found it.
+  - tap: { id: sk-undo }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - tap: { id: sk-undo }
+  - assert_text: { id: insp-rotation, text: "45" }
+
   # 360° is 0° — the angle wraps rather than growing without bound.
   - input: { id: insp-rotation, text: "360" }
   - submit: { id: insp-rotation }

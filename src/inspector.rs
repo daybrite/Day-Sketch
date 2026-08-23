@@ -584,32 +584,37 @@ fn style_section() -> AnyPiece {
 
 /// The geometry section's transform rows: rotation always, corner radius only where it means
 /// something. Both are steppers over the same fan-out binding the style numbers use.
-fn transform_rows() -> AnyPiece {
-    column((
+fn rotation_row() -> AnyPiece {
+    labeled(
+        crate::res::str::insp_rotation(),
+        day_piece_stepper::stepper(DegField { num: ROTATION })
+            // 360 is IN the range so the stepper's own up-arrow can reach it; the binding
+            // wraps it back to 0, which is what a full turn means.
+            .range(0.0..=360.0)
+            .step(1.0)
+            .decimals(0)
+            .key("insp-rotation")
+            // Fill the row like the text fields above, so every control in the section shares
+            // one right edge instead of the steppers ending short.
+            .grow(),
+    )
+}
+
+/// The corner-radius row, mounted only where the property means something. `when` mounts and
+/// disposes it with the selection's kind — a hidden field would still be a dayscript target,
+/// and a disabled one still reads as a property ovals have.
+fn corner_row() -> AnyPiece {
+    when(selection_is_rects, || {
         labeled(
-            crate::res::str::insp_rotation(),
-            day_piece_stepper::stepper(DegField { num: ROTATION })
-                // 360 is IN the range so the stepper's own up-arrow can reach it; the
-                // binding wraps it back to 0, which is what a full turn means.
-                .range(0.0..=360.0)
+            crate::res::str::insp_corner(),
+            day_piece_stepper::stepper(CORNER_RADIUS)
+                .range(0.0..=200.0)
                 .step(1.0)
                 .decimals(0)
-                .key("insp-rotation"),
-        ),
-        // `when` mounts and disposes the row with the selection's kind — a hidden field would
-        // still be a dayscript target, and a disabled one still reads as a property ovals have.
-        when(selection_is_rects, || {
-            labeled(
-                crate::res::str::insp_corner(),
-                day_piece_stepper::stepper(CORNER_RADIUS)
-                    .range(0.0..=200.0)
-                    .step(1.0)
-                    .decimals(0)
-                    .key("insp-corner"),
-            )
-        }),
-    ))
-    .spacing(0.0)
+                .key("insp-corner")
+                .grow(),
+        )
+    })
     .any()
 }
 
@@ -626,10 +631,13 @@ fn tab_labels() -> Vec<String> {
 /// The Selected tab: one form, one section per property group of the selection. New
 /// per-selection sections slot in here.
 fn selected_panel() -> AnyPiece {
-    // The four frame fields, then the transform rows — one flat run of labeled rows in one
-    // section.
+    // The four frame fields, then the transform rows — every row a DIRECT child of the
+    // section, so the section's own row rhythm spaces all six alike. (Nesting the last two in
+    // a column of their own gave them that column's spacing instead, and they read as a
+    // cramped afterthought under Height.)
     let mut rows: Vec<AnyPiece> = (0..geometry_props().len()).map(prop_row).collect();
-    rows.push(transform_rows());
+    rows.push(rotation_row());
+    rows.push(corner_row());
     form((
         section(PieceVec(rows)).title(crate::res::str::insp_geometry()),
         style_section(),

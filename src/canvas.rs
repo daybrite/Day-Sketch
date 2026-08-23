@@ -109,11 +109,12 @@ fn to_model(p: Point) -> Point {
     Point::new((p.x - pn.x) / z, (p.y - pn.y) / z)
 }
 
-/// A model-space frame's screen-space frame, under the CURRENT (untracked) transform.
-fn screen_bounds(b: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+/// A model point's place on screen — the inverse of [`to_model`], for the selection overlay,
+/// which is drawn in screen space so its weight and handle size stay constant at every zoom.
+fn to_screen(p: Point) -> Point {
     let z = zoom().get_untracked();
     let pn = pan().get_untracked();
-    (b.0 * z + pn.x, b.1 * z + pn.y, b.2 * z, b.3 * z)
+    Point::new(p.x * z + pn.x, p.y * z + pn.y)
 }
 
 // ---------------------------------------------------------------------------
@@ -135,11 +136,12 @@ enum DragOp {
     Move {
         starts: Vec<(u64, f64, f64)>,
     },
-    /// One shape, one corner, its starting frame.
+    /// One shape, one corner, its starting frame, and the rotation that frame is drawn under.
     Resize {
         id: u64,
         corner: Corner,
         start: (f64, f64, f64, f64),
+        rotation: f64,
     },
 }
 
@@ -181,6 +183,50 @@ fn resized(start: (f64, f64, f64, f64), corner: Corner, dx: f64, dy: f64) -> (f6
         h = model::MIN_SIZE;
     }
     (x, y, w, h)
+}
+
+/// The corner OPPOSITE `corner`, in the frame's own (unrotated) coordinates — the point a
+/// resize holds still.
+fn opposite_point(b: (f64, f64, f64, f64), corner: Corner) -> Point {
+    let (x, y, w, h) = b;
+    match corner {
+        Corner::TopLeft => Point::new(x + w, y + h),
+        Corner::TopRight => Point::new(x, y + h),
+        Corner::BottomLeft => Point::new(x + w, y),
+        Corner::BottomRight => Point::new(x, y),
+    }
+}
+
+/// [`resized`] for a shape that is drawn TURNED.
+///
+/// Two corrections, both required for the handles to track the pointer once the frame no
+/// longer lies along the screen axes. First the drag is read in the shape's OWN frame — a pull
+/// along the shape's long edge lengthens it whatever angle that edge is at on screen. Then the
+/// result is re-anchored: `resized` holds the opposite corner still in the frame's coordinates,
+/// but the rotation is about the frame's CENTER, and the center moves as the frame grows — so
+/// the shape would creep out from under the pointer. Shifting the new origin by the difference
+/// between where that corner was and where it would land puts it back.
+fn resized_under_rotation(
+    start: (f64, f64, f64, f64),
+    corner: Corner,
+    dx: f64,
+    dy: f64,
+    rotation: f64,
+) -> (f64, f64, f64, f64) {
+    if rotation.abs() <= f64::EPSILON {
+        return resized(start, corner, dx, dy);
+    }
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    // R(-θ) · (dx, dy): the pointer's travel in the shape's own frame.
+    let f = resized(start, corner, dx * cos + dy * sin, -dx * sin + dy * cos);
+    let held = |b: (f64, f64, f64, f64)| {
+        let c = Point::new(b.0 + b.2 / 2.0, b.1 + b.3 / 2.0);
+        let p = opposite_point(b, corner);
+        let (ox, oy) = (p.x - c.x, p.y - c.y);
+        Point::new(c.x + ox * cos - oy * sin, c.y + ox * sin + oy * cos)
+    };
+    let (was, now) = (held(start), held(f));
+    (f.0 + was.x - now.x, f.1 + was.y - now.y, f.2, f.3)
 }
 
 fn apply_resize(id: u64, frame: (f64, f64, f64, f64), commit: bool) {
@@ -254,6 +300,36 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
     ]
 }
 
+/// A node's own rotation in degrees — 0 for a group, whose frame is the axis-aligned union of
+/// its members and turns with none of them.
+fn rotation_of(id: u64) -> f64 {
+    let e = model::nodes().elem(id);
+    if e.kind().peek() == NodeKind::Group {
+        0.0
+    } else {
+        e.rotation().peek()
+    }
+}
+
+/// A selected node's four corners in SCREEN space, turned by the shape's own rotation about
+/// its center: the selection outline connects these, the handles sit on them, and
+/// [`hit_handle`] grabs them — so all three follow the shape as it turns.
+fn screen_corners(b: (f64, f64, f64, f64), rotation: f64) -> [(Corner, f64, f64); 4] {
+    let mut pts = corner_points(b);
+    let turn = (rotation.abs() > f64::EPSILON)
+        .then(|| rotation_about_center(b.0, b.1, b.2, b.3, rotation));
+    for c in pts.iter_mut() {
+        let p = Point::new(c.1, c.2);
+        let p = match &turn {
+            Some(m) => m.apply(p),
+            None => p,
+        };
+        let s = to_screen(p);
+        (c.1, c.2) = (s.x, s.y);
+    }
+    pts
+}
+
 /// A corner handle of ANY selected shape under the SCREEN point: every selected shape
 /// carries its own handles, and dragging one resizes THAT shape alone (a multi-select drag
 /// anywhere else moves the whole selection). Groups have no handles — groups move; only
@@ -270,7 +346,7 @@ fn hit_handle(px: f64, py: f64) -> Option<(u64, Corner)> {
         let Some(b) = model::node_bounds(*id) else {
             continue;
         };
-        for (corner, cx, cy) in corner_points(screen_bounds(b)) {
+        for (corner, cx, cy) in screen_corners(b, rotation_of(*id)) {
             if (px - cx).abs() <= HANDLE && (py - cy).abs() <= HANDLE {
                 return Some((*id, corner));
             }
@@ -391,6 +467,22 @@ fn rect_shape(x: f64, y: f64, w: f64, h: f64) -> Shape {
         .build()
 }
 
+/// One drag handle: a small square centered on a corner, turned by the shape's rotation so
+/// the four read as the corners of one turned frame rather than as loose pins. Screen space,
+/// so its SIZE is the same at every zoom.
+fn handle_shape(cx: f64, cy: f64, rotation: f64) -> Shape {
+    let half = HANDLE_DRAW / 2.0;
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let at = |dx: f64, dy: f64| Point::new(cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
+    PathBuilder::new()
+        .move_to(at(-half, -half))
+        .line_to(at(half, -half))
+        .line_to(at(half, half))
+        .line_to(at(-half, half))
+        .close()
+        .build()
+}
+
 fn draw_scene(d: &mut Draw, size: Size) {
     // Everything clips to the viewport: panned/zoomed content otherwise escapes the canvas
     // in OFFSCREEN captures (the live window clips it; cacheDisplayInRect does not).
@@ -468,20 +560,36 @@ fn draw_scene(d: &mut Draw, size: Size) {
     );
 
     // Selection outlines + handles, above everything, drawn in SCREEN space at the
-    // transformed positions — constant weight and size at every zoom. Every selected SHAPE
-    // carries its own handles — multi-selections included; a group shows only its union
-    // outline.
+    // transformed corners — constant weight and size at every zoom, and TURNED with the shape
+    // so a rotated rectangle wears a rotated outline rather than its bounding box. Every
+    // selected SHAPE carries its own handles — multi-selections included; a group shows only
+    // its union outline, which turns with nothing (its members rotate, it does not).
     let sel = model::selection().get();
     for id in &sel {
-        let Some(b) = model::node_bounds(*id).map(screen_bounds) else {
+        let Some(b) = model::node_bounds(*id) else {
             continue;
         };
-        d.stroke(rect_shape(b.0, b.1, b.2, b.3), SELECTION, 1.5);
+        // TRACKED, like every other field the scene draws from: turning a shape must repaint
+        // its outline in the same frame.
+        let rotation = store.elem(*id).rotation().read();
         let is_shape = store.elem(*id).kind().with(|k| k.copied()) != Some(NodeKind::Group);
+        let pts = screen_corners(b, if is_shape { rotation } else { 0.0 });
+        let p = |i: usize| Point::new(pts[i].1, pts[i].2);
+        // Ring order: the corners come back TL, TR, BL, BR.
+        d.stroke(
+            PathBuilder::new()
+                .move_to(p(0))
+                .line_to(p(1))
+                .line_to(p(3))
+                .line_to(p(2))
+                .close()
+                .build(),
+            SELECTION,
+            1.5,
+        );
         if is_shape {
-            for (_, cx, cy) in corner_points(b) {
-                let half = HANDLE_DRAW / 2.0;
-                let handle = rect_shape(cx - half, cy - half, HANDLE_DRAW, HANDLE_DRAW);
+            for (_, cx, cy) in pts {
+                let handle = handle_shape(cx, cy, rotation);
                 d.fill(handle.clone(), HANDLE_FILL);
                 d.stroke(handle, HANDLE_STROKE, 1.0);
             }
@@ -570,6 +678,7 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                     id,
                     corner,
                     start: (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek()),
+                    rotation: rotation_of(id),
                 }
             } else if let Some(top) = hit_top_level(m.x, m.y) {
                 // Dragging an unselected shape selects it first (single), then moves the
@@ -596,12 +705,18 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
             DragOp::Move { starts } => {
                 field_previews_move(drag.translation.x / zf, drag.translation.y / zf, starts)
             }
-            DragOp::Resize { id, corner, start } => {
-                let f = resized(
+            DragOp::Resize {
+                id,
+                corner,
+                start,
+                rotation,
+            } => {
+                let f = resized_under_rotation(
                     *start,
                     *corner,
                     drag.translation.x / zf,
                     drag.translation.y / zf,
+                    *rotation,
                 );
                 apply_resize(*id, f, false);
             }
@@ -613,12 +728,18 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                 DragOp::Move { starts } => model::undo_stack().grouped("move", || {
                     field_commits_move(drag.translation.x / zf, drag.translation.y / zf, &starts)
                 }),
-                DragOp::Resize { id, corner, start } => {
-                    let f = resized(
+                DragOp::Resize {
+                    id,
+                    corner,
+                    start,
+                    rotation,
+                } => {
+                    let f = resized_under_rotation(
                         start,
                         corner,
                         drag.translation.x / zf,
                         drag.translation.y / zf,
+                        rotation,
                     );
                     model::undo_stack().grouped("resize", || apply_resize(id, f, true));
                 }
@@ -664,4 +785,104 @@ pub(crate) fn editor_canvas() -> impl Piece {
     .context_menu(crate::context_menu_entries())
     .id("canvas")
     .grow()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::install_test_doc;
+
+    /// A 96×64 rectangle at the origin, selected, turned by `degrees`.
+    fn turned(degrees: f64) -> u64 {
+        let id = model::place_shape(NodeKind::Rect, 0.0, 0.0);
+        day::reactive::flush_sync();
+        model::nodes().elem(id).rotation().write(degrees);
+        day::reactive::flush_sync();
+        model::selection().set(vec![id]);
+        id
+    }
+
+    fn corner(id: u64, want: Corner) -> (f64, f64) {
+        let b = model::node_bounds(id).expect("a shape has bounds");
+        let pts = screen_corners(b, rotation_of(id));
+        let (_, x, y) = pts.iter().find(|(c, _, _)| *c == want).copied().unwrap();
+        (x, y)
+    }
+
+    #[test]
+    fn handles_sit_on_the_turned_corners_and_are_grabbable_there() {
+        let _doc = install_test_doc();
+        let id = turned(0.0);
+        assert_eq!(corner(id, Corner::BottomRight), (96.0, 64.0));
+
+        // A quarter turn about the center (48, 32): the bottom-right corner swings to
+        // (48 - 32, 32 + 48) = (16, 80).
+        model::nodes().elem(id).rotation().write(90.0);
+        day::reactive::flush_sync();
+        let (bx, by) = corner(id, Corner::BottomRight);
+        assert!(
+            (bx - 16.0).abs() < 0.001 && (by - 80.0).abs() < 0.001,
+            "{bx},{by}"
+        );
+
+        // The grab follows the drawing: the turned position hits, the old one does not.
+        assert_eq!(hit_handle(bx, by), Some((id, Corner::BottomRight)));
+        assert_eq!(
+            hit_handle(96.0, 64.0),
+            None,
+            "the un-turned corner is bare canvas"
+        );
+    }
+
+    #[test]
+    fn a_group_outline_does_not_turn_with_its_members() {
+        let _doc = install_test_doc();
+        let a = turned(90.0);
+        let b = model::place_shape(NodeKind::Rect, 200.0, 0.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![a, b]);
+        model::group_selection();
+        day::reactive::flush_sync();
+        let gid = model::selection().get_untracked()[0];
+        assert_eq!(rotation_of(gid), 0.0, "a group has no rotation of its own");
+        let bounds = model::node_bounds(gid).expect("union");
+        assert_eq!(
+            screen_corners(bounds, rotation_of(gid)),
+            corner_points(bounds)
+        );
+    }
+
+    #[test]
+    fn dragging_a_turned_handle_resizes_along_the_shapes_own_edge() {
+        let _doc = install_test_doc();
+        let id = turned(90.0);
+        let start = (0.0, 0.0, 96.0, 64.0);
+
+        // Under a quarter turn the shape's own +x axis points DOWN the screen, so a downward
+        // pull is the one that lengthens it — the same gesture that widened it upright.
+        let f = resized_under_rotation(start, Corner::BottomRight, 0.0, 20.0, 90.0);
+        assert!(
+            (f.2 - 116.0).abs() < 0.001,
+            "width followed the pointer: {f:?}"
+        );
+        assert!((f.3 - 64.0).abs() < 0.001, "height untouched: {f:?}");
+
+        // …and the corner opposite the dragged one stays exactly where it was drawn, so the
+        // shape grows out from under the pointer rather than sliding.
+        let held = |b: (f64, f64, f64, f64)| {
+            let pts = screen_corners(b, 90.0);
+            let (_, x, y) = pts
+                .iter()
+                .find(|(c, _, _)| *c == Corner::TopLeft)
+                .copied()
+                .unwrap();
+            (x, y)
+        };
+        let (wx, wy) = held(start);
+        let (nx, ny) = held(f);
+        assert!(
+            (wx - nx).abs() < 0.001 && (wy - ny).abs() < 0.001,
+            "{wx},{wy} vs {nx},{ny}"
+        );
+    }
 }
