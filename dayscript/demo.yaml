@@ -172,13 +172,31 @@ flow:
   - assert_text: { id: insp-w, text: "96" }
   - tap: { id: canvas, at: [45, 45] }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - key: { key: ArrowRight }
-  - assert_text: { id: sk-frame, text: "41,40 96x64" }
-  - key: { key: ArrowDown, modifiers: [shift] }
-  - assert_text: { id: sk-frame, text: "41,50 96x64" }
-  - key: { key: ArrowLeft }
-  - key: { key: ArrowUp, modifiers: [shift] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  # Keys follow focus, so the nudge only works while the CANVAS holds it — a synthetic tap does
+  # not move the first responder the way a real press does, so ask for it and check it landed.
+  # (Typing into the inspector above left focus in a text field, which is exactly the state the
+  # arrows must NOT nudge from.)
+  #
+  # `only_on` the toolkits whose canvas can hold keyboard focus (docs/menus.md): the desktops
+  # where a canvas is a real focusable view, plus the web's tabindex. The touch toolkits have no
+  # hardware keyboard to nudge with, and windows-xaml has no focusable canvas yet — asserting the
+  # route there would only record a wish. It used to "pass" everywhere because the key went to a
+  # window-level handler inside day-core and no platform was involved at all.
+  - focus: { id: canvas, only_on: [appkit, gtk, qt, dom] }
+  - assert_focused: { id: canvas, only_on: [appkit, gtk, qt, dom] }
+  - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom] }
+  - assert_text: { id: sk-frame, text: "41,40 96x64", only_on: [appkit, gtk, qt, dom] }
+  - key: { key: ArrowDown, modifiers: [shift], only_on: [appkit, gtk, qt, dom] }
+  - assert_text: { id: sk-frame, text: "41,50 96x64", only_on: [appkit, gtk, qt, dom] }
+  - key: { key: ArrowLeft, only_on: [appkit, gtk, qt, dom] }
+  - key: { key: ArrowUp, modifiers: [shift], only_on: [appkit, gtk, qt, dom] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom] }
+  # …and with the keyboard back in a text field, the same arrows move a caret and nothing else.
+  - focus: { id: insp-x, only_on: [appkit, gtk, qt, dom] }
+  - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom] }
+  - key: { key: ArrowDown, only_on: [appkit, gtk, qt, dom] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom] }
+  - focus: { id: canvas, only_on: [appkit, gtk, qt, dom] }
 
   # ---- Multi-select handles: every selected shape carries its own corners ----
   - tap: { id: canvas, at: [90, 70], modifiers: [shift] }

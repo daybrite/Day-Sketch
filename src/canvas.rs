@@ -914,6 +914,31 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
     }
 }
 
+/// Whether the canvas holds the keyboard (docs/focus.md). Bound two-way: it takes focus when
+/// the editor mounts and on every press, and gives it up the moment a text field or the
+/// inspector takes it — which is exactly when the arrows have to stop nudging shapes and go
+/// back to moving a caret.
+pub(crate) fn canvas_focused() -> Signal<bool> {
+    thread_local! {
+        static F: Signal<bool> = Signal::global(true);
+    }
+    F.with(|s| *s)
+}
+
+/// Nudge the selection with the arrow keys: 1px, or 10 with shift (docs/menus.md). Hung on the
+/// canvas rather than the window, so it can only fire while the canvas is the focused piece.
+fn nudge_by_key(ev: &day::KeyEvent) {
+    let (dx, dy) = match ev.key.as_str() {
+        "ArrowLeft" => (-1.0, 0.0),
+        "ArrowRight" => (1.0, 0.0),
+        "ArrowUp" => (0.0, -1.0),
+        "ArrowDown" => (0.0, 1.0),
+        _ => return,
+    };
+    let step = if ev.shift() { 10.0 } else { 1.0 };
+    model::nudge_selection(dx * step, dy * step);
+}
+
 pub(crate) fn editor_canvas() -> impl Piece {
     let op: Rc<RefCell<DragOp>> = Rc::new(RefCell::new(DragOp::Idle));
     let op2 = op.clone();
@@ -940,6 +965,8 @@ pub(crate) fn editor_canvas() -> impl Piece {
             p.y += g.delta.y;
         });
     })
+    .on_key(nudge_by_key)
+    .focused(canvas_focused())
     .context_menu(crate::context_menu_entries())
     .id("canvas")
     .grow()

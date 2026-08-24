@@ -389,19 +389,6 @@ pub fn root() -> impl Piece {
         || model::selection().get(),
         |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
     );
-    // Arrow keys nudge the selection: 1px, or 10 with shift (docs/menus.md).
-    day::on_key(|ev| {
-        let (dx, dy) = match ev.key.as_str() {
-            "ArrowLeft" => (-1.0, 0.0),
-            "ArrowRight" => (1.0, 0.0),
-            "ArrowUp" => (0.0, -1.0),
-            "ArrowDown" => (0.0, 1.0),
-            _ => return,
-        };
-        let step = if ev.shift() { 10.0 } else { 1.0 };
-        model::nudge_selection(dx * step, dy * step);
-    });
-
     // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
     // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
     // the pane (and its visibility) survives a document switch.
