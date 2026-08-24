@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "Day-Sketch"
+version = "0.1.0"
+dependencies = [
+ "day",
+ "day-build",
+ "day-piece-colorpicker",
+ "day-piece-settings",
+ "day-piece-stepper",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -488,17 +499,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
-]
-
-[[package]]
-name = "day-sketch"
-version = "0.1.0"
-dependencies = [
- "day",
- "day-build",
- "day-piece-colorpicker",
- "day-piece-settings",
- "day-piece-stepper",
 ]
 
 [[package]]

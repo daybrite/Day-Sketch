@@ -1,7 +1,11 @@
 [package]
-name = "day-sketch"
+name = "Day-Sketch"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+authors = ["Daybrite <hello@daybrite.dev>"]
+repository = "https://github.com/daybrite/Day-Showcase"
+homepage = "https://daybrite.dev"
 # Generates typed resource constants (`res::images::…`, `res::assets::…`, `res::fonts::…`) from the
 # files under `resource/` on every build — see build.rs and src/lib.rs (§18.5).
 build = "build.rs"

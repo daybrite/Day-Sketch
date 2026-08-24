@@ -177,26 +177,38 @@ flow:
   # (Typing into the inspector above left focus in a text field, which is exactly the state the
   # arrows must NOT nudge from.)
   #
-  # `only_on` the toolkits whose canvas can hold keyboard focus (docs/menus.md): the desktops
-  # where a canvas is a real focusable view, plus the web's tabindex. The touch toolkits have no
-  # hardware keyboard to nudge with, and windows-xaml has no focusable canvas yet — asserting the
-  # route there would only record a wish. It used to "pass" everywhere because the key went to a
-  # window-level handler inside day-core and no platform was involved at all.
-  - focus: { id: canvas, only_on: [appkit, gtk, qt, dom] }
-  - assert_focused: { id: canvas, only_on: [appkit, gtk, qt, dom] }
-  - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom] }
-  - assert_text: { id: sk-frame, text: "41,40 96x64", only_on: [appkit, gtk, qt, dom] }
-  - key: { key: ArrowDown, modifiers: [shift], only_on: [appkit, gtk, qt, dom] }
-  - assert_text: { id: sk-frame, text: "41,50 96x64", only_on: [appkit, gtk, qt, dom] }
-  - key: { key: ArrowLeft, only_on: [appkit, gtk, qt, dom] }
-  - key: { key: ArrowUp, modifiers: [shift], only_on: [appkit, gtk, qt, dom] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom] }
+  # `only_on` the toolkits whose canvas can hold keyboard focus (docs/menus.md) AND that were
+  # run here. windows-xaml and harmony-arkui have the same backend route but neither can be
+  # launched on this machine, so asserting it would be a claim nobody checked; android-mdc has
+  # no focusable canvas at all. This block used to "pass" everywhere because the key went to a
+  # window-level handler inside day-core and no platform was involved.
+  #
+  # iOS shows the inspector as a full-screen SHEET on a compact window, and a modal takes the
+  # presenting view out of the window — so the canvas cannot hold the keyboard until the sheet
+  # closes. That is correct behavior (you cannot nudge what is covered), so the block closes it
+  # first and puts it back afterwards, on the toolkit that presents one.
+  - tap: { id: tool-inspector, only_on: [uikit] }
+  # A modal is still ANIMATING when the tree goes idle, and a view mid-transition is not yet in
+  # (or out of) the window — so the settle is a pause, not a wait_idle.
+  - pause: { secs: 1, only_on: [uikit] }
+  - focus: { id: canvas, only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_focused: { id: canvas, only_on: [appkit, gtk, qt, dom, uikit] }
+  - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "41,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  - key: { key: ArrowDown, modifiers: [shift], only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "41,50 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  - key: { key: ArrowLeft, only_on: [appkit, gtk, qt, dom, uikit] }
+  - key: { key: ArrowUp, modifiers: [shift], only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
   # …and with the keyboard back in a text field, the same arrows move a caret and nothing else.
-  - focus: { id: insp-x, only_on: [appkit, gtk, qt, dom] }
-  - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom] }
-  - key: { key: ArrowDown, only_on: [appkit, gtk, qt, dom] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom] }
-  - focus: { id: canvas, only_on: [appkit, gtk, qt, dom] }
+  # (The sheet comes back first on iOS — its fields do not exist while it is closed.)
+  - tap: { id: tool-inspector, only_on: [uikit] }
+  - pause: { secs: 1, only_on: [uikit] }
+  - wait_for: { id: insp-x, only_on: [appkit, gtk, qt, dom, uikit] }
+  - focus: { id: insp-x, only_on: [appkit, gtk, qt, dom, uikit] }
+  - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom, uikit] }
+  - key: { key: ArrowDown, only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
 
   # ---- Multi-select handles: every selected shape carries its own corners ----
   - tap: { id: canvas, at: [90, 70], modifiers: [shift] }
