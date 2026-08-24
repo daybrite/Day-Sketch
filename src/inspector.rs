@@ -241,6 +241,7 @@ impl Binding<String> for PropField {
     }
 }
 
+/// Erases because the rows are collected into one `Vec<AnyPiece>` for the section below.
 fn prop_row(ix: usize) -> AnyPiece {
     let p = &geometry_props()[ix];
     labeled(
@@ -255,6 +256,7 @@ fn prop_row(ix: usize) -> AnyPiece {
             })
             .id(p.id),
     )
+    .any()
 }
 
 // ---------------------------------------------------------------------------
@@ -678,7 +680,7 @@ fn tab_labels() -> Vec<String> {
 
 /// The Selected tab: one form, one section per property group of the selection. New
 /// per-selection sections slot in here.
-fn selected_panel() -> AnyPiece {
+fn selected_panel() -> impl Piece {
     // The four frame fields, then the transform rows — every row a DIRECT child of the
     // section, so the section's own row rhythm spaces all six alike. (Nesting the last two in
     // a column of their own gave them that column's spacing instead, and they read as a
@@ -693,7 +695,7 @@ fn selected_panel() -> AnyPiece {
 }
 
 /// The Canvas tab: the document's own properties. New document-level settings slot in here.
-fn canvas_panel() -> AnyPiece {
+fn canvas_panel() -> impl Piece {
     form((section((labeled(
         crate::res::str::insp_background(),
         day_piece_colorpicker::color_picker(BgColor).key("insp-bg"),

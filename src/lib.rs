@@ -18,7 +18,7 @@ pub mod res {
 const THEME_KEY: &str = "app.theme";
 const LOCALE_KEY: &str = "app.locale";
 
-fn settings_body() -> AnyPiece {
+fn settings_body() -> impl Piece {
     form((day_piece_settings::settings_sections(
         THEME_KEY,
         LOCALE_KEY,
