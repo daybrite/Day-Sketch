@@ -7,6 +7,9 @@ schema = 1
 
 [app]
 id = "dev.daybrite.sketch"
+# The deep-link scheme this app SHIPPED (docs/deep-links.md). Left explicit because the
+# default is the id\'s last segment, which is not what this app published.
+scheme = "daysketch"
 title = "Day Sketch"
 build = 1
 targets = ["macos-appkit", "macos-gtk", "macos-qt", "ios-uikit", "android-mdc", "linux-gtk", "linux-qt", "windows-xaml", "harmony-arkui", "web-dom"]
