@@ -168,7 +168,17 @@ fn menus() -> Vec<MenuEntry> {
                 menu_role(MenuRole::Paste),
                 menu_role(MenuRole::SelectAll),
                 menu_separator(),
-                menu_item(res::str::menu_delete().format()).action(model::delete_selection),
+                // Plain Delete, not a ⌘ combination: the key IS the command everywhere this
+                // app runs. It is spelled in code rather than through a localized `.key`
+                // attribute like the letter shortcuts above — a locale can pick a better
+                // mnemonic letter for Group, but nobody relocates the Delete key.
+                //
+                // Backspace answers to the same accelerator: appkit and gtk both fold the two
+                // names onto one key, and `canvas::canvas_key` accepts both where it handles
+                // this itself.
+                menu_item(res::str::menu_delete().format())
+                    .action(model::delete_selection)
+                    .shortcut(Shortcut::plain("Delete")),
             ],
         )
         .bar_role(MenuBarRole::Edit),

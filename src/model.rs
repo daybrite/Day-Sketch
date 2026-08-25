@@ -83,10 +83,18 @@ impl day::persistence::ColumnValue for NodeKind {
 pub(crate) struct Node {
     #[model(id)]
     pub id: u64,
-    /// The tree: a top-level node's parent is NULL; a group's children point at it.
-    pub parent: Option<u64>,
-    /// Sibling order, bottom to top. Fractional: moving a layer writes ONE row.
+    /// The tree: a top-level node's parent is NULL; a group's children point at it. The
+    /// reference is the single source of truth — `children` below is an index over it.
+    pub parent: Option<One<Node>>,
+    /// Sibling order, bottom to top. Fractional: moving a layer writes ONE row. Maintained
+    /// by the ordered relation, so an arrange is `move_to` rather than hand-rolled halving.
     pub z: f64,
+    /// A group's contents, in z order — the framework's index over `parent`, so reading them
+    /// is O(1) and TRACKED at one path instead of a scan that subscribes to every node.
+    /// `cascade`: deleting a group takes its subtree, through the normal pipeline, as one
+    /// undo unit.
+    #[model(relation(target = Node, inverse = "parent", delete = "cascade", ordered = "z"))]
+    pub children: Many<Node>,
     pub kind: NodeKind,
     pub x: f64,
     pub y: f64,
@@ -143,6 +151,7 @@ impl Default for Node {
         Node {
             id: 0,
             parent: None,
+            children: Many::default(),
             z: 0.0,
             kind: NodeKind::default(),
             x: 0.0,
@@ -168,6 +177,8 @@ pub(crate) struct Doc {
     pub store: Store<Keyed<Node>>,
     pub meta: Store<Keyed<DocMeta>>,
     pub container: Option<day::persistence::ModelContainer>,
+    /// The top-level nodes, in z order — see [`doc_from_driver_inner`].
+    pub roots: day::persistence::Query<Node>,
     pub stack: UndoStack,
     pub path: Option<PathBuf>,
 }
@@ -368,46 +379,60 @@ fn traced(driver: day::persistence::Sqlite) -> day::persistence::Sqlite {
 }
 
 fn doc_from_driver(driver: day::persistence::Sqlite, path: Option<PathBuf>) -> Doc {
-    match day::persistence::ModelContainer::open(driver, day::persistence::schema![Node, DocMeta]) {
-        Ok(container) => {
-            let store = container.store::<Node>();
-            let meta = container.store::<DocMeta>();
-            ensure_meta(meta);
-            let stack = container.undo(1000);
-            if let Some(p) = &path {
-                day::prefs::set(LAST_DOC_KEY, &p.to_string_lossy());
-            }
-            Doc {
-                store,
-                meta,
-                container: Some(container),
-                stack,
-                path,
-            }
-        }
+    match doc_from_driver_inner(driver, path) {
+        Ok(doc) => doc,
         // A file that will not open (corrupt, wrong schema) must not take the app down:
         // fall back to an in-memory scene and surface nothing worse than an empty canvas.
         Err(_) => memory_doc(),
     }
 }
 
+/// The open itself, fallible — so [`memory_doc`] can call it without the fallback recursing
+/// into itself.
+fn doc_from_driver_inner(
+    driver: day::persistence::Sqlite,
+    path: Option<PathBuf>,
+) -> Result<Doc, day::persistence::DbError> {
+    let container =
+        day::persistence::ModelContainer::open(driver, day::persistence::schema![Node, DocMeta])?;
+    let store = container.store::<Node>();
+    let meta = container.store::<DocMeta>();
+    ensure_meta(meta);
+    let stack = container.undo(1000);
+    // The top level of the scene, kept live. A relation hangs off a parent ROW, and the top
+    // level has no such row — so the roots are a query over "no parent", maintained
+    // incrementally and read as a tracked list exactly like a group's children.
+    let roots = container
+        .query::<Node>()
+        .filter(Node::parent().is_unset())
+        .sort(Node::z().asc())
+        .live();
+    if let Some(p) = &path {
+        day::prefs::set(LAST_DOC_KEY, &p.to_string_lossy());
+    }
+    Ok(Doc {
+        store,
+        meta,
+        container: Some(container),
+        roots,
+        stack,
+        path,
+    })
+}
+
 fn open_file_doc(path: PathBuf) -> Doc {
     doc_from_driver(traced(day::persistence::Sqlite::at(&path)), Some(path))
 }
 
+/// The fallback document: in memory, but still a CONTAINER — relations are wired by the
+/// container, so a bare store would leave the scene graph with no `children` index at all.
+/// An in-memory SQLite costs nothing and keeps every document shape identical.
 fn memory_doc() -> Doc {
-    let store = Store::new(Keyed::new(Vec::new()));
-    let meta = Store::new(Keyed::new(Vec::new()));
-    ensure_meta(meta);
-    let stack = UndoStack::new(1000);
-    stack.watch(store);
-    stack.watch(meta);
-    Doc {
-        store,
-        meta,
-        container: None,
-        stack,
-        path: None,
+    match doc_from_driver_inner(day::persistence::Sqlite::memory(), None) {
+        Ok(doc) => doc,
+        // Nothing left to fall back to; a store without relations would draw an empty scene,
+        // which is worse than the panic that says why.
+        Err(e) => panic!("cannot open an in-memory document: {e}"),
     }
 }
 
@@ -583,31 +608,29 @@ fn next_id(store: Store<Keyed<Node>>) -> u64 {
     store.with_untracked(|k| k.items().iter().map(|n| n.id).max().unwrap_or(0)) + 1
 }
 
-fn max_z(store: Store<Keyed<Node>>, parent: Option<u64>) -> f64 {
-    store.with_untracked(|k| {
-        k.items()
-            .iter()
-            .filter(|n| n.parent == parent)
-            .map(|n| n.z)
-            .fold(0.0, f64::max)
-    })
-}
-
-/// [`children_of`], with TRACKED z and parent reads — the canvas draw's variant: an arrange
-/// (a plain z write, no restructure) or a reparent then repaints immediately instead of on
-/// the next selection change.
-pub(crate) fn children_of_tracked(parent: Option<u64>) -> Vec<u64> {
-    let store = nodes();
-    let mut kids: Vec<(u64, f64)> = store
-        .with_untracked(|k| k.items().iter().map(|n| n.id).collect::<Vec<_>>())
-        .into_iter()
-        .filter_map(|id| {
-            let e = store.elem(id);
-            (e.parent().read() == parent).then(|| (id, e.z().read()))
-        })
-        .collect();
-    kids.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-    kids.into_iter().map(|(id, _)| id).collect()
+/// Children of `parent`, bottom→top — O(1) from the relation index, already in z order.
+/// `None` asks for the top level, which is the document's live root query.
+///
+/// TRACKED: reading a group's children subscribes to that group's relation path, and reading
+/// the roots subscribes to the root query. Either way it is ONE dependency, not one per node
+/// — which is what lets the canvas repaint on an arrange without waking on every unrelated
+/// field in the document.
+pub(crate) fn children_of(parent: Option<u64>) -> Vec<u64> {
+    match parent {
+        Some(p) => nodes()
+            .elem(p)
+            .children()
+            .ids()
+            .into_iter()
+            .map(|id| id.handle())
+            .collect(),
+        None => doc()
+            .roots
+            .ids()
+            .into_iter()
+            .map(|id| id.handle())
+            .collect(),
+    }
 }
 
 /// Select every top-level node, in z order — Edit ▸ Select All through the edit bridge.
@@ -625,27 +648,36 @@ pub(crate) fn nudge_selection(dx: f64, dy: f64) {
     let store = nodes();
     undo_stack().grouped("move", || {
         for top in &sel {
-            for s in shape_descendants(*top) {
+            for s in moved_nodes(*top) {
                 let e = store.elem(s);
-                e.x().write_commit(e.x().peek() + dx);
-                e.y().write_commit(e.y().peek() + dy);
+                // Only the axis the key moves. An arrow changes exactly one coordinate, and
+                // writing the other back unchanged would put a column in the `UPDATE` with
+                // nothing to say. Nothing to cancel here the way a drag has (`canvas::seal`) —
+                // a nudge is one keystroke, so no preview session was ever opened.
+                if dx != 0.0 {
+                    e.x().write_commit(e.x().peek() + dx);
+                }
+                if dy != 0.0 {
+                    e.y().write_commit(e.y().peek() + dy);
+                }
             }
         }
     });
 }
 
-/// Children of `parent`, bottom→top.
-pub(crate) fn children_of(parent: Option<u64>) -> Vec<u64> {
+/// Every node a move has to carry: the shapes that draw, plus the GROUPS above them, whose
+/// own frames are what the selection outline and the next turn are measured from. Deeper than
+/// [`shape_descendants`] by exactly the group rows it keeps in step.
+pub(crate) fn moved_nodes(id: u64) -> Vec<u64> {
     let store = nodes();
-    let mut kids: Vec<(u64, f64)> = store.with_untracked(|k| {
-        k.items()
-            .iter()
-            .filter(|n| n.parent == parent)
-            .map(|n| (n.id, n.z))
-            .collect()
-    });
-    kids.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-    kids.into_iter().map(|(id, _)| id).collect()
+    if store.elem(id).kind().peek() != NodeKind::Group {
+        return vec![id];
+    }
+    let mut out = vec![id];
+    for c in children_of(Some(id)) {
+        out.extend(moved_nodes(c));
+    }
+    out
 }
 
 /// Every shape (non-group) under `id`, itself included when it is a shape.
@@ -667,8 +699,8 @@ pub(crate) fn shape_descendants(id: u64) -> Vec<u64> {
 pub(crate) fn top_level_ancestor(id: u64) -> u64 {
     let store = nodes();
     let mut cur = id;
-    while let Some(p) = store.elem(cur).parent().peek() {
-        cur = p;
+    while let Some(p) = store.elem(cur).parent().peek().and_then(|r| r.id()) {
+        cur = p.handle();
     }
     cur
 }
@@ -692,12 +724,86 @@ pub(crate) fn line_ends(id: u64) -> ((f64, f64), (f64, f64)) {
     ((x, y), (x + e.w().peek(), y + e.h().peek()))
 }
 
+/// `(x, y)` turned `degrees` about `(cx, cy)`.
+fn turn_about(x: f64, y: f64, cx: f64, cy: f64, degrees: f64) -> (f64, f64) {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let (dx, dy) = (x - cx, y - cy);
+    (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+}
+
+/// Turn `id` to `angle` degrees.
+///
+/// A shape turns about its own center. A GROUP turns as one body: every shape inside it orbits
+/// the group's center AND turns by the same amount, so the arrangement holds its shape instead
+/// of each piece spinning where it stands. The members keep world-space frames — this app has
+/// no transform hierarchy, and a group is a parent, not a coordinate space — so the turn is
+/// applied to them rather than stored above them. What the GROUP stores is the angle it is
+/// currently at, which is what the inspector reads back and what turns its selection outline.
+///
+/// A line has no orientation of its own; its direction IS its two ends, so it turns by moving
+/// them rather than by taking an angle.
+pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
+    let store = nodes();
+    let e = store.elem(id);
+    let write = |f: day::model::Field<day::model::Elem<Node>, Node, f64>, v: f64| {
+        if commit {
+            f.write_commit(v);
+        } else {
+            f.write_preview(v);
+        }
+    };
+    if e.kind().peek() != NodeKind::Group {
+        write(e.rotation(), angle);
+        return;
+    }
+    let delta = angle - e.rotation().peek();
+    // The center a group turns about is its own frame's, which does NOT move as it turns —
+    // so a second turn pivots on the same point as the first rather than walking away.
+    let Some((gx, gy, gw, gh)) = node_bounds(id) else {
+        return;
+    };
+    let (cx, cy) = (gx + gw / 2.0, gy + gh / 2.0);
+    for s in shape_descendants(id) {
+        let m = store.elem(s);
+        match m.kind().peek() {
+            NodeKind::Line => {
+                let ((ax, ay), (bx, by)) = line_ends(s);
+                let (ax, ay) = turn_about(ax, ay, cx, cy, delta);
+                let (bx, by) = turn_about(bx, by, cx, cy, delta);
+                write(m.x(), ax);
+                write(m.y(), ay);
+                write(m.w(), bx - ax);
+                write(m.h(), by - ay);
+            }
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Group => {
+                let (x, y, w, h) = (m.x().peek(), m.y().peek(), m.w().peek(), m.h().peek());
+                let (mx, my) = turn_about(x + w / 2.0, y + h / 2.0, cx, cy, delta);
+                write(m.x(), mx - w / 2.0);
+                write(m.y(), my - h / 2.0);
+                write(
+                    m.rotation(),
+                    (m.rotation().peek() + delta).rem_euclid(360.0),
+                );
+            }
+        }
+    }
+    write(e.rotation(), angle);
+}
+
 /// A node's frame: its own for shapes, the union of its shape descendants for groups.
 /// `None` for an empty group.
 pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
     let store = nodes();
     if store.elem(id).kind().peek() != NodeKind::Group {
         return Some(shape_frame(id));
+    }
+    // A group's own frame, when it has one: it survives a turn, where the union of the members
+    // does not — turn a wide arrangement and the box around it grows and shifts, which would
+    // walk the pivot a little further with every turn. Groups from before groups carried a
+    // frame have none, so those still answer with the union.
+    let own = shape_frame(id);
+    if own.2 > 0.0 && own.3 > 0.0 {
+        return Some(own);
     }
     let mut acc: Option<(f64, f64, f64, f64)> = None;
     for s in shape_descendants(id) {
@@ -722,7 +828,12 @@ pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
 pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
     let store = nodes();
     let id = next_id(store);
-    let z = max_z(store, None) + 1.0;
+    // Above whatever is already at the top level. The root query is in z order, so its last
+    // row is the highest — no scan over the document.
+    let z = children_of(None)
+        .last()
+        .map(|top| store.elem(*top).z().peek() + 1.0)
+        .unwrap_or(1.0);
     let fill = PALETTE[(id as usize) % PALETTE.len()].to_string();
     let defaults = Node::default();
     // Per kind: the undo label, the starting geometry, and the stroke. A line IS its stroke,
@@ -784,17 +895,39 @@ pub(crate) fn group_selection() {
         .iter()
         .filter_map(|id| store.with_untracked(|k| k.get(*id).map(|n| n.z)))
         .fold(0.0, f64::max);
+    // The group keeps a frame of its own: the box its members occupied at the moment they
+    // became one. It is what the selection outline draws and what a turn pivots on, and
+    // unlike the union of the members it does not move as the group turns.
+    let (fx, fy, fw, fh) = sel
+        .iter()
+        .filter_map(|id| node_bounds(*id))
+        .fold(None, |acc: Option<(f64, f64, f64, f64)>, b| {
+            Some(match acc {
+                None => b,
+                Some(a) => {
+                    let (r, bo) = ((a.0 + a.2).max(b.0 + b.2), (a.1 + a.3).max(b.1 + b.3));
+                    let (x, y) = (a.0.min(b.0), a.1.min(b.1));
+                    (x, y, r - x, bo - y)
+                }
+            })
+        })
+        .unwrap_or_default();
     store.restructure("group", Op::Insert, gid, move |v| {
         v.push(Node {
             id: gid,
             parent: None,
+            children: Many::default(),
             z,
             kind: NodeKind::Group,
+            x: fx,
+            y: fy,
+            w: fw,
+            h: fh,
             ..Default::default()
         });
     });
     for (i, id) in sel.iter().enumerate() {
-        store.elem(*id).parent().write(Some(gid));
+        store.elem(*id).parent().write(Some(One::to(gid)));
         store.elem(*id).z().write(i as f64 + 1.0);
     }
     selection().set(vec![gid]);
@@ -831,18 +964,11 @@ pub(crate) fn delete_selection() {
     let sel = selection().get_untracked();
     let store = nodes();
     for id in sel {
-        // Children first (a group takes its subtree with it), depth-first.
-        let mut stack = vec![id];
-        let mut order = Vec::new();
-        while let Some(n) = stack.pop() {
-            order.push(n);
-            stack.extend(children_of(Some(n)));
-        }
-        for n in order.into_iter().rev() {
-            store.restructure("delete", Op::Delete, n, move |v| {
-                v.remove(n);
-            });
-        }
+        // A group takes its subtree with it — the relation's `cascade` rule walks it, through
+        // the same pipeline, so it stays one undo unit and the canvas animates the rows out.
+        store.restructure("delete", Op::Delete, id, move |v| {
+            v.remove(id);
+        });
     }
     selection().set(Vec::new());
 }
@@ -1283,13 +1409,16 @@ pub(crate) fn paste_clipboard(text: &str) {
     let offset = paste_offset(text);
     let store = nodes();
     let mut next = next_id(store);
-    let mut z = max_z(store, None);
+    let mut z = children_of(None)
+        .last()
+        .map(|top| store.elem(*top).z().peek())
+        .unwrap_or(0.0);
     let mut pasted: Vec<u64> = Vec::new();
 
     fn insert(
         store: Store<Keyed<Node>>,
         node: &SvgNode,
-        parent: Option<u64>,
+        parent: Option<One<Node>>,
         z: f64,
         offset: f64,
         next: &mut u64,
@@ -1316,6 +1445,7 @@ pub(crate) fn paste_clipboard(text: &str) {
                 let node = Node {
                     id,
                     parent,
+                    children: Many::default(),
                     z,
                     kind: *kind,
                     x: x + offset,
@@ -1357,7 +1487,7 @@ pub(crate) fn paste_clipboard(text: &str) {
                     insert(
                         store,
                         child,
-                        Some(id),
+                        Some(One::to(id)),
                         i as f64 + 1.0,
                         offset,
                         next,
@@ -1401,32 +1531,44 @@ pub(crate) enum Arrange {
 pub(crate) fn arrange_selection(op: Arrange) {
     let store = nodes();
     for id in selection().get_untracked() {
-        let parent = store.elem(id).parent().peek();
-        let sibs = children_of(parent);
+        let parent = store.elem(id).parent().peek().and_then(|r| r.id());
+        let sibs = children_of(parent.map(|p| p.handle()));
         let Some(pos) = sibs.iter().position(|s| *s == id) else {
             continue;
         };
-        let z_of = |i: usize| store.elem(sibs[i]).z().peek();
-        let new_z = match op {
-            Arrange::Up if pos + 1 < sibs.len() => {
-                if pos + 2 < sibs.len() {
-                    (z_of(pos + 1) + z_of(pos + 2)) / 2.0
-                } else {
-                    z_of(pos + 1) + 1.0
-                }
-            }
-            Arrange::Down if pos > 0 => {
-                if pos >= 2 {
-                    (z_of(pos - 1) + z_of(pos - 2)) / 2.0
-                } else {
-                    z_of(pos - 1) - 1.0
-                }
-            }
-            Arrange::Top if pos + 1 < sibs.len() => z_of(sibs.len() - 1) + 1.0,
-            Arrange::Bottom if pos > 0 => z_of(0) - 1.0,
+        let target = match op {
+            Arrange::Up if pos + 1 < sibs.len() => pos + 1,
+            Arrange::Down if pos > 0 => pos - 1,
+            Arrange::Top if pos + 1 < sibs.len() => sibs.len() - 1,
+            Arrange::Bottom if pos > 0 => 0,
             _ => continue,
         };
-        store.elem(id).z().write(new_z);
+        match parent {
+            // Inside a group, the ordered relation places it: one row written, and it
+            // rebalances the siblings when the fractional gap is spent.
+            Some(p) => {
+                store.elem(p).children().move_to(id, target);
+            }
+            // The top level hangs off no parent row, so there is no relation to place into —
+            // the same halving, done here. Sibling sets are independent, so the two schemes
+            // never meet.
+            None => {
+                let z_of = |i: usize| store.elem(sibs[i]).z().peek();
+                let new_z = if target > pos {
+                    // Moving up: land between the row above and the one after it.
+                    if target + 1 < sibs.len() {
+                        (z_of(target) + z_of(target + 1)) / 2.0
+                    } else {
+                        z_of(target) + 1.0
+                    }
+                } else if target >= 1 {
+                    (z_of(target) + z_of(target - 1)) / 2.0
+                } else {
+                    z_of(0) - 1.0
+                };
+                store.elem(id).z().write(new_z);
+            }
+        }
     }
 }
 
@@ -1451,10 +1593,16 @@ pub(crate) fn install_test_doc() -> Rc<Doc> {
     // real document is settled by the first autosave.
     container.save().expect("flush the seed");
     let stack = container.undo(1000);
+    let roots = container
+        .query::<Node>()
+        .filter(Node::parent().is_unset())
+        .sort(Node::z().asc())
+        .live();
     let doc = Rc::new(Doc {
         store,
         meta,
         container: Some(container),
+        roots,
         stack,
         path: None,
     });
@@ -1472,6 +1620,16 @@ mod tests {
 
     fn test_doc() -> Rc<Doc> {
         install_test_doc()
+    }
+
+    /// The parent's id, unwrapped from the reference — what the tree assertions compare.
+    fn parent_of(id: u64) -> Option<u64> {
+        nodes()
+            .elem(id)
+            .parent()
+            .peek()
+            .and_then(|r| r.id())
+            .map(|i| i.handle())
     }
 
     #[test]
@@ -1558,7 +1716,7 @@ mod tests {
         let seen: Rc<RefCell<Vec<Vec<u64>>>> = Rc::new(RefCell::new(Vec::new()));
         let sink = seen.clone();
         day::reactive::bind(
-            || children_of_tracked(None),
+            || children_of(None),
             move |order: &Vec<u64>| sink.borrow_mut().push(order.clone()),
         );
         day::reactive::flush_sync();
@@ -1842,6 +2000,102 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_group_flushes_as_one_statement() {
+        // The user-reported shape: group several shapes, delete the group, and watch the SQL.
+        let doc = test_doc();
+        let container = doc.container.clone().unwrap();
+        let mut ids = Vec::new();
+        for i in 0..4 {
+            ids.push(place_shape(NodeKind::Rect, i as f64 * 10.0, 0.0));
+        }
+        selection().set(ids.clone());
+        group_selection();
+        day::reactive::flush_sync();
+        let gid = selection().get_untracked()[0];
+        container.save().expect("settle the seed");
+
+        let sql = container
+            .record_sql(|| {
+                selection().set(vec![gid]);
+                delete_selection();
+            })
+            .expect("flush");
+
+        assert!(nodes().keys().is_empty(), "the subtree went");
+        // One table, one shape: the group and its four shapes leave in a single statement.
+        let deletes: Vec<&String> = sql.iter().filter(|s| s.starts_with("DELETE")).collect();
+        assert_eq!(deletes.len(), 1, "{sql:?}");
+        assert_eq!(deletes[0], "DELETE FROM nodes WHERE id IN (?, ?, ?, ?, ?)");
+    }
+
+    #[test]
+    fn deleting_a_group_cascades_to_its_whole_subtree() {
+        // The app used to walk the subtree itself before deleting. That code is gone: the
+        // relation's `cascade` rule does it, so this pins the behavior the app now relies on
+        // rather than implements.
+        let doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        let b = place_shape(NodeKind::Rect, 10.0, 0.0);
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let gid = selection().get_untracked()[0];
+        assert_eq!(children_of(Some(gid)), vec![a, b]);
+
+        selection().set(vec![gid]);
+        delete_selection();
+        day::reactive::flush_sync();
+        assert!(
+            nodes().with_untracked(|k| k.get(a).is_none()),
+            "child went with it"
+        );
+        assert!(nodes().with_untracked(|k| k.get(b).is_none()));
+        assert!(nodes().with_untracked(|k| k.get(gid).is_none()));
+        assert_eq!(children_of(None), Vec::<u64>::new());
+
+        // And the whole subtree comes back as ONE undo unit, because the cascade rode the
+        // same turn as the delete that caused it.
+        assert!(doc.stack.undo());
+        assert_eq!(children_of(None), vec![gid]);
+        assert_eq!(children_of(Some(gid)), vec![a, b]);
+    }
+
+    #[test]
+    fn the_draw_order_is_one_dependency_not_one_per_node() {
+        // The reason the relation is worth having. The canvas draw is a tracked run over the
+        // sibling order; it used to read `parent` and `z` of EVERY node to find them, so the
+        // canvas subscribed to two paths per node and any unrelated write woke it. Reading
+        // the order through the relation (or, at the top level, the root query) is one
+        // dependency whatever the document holds.
+        let _doc = test_doc();
+        let seen = Rc::new(RefCell::new(0usize));
+        let sink = seen.clone();
+        day::reactive::bind(
+            || children_of(None),
+            move |ids: &Vec<u64>| *sink.borrow_mut() = ids.len(),
+        );
+        day::reactive::flush_sync();
+
+        for _ in 0..5 {
+            place_shape(NodeKind::Rect, 0.0, 0.0);
+        }
+        day::reactive::flush_sync();
+        let with_five = day::model::observed_paths();
+
+        for _ in 0..25 {
+            place_shape(NodeKind::Rect, 0.0, 0.0);
+        }
+        day::reactive::flush_sync();
+
+        assert_eq!(*seen.borrow(), 30, "the draw order followed every insert");
+        assert_eq!(
+            day::model::observed_paths(),
+            with_five,
+            "six times the nodes must not mean six times the subscriptions"
+        );
+    }
+
+    #[test]
     fn group_ungroup_round_trips_with_undo() {
         let doc = test_doc();
         let a = place_shape(NodeKind::Rect, 0.0, 0.0);
@@ -1858,7 +2112,7 @@ mod tests {
         };
         let gid = *gid;
         assert_eq!(nodes().elem(gid).kind().peek(), NodeKind::Group);
-        assert_eq!(nodes().elem(a).parent().peek(), Some(gid));
+        assert_eq!(parent_of(a), Some(gid));
         assert_eq!(children_of(None), vec![gid]);
         assert_eq!(
             node_bounds(gid),
@@ -1868,16 +2122,16 @@ mod tests {
 
         // One step back: both shapes top-level again, the group row gone.
         assert!(doc.stack.undo());
-        assert_eq!(nodes().elem(a).parent().peek(), None);
+        assert_eq!(parent_of(a), None);
         assert!(!nodes().elem(gid).exists());
         assert!(doc.stack.redo());
-        assert_eq!(nodes().elem(a).parent().peek(), Some(gid));
+        assert_eq!(parent_of(a), Some(gid));
 
         selection().set(vec![gid]);
         ungroup_selection();
         day::reactive::flush_sync();
         assert!(!nodes().elem(gid).exists());
-        assert_eq!(nodes().elem(a).parent().peek(), None);
+        assert_eq!(parent_of(a), None);
         assert_eq!(selection().get_untracked(), vec![a, b]);
         assert!(doc.stack.undo(), "…and ungroup undoes too");
         assert!(nodes().elem(gid).exists());

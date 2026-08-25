@@ -1,12 +1,15 @@
-//! The editor canvas: rendering, hit testing, and the move/resize drag machine.
+//! The editor canvas: rendering, hit testing, and the drag machine behind moving, resizing and
+//! rubber-band selection.
 //!
 //! The draw closure walks the scene bottom→top; every field it touches is a TRACKED read, so a
 //! moved shape repaints with no wiring at all. Interaction comes in through the canvas's own
-//! gesture decorators — `on_tap_at` for selection and tool placement, `on_drag` for move and
-//! resize — and every live gesture writes the model through PREVIEWS: the store (and therefore
-//! the canvas and the status readouts) follows the pointer, while nothing durable fires until
-//! the pointer lifts, when committing all touched fields in ONE turn makes the whole drag one
-//! undo step and one SQL statement per row (https://daybrite.dev/docs/model).
+//! gesture decorators — `on_tap_at` for selection and tool placement, `on_drag` for move,
+//! resize and the band — and every live gesture that EDITS writes the model through PREVIEWS:
+//! the store (and therefore the canvas and the status readouts) follows the pointer, while
+//! nothing durable fires until the pointer lifts, when committing all touched fields in ONE
+//! turn makes the whole drag one undo step and one statement per table
+//! (https://daybrite.dev/docs/model). A band edits nothing at all: it writes the selection,
+//! which lives outside the store, so sweeping the canvas is neither a row nor an undo step.
 
 use crate::model::{self, Node, NodeFields, NodeKind};
 use day::prelude::*;
@@ -123,6 +126,18 @@ fn to_screen(p: Point) -> Point {
 // Drag machine
 // ---------------------------------------------------------------------------
 
+/// The rubber band the pointer is currently sweeping, in SCREEN space as `(x, y, w, h)`, or
+/// `None` between sweeps. Editor state like the selection, and for the same reason: a band is
+/// a way of pointing at shapes, not a thing the document contains, so it is never a row and
+/// never an undo step. Written on every pointer move; the draw closure reads it TRACKED, which
+/// is the whole of the repaint wiring.
+fn band() -> Signal<Option<(f64, f64, f64, f64)>> {
+    thread_local! {
+        static B: Signal<Option<(f64, f64, f64, f64)>> = Signal::global(None);
+    }
+    B.with(|s| *s)
+}
+
 /// A corner handle, named by which frame edges it moves.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Corner {
@@ -167,6 +182,15 @@ enum DragOp {
         end: LineEnd,
         start: (f64, f64, f64, f64),
     },
+    /// A rubber band sweeping the blank canvas. `anchor` is where the press landed, in SCREEN
+    /// space — the corner the band grows from. `base` is the selection the press started with,
+    /// kept whole: a plain sweep starts from nothing and replaces, while a shift- or
+    /// command-sweep starts from what was already selected and ADDS to it, which is one rule
+    /// rather than two because an empty base makes "add" and "replace" the same thing.
+    Band {
+        anchor: Point,
+        base: Vec<u64>,
+    },
 }
 
 /// A line's fields after one of its ends has moved by (dx, dy) in model space. Moving the
@@ -193,11 +217,30 @@ fn field_previews_move(dx: f64, dy: f64, starts: &[(u64, f64, f64)]) {
     }
 }
 
+/// Seal one field of a finished gesture: a record only if the field actually moved, so the
+/// turn's `UPDATE` carries only the columns that have something to say and a gesture ending
+/// where it began is not an undo step at all.
+///
+/// An unmoved field is CANCELLED, not merely skipped. Every frame of the drag previewed it,
+/// so the store holds the last previewed value, and a session that is neither committed nor
+/// cancelled leaves it there — the shape would stay where the pointer passed rather than
+/// where it belongs, and the open session would still be sitting in the preview map. Cancel
+/// puts the pre-session value back, which for an unmoved field is the value it should have,
+/// and closes the session. Cancelling a field that never opened one is a no-op.
+fn seal<S: Source<Node>>(f: Field<S, Node, f64>, start: f64, end: f64) {
+    if end == start {
+        f.session().cancel();
+    } else {
+        f.write_commit(end);
+    }
+}
+
 fn field_commits_move(dx: f64, dy: f64, starts: &[(u64, f64, f64)]) {
     let store = model::nodes();
     for (id, sx, sy) in starts {
-        store.elem(*id).x().write_commit(sx + dx);
-        store.elem(*id).y().write_commit(sy + dy);
+        let e = store.elem(*id);
+        seal(e.x(), *sx, sx + dx);
+        seal(e.y(), *sy, sy + dy);
     }
 }
 
@@ -269,15 +312,23 @@ fn resized_under_rotation(
     (f.0 + was.x - now.x, f.1 + was.y - now.y, f.2, f.3)
 }
 
-fn apply_resize(id: u64, frame: (f64, f64, f64, f64), commit: bool) {
+/// `start` is the frame the gesture began on, and only the commit reads it: the fields that
+/// still hold their starting value are sealed rather than recorded. Dragging a bottom-right
+/// corner moves w and h and leaves x and y exactly where they were, so that resize is an
+/// `UPDATE` of two columns rather than four.
+///
+/// The PREVIEW pass always writes all four. A preview must be able to put a coordinate BACK —
+/// drag a top-left corner out and return it, and x has to follow the pointer home — so a
+/// preview that skipped an unchanged field would strand the previous frame's value on screen.
+fn apply_resize(id: u64, frame: (f64, f64, f64, f64), start: (f64, f64, f64, f64), commit: bool) {
     let store = model::nodes();
     let e = store.elem(id);
     if commit {
-        // Four commits in ONE turn: one undo unit, one UPDATE of four columns.
-        e.x().write_commit(frame.0);
-        e.y().write_commit(frame.1);
-        e.w().write_commit(frame.2);
-        e.h().write_commit(frame.3);
+        // Sealed in ONE turn: one undo unit, one UPDATE of however many columns moved.
+        seal(e.x(), start.0, frame.0);
+        seal(e.y(), start.1, frame.1);
+        seal(e.w(), start.2, frame.2);
+        seal(e.h(), start.3, frame.3);
     } else {
         e.x().write_preview(frame.0);
         e.y().write_preview(frame.1);
@@ -354,6 +405,160 @@ fn hit_top_level(px: f64, py: f64) -> Option<u64> {
         }
     }
     None
+}
+
+/// Do two convex polygons overlap? The separating-axis test over both outlines' edge normals:
+/// if any axis has them projecting to disjoint intervals they are apart, and if none does they
+/// touch. Exact for the rectangles and quads below, and it holds for a two-point "polygon" — a
+/// line segment — whose single edge still yields the axis that would separate it.
+fn convex_overlap(a: &[Point], b: &[Point]) -> bool {
+    let project = |poly: &[Point], ax: Point| {
+        poly.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
+            let d = p.x * ax.x + p.y * ax.y;
+            (lo.min(d), hi.max(d))
+        })
+    };
+    for poly in [a, b] {
+        for i in 0..poly.len() {
+            let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+            // The edge's normal. A repeated point contributes no axis to test.
+            let ax = Point::new(p.y - q.y, q.x - p.x);
+            if ax.x.abs() <= f64::EPSILON && ax.y.abs() <= f64::EPSILON {
+                continue;
+            }
+            let ((a0, a1), (b0, b1)) = (project(a, ax), project(b, ax));
+            if a1 < b0 || b1 < a0 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Is `p` inside a convex polygon? Every edge turns the same way about an interior point, so a
+/// sign change across the cross products means outside.
+fn point_in_convex(poly: &[Point], p: Point) -> bool {
+    let mut sign = 0.0;
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        let cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+        if cross.abs() <= f64::EPSILON {
+            continue;
+        }
+        if sign * cross < 0.0 {
+            return false;
+        }
+        sign = cross;
+    }
+    true
+}
+
+/// Does the band touch this SHAPE as drawn? The band arrives as its four model-space corners;
+/// a rotated shape rides them back through the inverse rotation into its own upright space —
+/// exactly as [`point_in_shape`] rides the pointer — so each kind's test is plain geometry
+/// again. Every kind answers for the ink it actually lays down, which matters most for a line:
+/// its frame is the box its two ends span, mostly empty for a diagonal, and a band that merely
+/// entered that box has not touched the line.
+fn shape_touches(id: u64, band: &[Point; 4]) -> bool {
+    let e = model::nodes().elem(id);
+    let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+    let rot = e.rotation().peek();
+    let quad = if rot.abs() > f64::EPSILON {
+        let m = rotation_about_center(x, y, w, h, -rot);
+        band.map(|p| m.apply(p))
+    } else {
+        *band
+    };
+    match e.kind().peek() {
+        // The segment itself, not the box around it.
+        NodeKind::Line => {
+            let ((ax, ay), (bx, by)) = model::line_ends(id);
+            convex_overlap(&[Point::new(ax, ay), Point::new(bx, by)], &quad)
+        }
+        // Scale the ellipse's own space until it is a circle and the quad rides along, then the
+        // question is the distance from that circle's center to the quad. The frame's four
+        // corners lie outside the ellipse, so a band clipping only a corner touches nothing.
+        NodeKind::Oval => {
+            if w.abs() <= f64::EPSILON || h.abs() <= f64::EPSILON {
+                return false;
+            }
+            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+            let k = w / h;
+            let scaled = quad.map(|p| Point::new(p.x, cy + (p.y - cy) * k));
+            let c = Point::new(cx, cy);
+            if point_in_convex(&scaled, c) {
+                return true;
+            }
+            let r = (w / 2.0).abs();
+            (0..4).any(|i| {
+                let (a, b) = (scaled[i], scaled[(i + 1) % 4]);
+                distance_to_segment((c.x, c.y), (a.x, a.y), (b.x, b.y)) <= r
+            })
+        }
+        // A group is never tested directly — the walk below descends to its shapes — but the
+        // arm is written out so a new kind must decide its own hit shape.
+        NodeKind::Rect | NodeKind::Group => {
+            let frame = [
+                Point::new(x, y),
+                Point::new(x + w, y),
+                Point::new(x + w, y + h),
+                Point::new(x, y + h),
+            ];
+            convex_overlap(&quad, &frame)
+        }
+    }
+}
+
+/// Every top-level node a SCREEN-space band touches, bottom→top. Touching, not enclosing: a
+/// shape joins the selection as soon as the band reaches any part of it, which is what a
+/// marquee means everywhere else and what makes a small sweep across a crowded drawing useful.
+/// A group answers for its members — touch any one of them and the group is selected, the same
+/// rule a click on a member follows. The band converts to model space once here rather than
+/// once per shape.
+fn touched_by(band: (f64, f64, f64, f64)) -> Vec<u64> {
+    let a = to_model(Point::new(band.0, band.1));
+    let z = to_model(Point::new(band.0 + band.2, band.1 + band.3));
+    let (l, t) = (a.x.min(z.x), a.y.min(z.y));
+    let (r, b) = (a.x.max(z.x), a.y.max(z.y));
+    let corners = [
+        Point::new(l, t),
+        Point::new(r, t),
+        Point::new(r, b),
+        Point::new(l, b),
+    ];
+    model::children_of(None)
+        .into_iter()
+        .filter(|id| {
+            model::shape_descendants(*id)
+                .into_iter()
+                .any(|s| shape_touches(s, &corners))
+        })
+        .collect()
+}
+
+/// Advance a sweep that began at `anchor` and has moved by `(dx, dy)` in screen pixels: set
+/// the selection the band now makes, and return the band itself for the caller to show or
+/// drop. Both the live phase and the release run through here, so the set the pointer lifts on
+/// is exactly the set the band was showing.
+fn sweep(anchor: Point, base: &[u64], dx: f64, dy: f64) -> (f64, f64, f64, f64) {
+    let rect = (
+        anchor.x.min(anchor.x + dx),
+        anchor.y.min(anchor.y + dy),
+        dx.abs(),
+        dy.abs(),
+    );
+    let mut next = base.to_vec();
+    for id in touched_by(rect) {
+        if !next.contains(&id) {
+            next.push(id);
+        }
+    }
+    // Only on a real change: a sweep reports many moves that enclose the same shapes, and the
+    // inspector rebuilds on every selection write.
+    if model::selection().get_untracked() != next {
+        model::selection().set(next);
+    }
+    rect
 }
 
 fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
@@ -600,9 +805,9 @@ fn draw_scene(d: &mut Draw, size: Size) {
     // TRACKED walk: shape + z reads through the collection, field reads per shape.
     let _shape_of_collection = store.keys();
     fn draw_children(d: &mut Draw, store: Store<Keyed<Node>>, parent: Option<u64>) {
-        // TRACKED order: an arrange (a plain z write) must repaint NOW, not when the
-        // selection next changes.
-        for id in crate::model::children_of_tracked(parent) {
+        // TRACKED order: an arrange writes the child's z, the relation index reorders, and
+        // this read wakes — one dependency per parent, not one per node in the document.
+        for id in crate::model::children_of(parent) {
             let e = store.elem(id);
             let kind = e.kind().with(|k| k.copied().unwrap_or_default());
             match kind {
@@ -610,6 +815,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
                 NodeKind::Rect | NodeKind::Oval | NodeKind::Line => {
                     let node = Node {
                         id,
+                        children: day::persistence::Many::default(),
                         parent: None,
                         z: 0.0,
                         kind,
@@ -686,7 +892,9 @@ fn draw_scene(d: &mut Draw, size: Size) {
             .elem(*id)
             .kind()
             .with(|k| k.copied().unwrap_or_default());
-        // What a selection LOOKS like is per kind, so a new one has to say for itself.
+        // What a selection LOOKS like is per kind, so a new one has to say for itself. The
+        // OUTLINE turns for every kind that carries an angle, groups included — a turned
+        // arrangement wearing an upright box would look like the box had come loose from it.
         let handles = match kind {
             // A line wears its own selection: the segment itself, marked at both ends. A
             // frame around it would say "resize me" about a shape that has no frame to
@@ -709,11 +917,11 @@ fn draw_scene(d: &mut Draw, size: Size) {
             }
             // A frame, with corner handles to resize by.
             NodeKind::Rect | NodeKind::Oval => true,
-            // A group shows the union it occupies and no handles: groups move, their members
+            // A group shows the frame it occupies and no handles: groups move, their members
             // resize.
             NodeKind::Group => false,
         };
-        let pts = screen_corners(b, if handles { rotation } else { 0.0 });
+        let pts = screen_corners(b, rotation);
         let p = |i: usize| Point::new(pts[i].1, pts[i].2);
         // Ring order: the corners come back TL, TR, BL, BR.
         d.stroke(
@@ -735,6 +943,16 @@ fn draw_scene(d: &mut Draw, size: Size) {
             }
         }
     }
+
+    // The rubber band, over everything including the outlines it is drawing: a faint wash
+    // under a dashed edge, the marquee every drawing program wears. Screen space, like the
+    // outlines and for the same reason — one pixel of dash means one pixel at any zoom.
+    // TRACKED: this read is what repaints the canvas as the band grows.
+    if let Some((x, y, w, h)) = band().get() {
+        let r = rect_shape(x, y, w, h);
+        d.fill(r.clone(), SELECTION.with_alpha(0.10));
+        d.stroke_styled(r, SELECTION, StrokeStyle::dashed(1.0, vec![4.0, 4.0]));
+    }
 }
 
 /// Which recognizer reported a click — the dedup key in [`handle_click`].
@@ -751,7 +969,7 @@ enum ClickSource {
 /// report of the same press. It only ever pairs ACROSS sources — two taps are two clicks
 /// however close together (a double-click, a fast scripted run) — and a dropped report is
 /// not recorded, so it cannot chain into dropping the next press's.
-fn handle_click(p_screen: Point, source: ClickSource) {
+fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
     // On wasm the guard compiles out: std::time is unavailable there, and the dom shim's 4px
     // slop already makes tap and drag exclusive, so a double report cannot happen.
     #[cfg(not(target_arch = "wasm32"))]
@@ -769,14 +987,14 @@ fn handle_click(p_screen: Point, source: ClickSource) {
     }
     #[cfg(target_arch = "wasm32")]
     let _ = source;
-    on_tap(to_model(p_screen));
+    on_tap(to_model(p_screen), mods);
 }
 
 /// `p` is in MODEL space — callers convert from screen coordinates first. A canvas tap always
 /// SELECTS: shapes are placed from the toolbar's shape menu (centered in the viewport), so
 /// there is no armed-tool mode to be in.
-fn on_tap(p: Point) {
-    select_at(p, day::modifiers());
+fn on_tap(p: Point, mods: day::Modifiers) {
+    select_at(p, mods);
 }
 
 /// The select tool's tap rule, with the modifiers that were held: shift or the platform's
@@ -802,7 +1020,7 @@ pub(crate) fn select_at(p: Point, mods: day::Modifiers) {
     }
 }
 
-fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
+fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
     let store = model::nodes();
     // The drag arrives in screen pixels; the model lives behind the view transform. Handles
     // are hit in screen space (constant grab target), shapes in model space, and every
@@ -825,23 +1043,45 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                     Handle::End(end) => DragOp::Endpoint { id, end, start },
                 }
             } else if let Some(top) = hit_top_level(m.x, m.y) {
-                // Dragging an unselected shape selects it first (single), then moves the
-                // WHOLE selection if the hit is part of it.
+                // Dragging an unselected shape selects it first, then moves the WHOLE
+                // selection if the hit is part of it. Shift or command ADDS it rather than
+                // replacing — the rule a click already follows, so a modified press can never
+                // throw away what was selected before it.
                 let mut sel = model::selection().get_untracked();
                 if !sel.contains(&top) {
-                    sel = vec![top];
+                    if mods.shift || mods.primary {
+                        sel.push(top);
+                    } else {
+                        sel = vec![top];
+                    }
                     model::selection().set(sel.clone());
                 }
                 let mut starts = Vec::new();
                 for t in &sel {
-                    for s in model::shape_descendants(*t) {
+                    // `moved_nodes`, not `shape_descendants`: a group's own frame travels with
+                    // its members, or the selection outline (and the centre its next turn
+                    // pivots on) would stay behind where the group used to be.
+                    for s in model::moved_nodes(*t) {
                         let e = store.elem(s);
                         starts.push((s, e.x().peek(), e.y().peek()));
                     }
                 }
                 DragOp::Move { starts }
             } else {
-                DragOp::Idle
+                // Blank canvas: sweep a band. Shift or the platform's command key keeps what
+                // was already selected and adds to it — the same modifier rule a click follows.
+                let base = if mods.shift || mods.primary {
+                    model::selection().get_untracked()
+                } else {
+                    Vec::new()
+                };
+                // Anchor at the PRESS, which is not always where `Began` is reported: appkit
+                // raises it on the first drag event, already carrying the translation from
+                // the press. Subtracting that back out lands on the point the pointer went
+                // down at on every backend — anchoring on `location` alone would count the
+                // opening move twice and leave the band trailing the pointer.
+                let anchor = Point::new(p.x - drag.translation.x, p.y - drag.translation.y);
+                DragOp::Band { anchor, base }
             };
             *op.borrow_mut() = next;
         }
@@ -862,7 +1102,7 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                     drag.translation.y / zf,
                     *rotation,
                 );
-                apply_resize(*id, f, false);
+                apply_resize(*id, f, *start, false);
             }
             DragOp::Endpoint { id, end, start } => {
                 let f = line_dragged(
@@ -871,7 +1111,11 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                     drag.translation.x / zf,
                     drag.translation.y / zf,
                 );
-                apply_resize(*id, f, false);
+                apply_resize(*id, f, *start, false);
+            }
+            DragOp::Band { anchor, base } => {
+                let rect = sweep(*anchor, base, drag.translation.x, drag.translation.y);
+                band().set(Some(rect));
             }
             DragOp::Idle => {}
         },
@@ -894,21 +1138,30 @@ fn on_drag(drag: Drag, op: &Rc<RefCell<DragOp>>) {
                         drag.translation.y / zf,
                         rotation,
                     );
-                    model::undo_stack().grouped("resize", || apply_resize(id, f, true));
+                    model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
                 DragOp::Endpoint { id, end, start } => {
                     let f =
                         line_dragged(start, end, drag.translation.x / zf, drag.translation.y / zf);
-                    model::undo_stack().grouped("resize", || apply_resize(id, f, true));
+                    model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
-                // A blank-canvas press that never really moved is a CLICK the tap recognizer
-                // lost to the pan recognizer — act on it, or deselection (and placement)
-                // silently fails on about half of real desktop clicks.
-                DragOp::Idle => {
+                // The band goes away on release whatever it caught; the selection it made is
+                // already in place. A press that never really moved is a CLICK the tap
+                // recognizer lost to the pan recognizer — act on it, or deselection silently
+                // fails on about half of real desktop clicks. A hair of travel may already
+                // have swept a band, so the click starts from the selection the press did.
+                DragOp::Band { anchor, base } => {
+                    band().set(None);
                     if drag.translation.x.hypot(drag.translation.y) <= 3.0 {
-                        handle_click(drag.location, ClickSource::DragEnd);
+                        model::selection().set(base);
+                        handle_click(drag.location, mods, ClickSource::DragEnd);
+                    } else {
+                        sweep(anchor, &base, drag.translation.x, drag.translation.y);
                     }
                 }
+                // Reachable only on a backend that ends a drag it never began; the click
+                // fallback above lives in `Band` now, since that is where a blank press lands.
+                DragOp::Idle => {}
             }
         }
     }
@@ -925,8 +1178,27 @@ pub(crate) fn canvas_focused() -> Signal<bool> {
     F.with(|s| *s)
 }
 
-/// Nudge the selection with the arrow keys: 1px, or 10 with shift (docs/menus.md). Hung on the
-/// canvas rather than the window, so it can only fire while the canvas is the focused piece.
+/// The canvas's keyboard: arrows nudge, Delete removes. Hung on the canvas rather than the
+/// window, so it can only fire while the canvas is the focused piece — a text field taking
+/// focus takes the keys with it, which is what stops Delete from eating a shape while someone
+/// edits a hex value (docs/focus.md).
+/// `owns_delete` says whether Delete is this handler's to act on: true only where the platform
+/// draws no menu bar. On the four that do, Edit ▸ Delete carries the same accelerator and the
+/// platform fires it BEFORE the key reaches a focused view, so acting here as well would run
+/// the command twice. Backends without a menu bar — web-dom above all — never see that
+/// accelerator, and this is the only route the key has. Read at the piece and passed in as
+/// data, like the gesture modifiers, so the decision is testable without a toolkit under it.
+pub(crate) fn canvas_key(ev: &day::KeyEvent, owns_delete: bool) {
+    match ev.key.as_str() {
+        // Both spellings: a full-size keyboard's Del arrives as "Delete", a laptop's ⌫ as
+        // "Backspace", and both mean "remove this" on a canvas.
+        "Delete" | "Backspace" if owns_delete => model::delete_selection(),
+        "Delete" | "Backspace" => {}
+        _ => nudge_by_key(ev),
+    }
+}
+
+/// Nudge the selection with the arrow keys: 1px, or 10 with shift (docs/menus.md).
 fn nudge_by_key(ev: &day::KeyEvent) {
     let (dx, dy) = match ev.key.as_str() {
         "ArrowLeft" => (-1.0, 0.0),
@@ -950,8 +1222,11 @@ pub(crate) fn editor_canvas() -> impl Piece {
         VIEWPORT.with(|v| v.set((size.width, size.height)));
         draw_scene(d, size)
     })
-    .on_tap_at(|p| handle_click(p, ClickSource::Tap))
-    .on_drag(move |drag| on_drag(drag, &op2))
+    // The live modifiers are read HERE, at the edge, and travel into the machine as data:
+    // shift-drag and shift-click both change meaning, and a handler that reads them itself
+    // could only ever run with a toolkit under it.
+    .on_tap_at(|p| handle_click(p, day::modifiers(), ClickSource::Tap))
+    .on_drag(move |drag| on_drag(drag, day::modifiers(), &op2))
     .on_pinch(move |g| {
         if g.phase == DragPhase::Began {
             pinch_base.set((zoom().get_untracked(), g.location));
@@ -965,7 +1240,9 @@ pub(crate) fn editor_canvas() -> impl Piece {
             p.y += g.delta.y;
         });
     })
-    .on_key(nudge_by_key)
+    // The menu bar's presence is a static per-backend fact, so it is read once here rather
+    // than on every keystroke.
+    .on_key(|ev| canvas_key(ev, capability(Cap::AppMenu) == Support::Unsupported))
     .focused(canvas_focused())
     .context_menu(crate::context_menu_entries())
     .id("canvas")
@@ -992,6 +1269,845 @@ mod tests {
         let pts = screen_corners(b, rotation_of(id));
         let (_, x, y) = pts.iter().find(|(c, _, _)| *c == want).copied().unwrap();
         (x, y)
+    }
+
+    // -----------------------------------------------------------------------
+    // Rubber-band selection
+    // -----------------------------------------------------------------------
+
+    /// A settled view: screen coordinates equal model coordinates, so a band test reads as the
+    /// geometry it is about. The view transform is thread-local and a sibling test may have
+    /// zoomed it.
+    fn unzoomed() {
+        zoom().set(1.0);
+        pan().set(Point::ZERO);
+        band().set(None);
+        model::selection().set(Vec::new());
+    }
+
+    /// A rectangle of a given size at a given place — the shapes a band has to tell apart.
+    fn rect_at(x: f64, y: f64, w: f64, h: f64) -> u64 {
+        let id = model::place_shape(NodeKind::Rect, x, y);
+        day::reactive::flush_sync();
+        let e = model::nodes().elem(id);
+        e.w().write(w);
+        e.h().write(h);
+        day::reactive::flush_sync();
+        id
+    }
+
+    /// Drive one whole sweep through the real drag machine: press at `from`, move to `to`,
+    /// release there. Screen coordinates, the way the toolkit delivers them.
+    fn sweep_gesture(from: (f64, f64), to: (f64, f64), mods: day::Modifiers) {
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        let at = |phase, (x, y): (f64, f64)| Drag {
+            phase,
+            location: Point::new(x, y),
+            translation: Point::new(x - from.0, y - from.1),
+        };
+        on_drag(at(DragPhase::Began, from), mods, &op);
+        on_drag(at(DragPhase::Changed, to), mods, &op);
+        on_drag(at(DragPhase::Ended, to), mods, &op);
+    }
+
+    fn plain() -> day::Modifiers {
+        day::Modifiers::default()
+    }
+
+    fn shift() -> day::Modifiers {
+        day::Modifiers {
+            shift: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_band_selects_every_shape_it_encloses() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 40.0, 40.0);
+        let b = rect_at(80.0, 10.0, 40.0, 40.0);
+        let far = rect_at(400.0, 400.0, 40.0, 40.0);
+
+        sweep_gesture((0.0, 0.0), (200.0, 200.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![a, b]);
+        assert_eq!(
+            band().get_untracked(),
+            None,
+            "the band goes away on release"
+        );
+
+        // And a band drawn elsewhere takes the shape that is elsewhere.
+        sweep_gesture((380.0, 380.0), (500.0, 500.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![far]);
+    }
+
+    #[test]
+    fn a_band_grown_in_any_direction_covers_the_same_ground() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(10.0, 10.0, 40.0, 40.0);
+        // All four drag directions over the same rectangle of screen.
+        for (from, to) in [
+            ((0.0, 0.0), (100.0, 100.0)),
+            ((100.0, 100.0), (0.0, 0.0)),
+            ((100.0, 0.0), (0.0, 100.0)),
+            ((0.0, 100.0), (100.0, 0.0)),
+        ] {
+            model::selection().set(Vec::new());
+            sweep_gesture(from, to, plain());
+            assert_eq!(
+                model::selection().get_untracked(),
+                vec![id],
+                "{from:?}→{to:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_band_takes_everything_it_touches() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let covered = rect_at(10.0, 10.0, 30.0, 30.0);
+        // Straddles the band's right edge: grazed is taken, same as covered.
+        let grazed = rect_at(80.0, 10.0, 60.0, 30.0);
+        // Beyond its reach entirely.
+        rect_at(300.0, 300.0, 30.0, 30.0);
+
+        sweep_gesture((0.0, 0.0), (100.0, 100.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![covered, grazed]);
+
+        // Edges count as touching: a band that stops exactly ON a shape's edge takes it,
+        // rather than missing by a pixel the user cannot see.
+        model::selection().set(Vec::new());
+        sweep_gesture((0.0, 0.0), (10.0, 10.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![covered]);
+
+        // One pixel short of that edge takes nothing.
+        model::selection().set(Vec::new());
+        sweep_gesture((0.0, 0.0), (9.0, 9.0), plain());
+        assert!(model::selection().get_untracked().is_empty());
+    }
+
+    #[test]
+    fn a_thin_band_takes_what_it_sweeps_across() {
+        // The everyday use of a touching band: a quick stroke through a row of shapes, with
+        // no room to draw a rectangle around any of them.
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 20.0, 200.0);
+        let b = rect_at(50.0, 10.0, 20.0, 200.0);
+        let c = rect_at(90.0, 10.0, 20.0, 200.0);
+        rect_at(300.0, 10.0, 20.0, 200.0);
+
+        // A horizontal line across all three: zero height, and it still catches them.
+        sweep_gesture((5.0, 100.0), (150.0, 100.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![a, b, c]);
+    }
+
+    #[test]
+    fn touching_one_member_takes_the_whole_group() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        let b = rect_at(200.0, 10.0, 30.0, 30.0);
+        model::selection().set(vec![a, b]);
+        model::group_selection();
+        day::reactive::flush_sync();
+        let group = model::selection().get_untracked()[0];
+
+        // Reaching one member selects the GROUP, not that member — the rule a click on a
+        // member already follows.
+        model::selection().set(Vec::new());
+        sweep_gesture((0.0, 0.0), (20.0, 20.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![group]);
+
+        // The gap BETWEEN the two members belongs to neither, so a band inside it takes
+        // nothing: a group answers for its shapes, not for the box around them.
+        model::selection().set(Vec::new());
+        sweep_gesture((60.0, 15.0), (190.0, 35.0), plain());
+        assert!(model::selection().get_untracked().is_empty());
+
+        // Across both: still one selection, listed once.
+        sweep_gesture((0.0, 0.0), (300.0, 300.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![group]);
+    }
+
+    #[test]
+    fn a_turned_shape_answers_for_where_it_is_drawn() {
+        let _doc = install_test_doc();
+        unzoomed();
+        // 96×64 at the origin, turned a quarter about its center (48, 32): it now covers
+        // (16, -16)–(80, 80) — taller than the frame the inspector shows, and narrower.
+        let id = turned(90.0);
+        model::selection().set(Vec::new());
+
+        // Inside the stored frame but in a corner the turn vacated: not touched. (Every band
+        // here starts on blank canvas — a press ON the shape would be a move, which selects
+        // too and would pass these assertions for the wrong reason.)
+        sweep_gesture((88.0, 4.0), (94.0, 10.0), plain());
+        assert!(
+            model::selection().get_untracked().is_empty(),
+            "that corner is empty once the shape turns"
+        );
+
+        // Below the stored frame but inside the turned shape: touched. Swept upward from
+        // blank canvas under it.
+        sweep_gesture((40.0, 95.0), (60.0, 75.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+    }
+
+    #[test]
+    fn a_line_answers_for_its_stroke_not_the_box_around_it() {
+        // A diagonal line's frame is mostly empty, and a band that only entered that box has
+        // not touched the line.
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = model::place_shape(NodeKind::Line, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let e = model::nodes().elem(id);
+        e.w().write(200.0);
+        e.h().write(200.0);
+        day::reactive::flush_sync();
+        model::selection().set(Vec::new());
+
+        // Well off the diagonal, inside the frame it spans.
+        sweep_gesture((150.0, 20.0), (190.0, 60.0), plain());
+        assert!(
+            model::selection().get_untracked().is_empty(),
+            "the corner of a diagonal's box holds no ink"
+        );
+
+        // Straddling the segment: swept from one side of it to the other, starting clear of
+        // the stroke's own grab tolerance.
+        sweep_gesture((130.0, 70.0), (70.0, 130.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+    }
+
+    #[test]
+    fn an_oval_answers_for_its_curve_not_its_corners() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = model::place_shape(NodeKind::Oval, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let e = model::nodes().elem(id);
+        e.w().write(100.0);
+        e.h().write(100.0);
+        day::reactive::flush_sync();
+        model::selection().set(Vec::new());
+
+        // The frame's top-left corner is outside a circle inscribed in it.
+        sweep_gesture((1.0, 1.0), (10.0, 10.0), plain());
+        assert!(
+            model::selection().get_untracked().is_empty(),
+            "the corner of an oval's frame is not the oval"
+        );
+
+        // The same little band slid onto the curve does touch it.
+        sweep_gesture((10.0, 10.0), (20.0, 20.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+    }
+
+    #[test]
+    fn a_shift_sweep_adds_to_the_selection_and_a_plain_one_replaces() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        let b = rect_at(200.0, 10.0, 30.0, 30.0);
+
+        sweep_gesture((0.0, 0.0), (60.0, 60.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![a]);
+
+        // Shift keeps what was there and adds what the new band caught.
+        sweep_gesture((180.0, 0.0), (260.0, 60.0), shift());
+        assert_eq!(model::selection().get_untracked(), vec![a, b]);
+
+        // Without it, the second band is the whole answer.
+        sweep_gesture((180.0, 0.0), (260.0, 60.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![b]);
+
+        // A shift-sweep that re-catches an already-selected shape does not list it twice.
+        sweep_gesture((0.0, 0.0), (260.0, 60.0), shift());
+        assert_eq!(model::selection().get_untracked(), vec![b, a]);
+    }
+
+    #[test]
+    fn the_band_is_live_while_the_pointer_moves() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(10.0, 10.0, 30.0, 30.0);
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        let at = |phase, x: f64, y: f64| Drag {
+            phase,
+            location: Point::new(x, y),
+            translation: Point::new(x - 5.0, y - 5.0),
+        };
+
+        on_drag(at(DragPhase::Began, 5.0, 5.0), plain(), &op);
+        // Short of the shape: a band, but nothing caught yet.
+        on_drag(at(DragPhase::Changed, 8.0, 8.0), plain(), &op);
+        assert_eq!(band().get_untracked(), Some((5.0, 5.0, 3.0, 3.0)));
+        assert!(model::selection().get_untracked().is_empty());
+
+        // Reaching it: selected mid-gesture, before any release.
+        on_drag(at(DragPhase::Changed, 20.0, 20.0), plain(), &op);
+        assert_eq!(band().get_untracked(), Some((5.0, 5.0, 15.0, 15.0)));
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+
+        // Pulled back off it again: dropped just as live.
+        on_drag(at(DragPhase::Changed, 8.0, 8.0), plain(), &op);
+        assert!(model::selection().get_untracked().is_empty());
+
+        on_drag(at(DragPhase::Ended, 60.0, 60.0), plain(), &op);
+        assert_eq!(band().get_untracked(), None);
+        assert_eq!(
+            model::selection().get_untracked(),
+            vec![id],
+            "the release re-reads the final band, so the set the pointer lifts on is the set \
+             it was showing"
+        );
+    }
+
+    #[test]
+    fn a_band_reads_the_view_transform() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        // Zoomed 2× with no pan, the shape is drawn at (200, 200)–(280, 280) on screen. A
+        // band in MODEL coordinates would miss it entirely.
+        zoom().set(2.0);
+        sweep_gesture((190.0, 190.0), (290.0, 290.0), plain());
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+
+        // The same numbers read as MODEL coordinates would land on the shape; as screen
+        // coordinates at 2x they fall short of it, and nothing is caught.
+        model::selection().set(Vec::new());
+        sweep_gesture((90.0, 90.0), (150.0, 150.0), plain());
+        assert!(model::selection().get_untracked().is_empty());
+        unzoomed();
+    }
+
+    #[test]
+    fn a_press_that_never_moves_is_a_click_not_a_band() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(10.0, 10.0, 30.0, 30.0);
+        model::selection().set(vec![id]);
+
+        // Blank canvas, a pixel of tremor: still a click, and a click on nothing deselects.
+        sweep_gesture((300.0, 300.0), (301.0, 300.0), plain());
+        assert!(model::selection().get_untracked().is_empty());
+        assert_eq!(band().get_untracked(), None);
+    }
+
+    #[test]
+    fn a_press_on_a_shape_moves_it_and_draws_no_band() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(10.0, 10.0, 30.0, 30.0);
+        let other = rect_at(200.0, 200.0, 30.0, 30.0);
+        model::selection().set(Vec::new());
+
+        // A drag from inside the shape is a MOVE — the band must not steal it, and the shape
+        // must not select the far one it sweeps past on the way.
+        sweep_gesture((20.0, 20.0), (240.0, 240.0), plain());
+        assert_eq!(band().get_untracked(), None);
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+        assert_eq!(model::nodes().elem(id).x().peek(), 230.0);
+        assert_eq!(model::nodes().elem(other).x().peek(), 200.0, "untouched");
+    }
+
+    #[test]
+    fn sweeping_is_not_an_edit() {
+        // A band points at shapes; it does not change them. Nothing it does may reach the
+        // file, or every drag across the canvas would be an autosave and an undo step.
+        let doc = install_test_doc();
+        unzoomed();
+        let container = doc
+            .container
+            .clone()
+            .expect("the test doc owns a container");
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        rect_at(200.0, 200.0, 30.0, 30.0);
+        container.save().expect("settle the seed");
+        model::selection().set(Vec::new());
+        let depth = doc.stack.can_undo().get_untracked();
+
+        let sql = container
+            .record_sql(|| {
+                sweep_gesture((0.0, 0.0), (300.0, 300.0), plain());
+                sweep_gesture((70.0, 70.0), (35.0, 35.0), plain());
+            })
+            .expect("flush");
+        assert!(sql.is_empty(), "a sweep writes no rows: {sql:?}");
+        // …and it did run: the second band narrowed the selection to the near shape.
+        assert_eq!(model::selection().get_untracked(), vec![a]);
+        assert_eq!(doc.stack.can_undo().get_untracked(), depth);
+    }
+
+    #[test]
+    fn a_press_on_a_handle_resizes_rather_than_sweeping() {
+        // Handles win over the band, and have to: a selected shape's corner handle sits in
+        // otherwise blank canvas, and a band that claimed it would make resizing impossible.
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        model::selection().set(vec![id]);
+
+        // Just outside the shape but within grabbing distance of its bottom-right corner.
+        sweep_gesture((146.0, 146.0), (200.0, 200.0), plain());
+        assert_eq!(band().get_untracked(), None, "no band was swept");
+        assert_eq!(
+            model::nodes().elem(id).w().peek(),
+            94.0,
+            "the corner moved with it"
+        );
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+    }
+
+    #[test]
+    fn a_band_anchors_at_the_press_even_when_began_arrives_late() {
+        // appkit reports Began on the FIRST drag event, at that point, with the translation
+        // from the press already applied — so the press is `location - translation`, and a
+        // band that anchored on `location` would sit a whole opening move to one side.
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(20.0, 20.0, 40.0, 40.0);
+        model::selection().set(Vec::new());
+
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        // Pressed at (5, 5); the first event Day sees is already out at (105, 105).
+        let at = |phase, x: f64, y: f64| Drag {
+            phase,
+            location: Point::new(x, y),
+            translation: Point::new(x - 5.0, y - 5.0),
+        };
+        on_drag(at(DragPhase::Began, 105.0, 105.0), plain(), &op);
+        on_drag(at(DragPhase::Ended, 105.0, 105.0), plain(), &op);
+        assert_eq!(
+            model::selection().get_untracked(),
+            vec![id],
+            "the band must cover (5,5)-(105,105), which holds the shape"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The canvas keyboard
+    // -----------------------------------------------------------------------
+
+    fn key(name: &str) -> day::KeyEvent {
+        day::KeyEvent {
+            key: name.into(),
+            modifiers: 0,
+        }
+    }
+
+    #[test]
+    fn delete_removes_the_selection_where_no_menu_bar_carries_it() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        let b = rect_at(80.0, 10.0, 30.0, 30.0);
+        model::selection().set(vec![a]);
+
+        canvas_key(&key("Delete"), true);
+        day::reactive::flush_sync();
+        assert_eq!(
+            model::children_of(None),
+            vec![b],
+            "only the selected shape went"
+        );
+        assert!(model::selection().get_untracked().is_empty());
+
+        // ⌫ is the same command — a laptop keyboard has no Del.
+        model::selection().set(vec![b]);
+        canvas_key(&key("Backspace"), true);
+        day::reactive::flush_sync();
+        assert!(model::children_of(None).is_empty());
+    }
+
+    #[test]
+    fn delete_is_left_to_the_menu_where_one_exists() {
+        // On a platform with a menu bar, Edit ▸ Delete carries this accelerator and fires
+        // first; acting here too would run the command twice.
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        model::selection().set(vec![a]);
+
+        canvas_key(&key("Delete"), false);
+        canvas_key(&key("Backspace"), false);
+        day::reactive::flush_sync();
+        assert_eq!(
+            model::children_of(None),
+            vec![a],
+            "the shape is still there"
+        );
+        assert_eq!(model::selection().get_untracked(), vec![a]);
+    }
+
+    #[test]
+    fn delete_with_nothing_selected_changes_nothing() {
+        let doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        model::selection().set(Vec::new());
+        let depth = doc.stack.can_undo().get_untracked();
+
+        canvas_key(&key("Delete"), true);
+        day::reactive::flush_sync();
+        assert_eq!(model::children_of(None), vec![a]);
+        assert_eq!(
+            doc.stack.can_undo().get_untracked(),
+            depth,
+            "and no empty undo step"
+        );
+    }
+
+    #[test]
+    fn the_arrows_still_nudge() {
+        // Delete joined this handler; the keys that were already there keep working.
+        let _doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        model::selection().set(vec![a]);
+
+        canvas_key(&key("ArrowRight"), true);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(a).x().peek(), 11.0);
+        assert_eq!(model::children_of(None), vec![a], "nudging deletes nothing");
+    }
+
+    #[test]
+    fn a_deleted_selection_comes_back_with_undo() {
+        let doc = install_test_doc();
+        unzoomed();
+        let a = rect_at(10.0, 10.0, 30.0, 30.0);
+        let b = rect_at(80.0, 10.0, 30.0, 30.0);
+        model::selection().set(vec![a, b]);
+
+        canvas_key(&key("Delete"), true);
+        day::reactive::flush_sync();
+        assert!(model::children_of(None).is_empty());
+
+        assert!(doc.stack.undo(), "one key, one undo step");
+        day::reactive::flush_sync();
+        assert_eq!(model::children_of(None), vec![a, b]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Only the columns a gesture actually moved
+    // -----------------------------------------------------------------------
+
+    /// Run a whole drag — press, several moves, release — and return the SQL one flush issues.
+    fn drag_sql(doc: &Rc<crate::model::Doc>, from: (f64, f64), to: (f64, f64)) -> Vec<String> {
+        let container = doc
+            .container
+            .clone()
+            .expect("the test doc owns a container");
+        container.save().expect("settle before measuring");
+        container
+            .record_sql(|| {
+                let op = Rc::new(RefCell::new(DragOp::Idle));
+                let at = |phase, (x, y): (f64, f64)| Drag {
+                    phase,
+                    location: Point::new(x, y),
+                    translation: Point::new(x - from.0, y - from.1),
+                };
+                on_drag(at(DragPhase::Began, from), plain(), &op);
+                for i in 1..=8 {
+                    let f = i as f64 / 8.0;
+                    let p = (from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f);
+                    on_drag(at(DragPhase::Changed, p), plain(), &op);
+                }
+                on_drag(at(DragPhase::Ended, to), plain(), &op);
+            })
+            .expect("flush")
+    }
+
+    #[test]
+    fn a_sideways_drag_updates_only_x() {
+        let doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        model::selection().set(vec![id]);
+
+        // Straight across: y ends exactly where it started, so it has nothing to say.
+        let sql = drag_sql(&doc, (120.0, 120.0), (220.0, 120.0));
+        assert_eq!(sql, ["UPDATE nodes SET x = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(model::nodes().elem(id).x().peek(), 200.0);
+        assert_eq!(model::nodes().elem(id).y().peek(), 100.0);
+
+        // And straight down is the mirror of it.
+        let sql = drag_sql(&doc, (220.0, 120.0), (220.0, 200.0));
+        assert_eq!(sql, ["UPDATE nodes SET y = ? WHERE id = ?"], "{sql:?}");
+
+        // A diagonal drag still needs both.
+        let sql = drag_sql(&doc, (220.0, 200.0), (260.0, 240.0));
+        assert_eq!(
+            sql,
+            ["UPDATE nodes SET x = ?, y = ? WHERE id = ?"],
+            "{sql:?}"
+        );
+    }
+
+    #[test]
+    fn a_drag_that_ends_where_it_began_is_not_a_change() {
+        let doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        model::selection().set(vec![id]);
+        let depth = doc.stack.can_undo().get_untracked();
+
+        // Out and back to the same pixel: the shape moved on screen the whole way, and the
+        // document has nothing to record for it.
+        let container = doc.container.clone().expect("container");
+        container.save().expect("settle");
+        let sql = container
+            .record_sql(|| {
+                let op = Rc::new(RefCell::new(DragOp::Idle));
+                let at = |phase, x: f64, y: f64| Drag {
+                    phase,
+                    location: Point::new(x, y),
+                    translation: Point::new(x - 120.0, y - 120.0),
+                };
+                on_drag(at(DragPhase::Began, 120.0, 120.0), plain(), &op);
+                on_drag(at(DragPhase::Changed, 200.0, 180.0), plain(), &op);
+                on_drag(at(DragPhase::Changed, 160.0, 140.0), plain(), &op);
+                on_drag(at(DragPhase::Ended, 120.0, 120.0), plain(), &op);
+            })
+            .expect("flush");
+        assert!(sql.is_empty(), "{sql:?}");
+        assert_eq!(model::nodes().elem(id).x().peek(), 100.0);
+        assert_eq!(model::nodes().elem(id).y().peek(), 100.0);
+        assert_eq!(
+            doc.stack.can_undo().get_untracked(),
+            depth,
+            "and no undo step that would do nothing"
+        );
+    }
+
+    #[test]
+    fn the_next_drag_undoes_to_its_own_starting_point() {
+        // A field that sat out one gesture still records the next one correctly: the sideways
+        // drag leaves y alone, and the drag after it must still undo y to where THAT drag
+        // found it.
+        let doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        model::selection().set(vec![id]);
+
+        drag_sql(&doc, (120.0, 120.0), (220.0, 120.0)); // sideways: y never moves
+        assert_eq!(model::nodes().elem(id).y().peek(), 100.0);
+        drag_sql(&doc, (220.0, 120.0), (220.0, 190.0)); // now down: y moves for the first time
+        assert_eq!(model::nodes().elem(id).y().peek(), 170.0);
+
+        assert!(doc.stack.undo(), "undo the downward drag");
+        day::reactive::flush_sync();
+        assert_eq!(
+            model::nodes().elem(id).y().peek(),
+            100.0,
+            "back to where THAT drag started"
+        );
+        assert_eq!(
+            model::nodes().elem(id).x().peek(),
+            200.0,
+            "and the earlier sideways drag still stands"
+        );
+    }
+
+    #[test]
+    fn a_corner_resize_updates_only_the_edges_it_moved() {
+        let doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        model::selection().set(vec![id]);
+
+        // The bottom-right handle: the origin stays put, so x and y stay out of it.
+        let (hx, hy) = (140.0, 140.0);
+        let sql = drag_sql(&doc, (hx, hy), (hx + 30.0, hy + 20.0));
+        assert_eq!(
+            sql,
+            ["UPDATE nodes SET w = ?, h = ? WHERE id = ?"],
+            "{sql:?}"
+        );
+        let e = model::nodes().elem(id);
+        assert_eq!((e.x().peek(), e.y().peek()), (100.0, 100.0));
+        assert_eq!((e.w().peek(), e.h().peek()), (70.0, 60.0));
+
+        // The top-left handle moves all four.
+        let sql = drag_sql(&doc, (100.0, 100.0), (90.0, 90.0));
+        assert_eq!(
+            sql,
+            ["UPDATE nodes SET x = ?, y = ?, w = ?, h = ? WHERE id = ?"],
+            "{sql:?}"
+        );
+    }
+
+    #[test]
+    fn an_arrow_nudge_updates_only_the_axis_it_moves() {
+        let doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 40.0);
+        model::selection().set(vec![id]);
+        let container = doc.container.clone().expect("container");
+        container.save().expect("settle");
+
+        let sql = container
+            .record_sql(|| canvas_key(&key("ArrowRight"), true))
+            .expect("flush");
+        assert_eq!(sql, ["UPDATE nodes SET x = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(model::nodes().elem(id).x().peek(), 101.0);
+
+        let sql = container
+            .record_sql(|| canvas_key(&key("ArrowDown"), true))
+            .expect("flush");
+        assert_eq!(sql, ["UPDATE nodes SET y = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(model::nodes().elem(id).y().peek(), 101.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Rotating a group turns the arrangement, not each piece
+    // -----------------------------------------------------------------------
+
+    /// Two 40x40 squares side by side with a 120-wide gap: (0,0) and (160,0), so the group's
+    /// frame is 200x40 and its centre is (100, 20).
+    fn pair_group() -> (u64, u64, u64) {
+        let a = rect_at(0.0, 0.0, 40.0, 40.0);
+        let b = rect_at(160.0, 0.0, 40.0, 40.0);
+        model::selection().set(vec![a, b]);
+        model::group_selection();
+        day::reactive::flush_sync();
+        let g = model::selection().get_untracked()[0];
+        (g, a, b)
+    }
+
+    fn centre(id: u64) -> (f64, f64) {
+        let e = model::nodes().elem(id);
+        (
+            e.x().peek() + e.w().peek() / 2.0,
+            e.y().peek() + e.h().peek() / 2.0,
+        )
+    }
+
+    fn near(got: (f64, f64), want: (f64, f64)) {
+        assert!(
+            (got.0 - want.0).abs() < 0.001 && (got.1 - want.1).abs() < 0.001,
+            "got {got:?}, want {want:?}"
+        );
+    }
+
+    #[test]
+    fn a_group_turns_as_one_body() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let (g, a, b) = pair_group();
+        assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 40.0)));
+
+        // A quarter turn about the group's centre (100, 20): the members ORBIT it. `a`'s
+        // centre (20, 20) swings to (100, -60); `b`'s (180, 20) to (100, 100).
+        model::set_rotation(g, 90.0, true);
+        day::reactive::flush_sync();
+        near(centre(a), (100.0, -60.0));
+        near(centre(b), (100.0, 100.0));
+
+        // …and each member turns by the same amount, so the arrangement is rigid rather than
+        // two squares sliding around each other.
+        assert_eq!(model::nodes().elem(a).rotation().peek(), 90.0);
+        assert_eq!(model::nodes().elem(b).rotation().peek(), 90.0);
+        assert_eq!(model::nodes().elem(g).rotation().peek(), 90.0);
+
+        // The group's own frame does not move: it is the body's, not the box around where the
+        // body currently happens to be.
+        assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 40.0)));
+    }
+
+    #[test]
+    fn turning_a_group_twice_pivots_on_the_same_point() {
+        // The failure this guards: pivoting on the union of the members would walk the centre
+        // a little further with every turn, and a full circle would not come home.
+        let _doc = install_test_doc();
+        unzoomed();
+        let (g, a, b) = pair_group();
+        let (a0, b0) = (centre(a), centre(b));
+
+        for step in 1..=4 {
+            model::set_rotation(g, (step * 90) as f64 % 360.0, true);
+            day::reactive::flush_sync();
+        }
+        near(centre(a), a0);
+        near(centre(b), b0);
+        assert_eq!(model::nodes().elem(a).rotation().peek(), 0.0);
+    }
+
+    #[test]
+    fn a_turned_group_moves_and_keeps_its_frame_under_it() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let (g, a, _b) = pair_group();
+        model::set_rotation(g, 90.0, true);
+        day::reactive::flush_sync();
+        let before = centre(a);
+
+        // Drag the group by (50, 30) — from a point that is on a member, wherever it has
+        // swung to.
+        let (mx, my) = centre(a);
+        model::selection().set(vec![g]);
+        sweep_gesture((mx, my), (mx + 50.0, my + 30.0), plain());
+        day::reactive::flush_sync();
+        near(centre(a), (before.0 + 50.0, before.1 + 30.0));
+        assert_eq!(
+            model::node_bounds(g),
+            Some((50.0, 30.0, 200.0, 40.0)),
+            "the frame travelled with the members"
+        );
+        // And the next turn still pivots on the frame's centre, which moved with it to
+        // (150, 50). The angle is ABSOLUTE, so going to 180 from 90 turns by 90: `a`'s centre
+        // (150, -30) swings a quarter about (150, 50) and lands at (230, 50).
+        model::set_rotation(g, 180.0, true);
+        day::reactive::flush_sync();
+        near(centre(a), (230.0, 50.0));
+    }
+
+    #[test]
+    fn a_lone_shape_still_turns_about_its_own_centre() {
+        let _doc = install_test_doc();
+        unzoomed();
+        let id = rect_at(100.0, 100.0, 40.0, 20.0);
+        model::set_rotation(id, 90.0, true);
+        day::reactive::flush_sync();
+        assert_eq!(model::nodes().elem(id).rotation().peek(), 90.0);
+        // Its stored frame is untouched — a shape turns where it stands.
+        assert_eq!(model::node_bounds(id), Some((100.0, 100.0, 40.0, 20.0)));
+    }
+
+    #[test]
+    fn a_group_of_lines_turns_by_moving_their_ends() {
+        // A line carries no angle of its own, so a group containing one turns it by moving
+        // both ends — the only thing that means anything for a line.
+        let _doc = install_test_doc();
+        unzoomed();
+        let l = model::place_shape(NodeKind::Line, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let e = model::nodes().elem(l);
+        e.w().write(100.0);
+        e.h().write(0.0);
+        day::reactive::flush_sync();
+        let r = rect_at(0.0, 0.0, 40.0, 40.0);
+        model::selection().set(vec![l, r]);
+        model::group_selection();
+        day::reactive::flush_sync();
+        let g = model::selection().get_untracked()[0];
+
+        let ((ax, ay), (bx, by)) = model::line_ends(l);
+        model::set_rotation(g, 90.0, true);
+        day::reactive::flush_sync();
+        let ((ax2, ay2), (bx2, by2)) = model::line_ends(l);
+        assert_ne!((ax, ay), (ax2, ay2));
+        // The segment keeps its length, and the line itself never took an angle.
+        let len = |p: (f64, f64), q: (f64, f64)| (q.0 - p.0).hypot(q.1 - p.1);
+        assert!((len((ax, ay), (bx, by)) - len((ax2, ay2), (bx2, by2))).abs() < 0.001);
+        assert_eq!(model::nodes().elem(l).rotation().peek(), 0.0);
     }
 
     #[test]
@@ -1087,7 +2203,7 @@ mod tests {
     #[test]
     fn dragging_a_turned_handle_resizes_along_the_shapes_own_edge() {
         let _doc = install_test_doc();
-        let id = turned(90.0);
+        let _id = turned(90.0);
         let start = (0.0, 0.0, 96.0, 64.0);
 
         // Under a quarter turn the shape's own +x axis points DOWN the screen, so a downward

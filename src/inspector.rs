@@ -82,7 +82,9 @@ struct NumProp {
 /// the same rule the canvas drag applies.
 fn move_by(id: u64, dx: f64, dy: f64) {
     let store = model::nodes();
-    for s in model::shape_descendants(id) {
+    // `moved_nodes`, so a group's own frame travels with its members — it is what the X and Y
+    // rows read back, and what the outline and the next turn are measured from.
+    for s in model::moved_nodes(id) {
         let e = store.elem(s);
         e.x().write_commit(e.x().peek() + dx);
         e.y().write_commit(e.y().peek() + dy);
@@ -308,17 +310,22 @@ struct StyleNum {
     read: fn(u64) -> f64,
     preview: fn(u64, f64),
     commit: fn(u64, f64),
+    /// Which nodes the value fans out to. Style properties reach the SHAPES that draw, so a
+    /// group's fill edits its members. Rotation reaches the selection itself: a group turns as
+    /// one body about its own center, which is a thing only the group can do
+    /// ([`model::set_rotation`]).
+    targets: fn(bool) -> Vec<u64>,
 }
 
 impl Binding<f64> for StyleNum {
     fn read(&self) -> f64 {
-        style_targets(true)
+        (self.targets)(true)
             .first()
             .map(|t| (self.read)(*t))
             .unwrap_or(0.0)
     }
     fn peek(&self) -> f64 {
-        style_targets(false)
+        (self.targets)(false)
             .first()
             .map(|t| (self.read)(*t))
             .unwrap_or(0.0)
@@ -327,12 +334,12 @@ impl Binding<f64> for StyleNum {
         self.write_commit(v);
     }
     fn write_preview(&self, v: f64) {
-        for t in style_targets(false) {
+        for t in (self.targets)(false) {
             (self.preview)(t, v);
         }
     }
     fn write_commit(&self, v: f64) {
-        let targets = style_targets(false);
+        let targets = (self.targets)(false);
         if targets.is_empty() {
             return;
         }
@@ -442,12 +449,14 @@ const FILL_OPACITY: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).fill_opacity().read(),
     preview: |t, v| model::nodes().elem(t).fill_opacity().write_preview(v),
     commit: |t, v| model::nodes().elem(t).fill_opacity().write_commit(v),
+    targets: style_targets,
 };
 
 const STROKE_OPACITY: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).stroke_opacity().read(),
     preview: |t, v| model::nodes().elem(t).stroke_opacity().write_preview(v),
     commit: |t, v| model::nodes().elem(t).stroke_opacity().write_commit(v),
+    targets: style_targets,
 };
 
 const STROKE_WIDTH: StyleNum = StyleNum {
@@ -464,21 +473,22 @@ const STROKE_WIDTH: StyleNum = StyleNum {
             .stroke_width()
             .write_commit(v.max(0.0))
     },
+    targets: style_targets,
 };
 
 const ROTATION: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).rotation().read(),
-    preview: |t, v| {
-        model::nodes()
-            .elem(t)
-            .rotation()
-            .write_preview(v.rem_euclid(360.0))
-    },
-    commit: |t, v| {
-        model::nodes()
-            .elem(t)
-            .rotation()
-            .write_commit(v.rem_euclid(360.0))
+    preview: |t, v| model::set_rotation(t, v.rem_euclid(360.0), false),
+    commit: |t, v| model::set_rotation(t, v.rem_euclid(360.0), true),
+    // The SELECTION, not its shapes: turning a group means turning the whole arrangement
+    // about one center, which is lost the moment the value fans out to the members.
+    targets: |tracked| {
+        if tracked {
+            model::nodes().with(|_| {});
+            model::selection().get()
+        } else {
+            model::selection().get_untracked()
+        }
     },
 };
 
@@ -496,6 +506,7 @@ const CORNER_RADIUS: StyleNum = StyleNum {
             .corner_radius()
             .write_commit(v.max(0.0))
     },
+    targets: style_targets,
 };
 
 const FILL_COLOR: StyleColor = StyleColor {
@@ -580,13 +591,23 @@ fn selection_has_fill() -> bool {
     })
 }
 
-/// A rotation turns a frame about its center. A line has no frame of its own — its direction
-/// is where its two ends are — so it is turned by dragging them, not by an angle field.
+/// A rotation turns a frame about its center; a GROUP turns about its own, carrying its
+/// members around it. A line has no frame of its own — its direction is where its two ends
+/// are — so it is turned by dragging them, not by an angle field.
+///
+/// Asked of the SELECTION rather than its shapes, matching where the field writes: a group
+/// answers for itself, so a group of lines can still be turned as a body even though no line
+/// in it takes an angle.
 fn selection_can_rotate() -> bool {
-    every_target(|k| match k {
-        NodeKind::Rect | NodeKind::Oval => true,
-        NodeKind::Line | NodeKind::Group => false,
-    })
+    let sel = model::selection().get();
+    model::nodes().with(|_| {});
+    !sel.is_empty()
+        && sel.iter().all(|t| {
+            matches!(
+                model::nodes().elem(*t).kind().read(),
+                NodeKind::Rect | NodeKind::Oval | NodeKind::Group
+            )
+        })
 }
 
 fn style_section() -> impl Piece {
