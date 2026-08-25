@@ -200,6 +200,23 @@ flow:
   - key: { key: ArrowLeft, only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowUp, modifiers: [shift], only_on: [appkit, gtk, qt, dom, uikit] }
   - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  # The same four moves, on the toolkits whose canvas cannot hold the keyboard, driven through
+  # the inspector fields instead — the one rail every backend has. The point is not the input
+  # method: each move is a document edit, so this keeps the UNDO HISTORY the same depth
+  # everywhere. Without it the block above is the only writer, and every `sk-undo` after this
+  # section lands four entries deeper on the backends that skipped it — which is exactly how
+  # android-mdc came to read a shape at "56,56" where the rest of the fleet reads "40,40".
+  - input: { id: insp-x, text: "41", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp-x, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "41,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp-y, text: "50", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp-y, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "41,50 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp-x, text: "40", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp-x, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp-y, text: "40", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp-y, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk-frame, text: "40,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
   # …and with the keyboard back in a text field, the same arrows move a caret and nothing else.
   # (The sheet comes back first on iOS — its fields do not exist while it is closed.)
   - tap: { id: tool-inspector, only_on: [uikit] }
