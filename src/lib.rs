@@ -132,7 +132,7 @@ fn menus() -> Vec<MenuEntry> {
             .action(model::export_copy_dialog)
             .shortcut(cmd_shift(res::str::menu_export_key())),
     ];
-    let view = vec![
+    let mut view = vec![
         menu_item(res::str::menu_zoom_in().format())
             .action(|| canvas::zoom_step(1.25))
             .shortcut(cmd(res::str::menu_zoom_in_key())),
@@ -149,6 +149,15 @@ fn menus() -> Vec<MenuEntry> {
             .action(inspector::toggle)
             .shortcut(cmd_alt(res::str::menu_inspector_key())),
     ];
+    // The layers pane exists where the tree piece does (`Cap::Tree`, docs/tree.md) — no menu
+    // item for a pane a target cannot show.
+    if capability(Cap::Tree) == Support::Native {
+        view.push(
+            menu_item(res::str::menu_layers().format())
+                .action(inspector::layers_toggle)
+                .shortcut(cmd_alt(res::str::menu_layers_key())),
+        );
+    }
     vec![
         sub_menu(res::str::menu_file().format(), file).bar_role(MenuBarRole::File),
         // Role-only Undo/Redo: the native standard commands, which on macOS/iOS resolve
@@ -191,7 +200,20 @@ fn menus() -> Vec<MenuEntry> {
 }
 
 fn toolbar() -> Vec<ToolbarEntry> {
-    vec![
+    let mut items = Vec::new();
+    if capability(Cap::Tree) == Support::Native {
+        // Leading, like every sidebar toggle: the pane it shows is the leading pane.
+        items.push(
+            toolbar_toggle(
+                "tb-layers",
+                res::str::menu_layers(),
+                inspector::layers_visible(),
+            )
+            .icon(Symbol::Sidebar)
+            .tooltip(res::str::menu_layers()),
+        );
+    }
+    items.extend(vec![
         toolbar_button("tb-group", res::str::menu_group())
             .icon(Symbol::Add)
             .tooltip(res::str::menu_group())
@@ -237,7 +259,8 @@ fn toolbar() -> Vec<ToolbarEntry> {
         )
         .icon(Symbol::Info)
         .tooltip(res::str::menu_inspector()),
-    ]
+    ]);
+    items
 }
 
 /// The shape vocabulary, served twice. Choosing one places it in the middle of the visible
@@ -277,6 +300,17 @@ fn choose_shape() {
             canvas::place_centered(kind);
         }
     });
+}
+
+/// The in-content strip exists ONLY where the window has no toolbar (`Cap::Toolbar` is
+/// Unsupported — the phones and pads): there it is the home of the shape sheet, undo/redo,
+/// and the inspector toggle. Everywhere else those live in the window toolbar and the menus,
+/// and the strip would say everything twice.
+fn tool_row_if_no_toolbar() -> impl Piece {
+    when(
+        || capability(Cap::Toolbar) == Support::Unsupported,
+        tool_row,
+    )
 }
 
 fn tool_row() -> impl Piece {
@@ -369,7 +403,11 @@ fn status_row() -> impl Piece {
 }
 
 fn editor() -> impl Piece {
-    column((tool_row(), canvas::editor_canvas(), status_row()))
+    column((
+        tool_row_if_no_toolbar(),
+        canvas::editor_canvas(),
+        status_row(),
+    ))
 }
 
 pub fn root() -> impl Piece {
@@ -402,12 +440,27 @@ pub fn root() -> impl Piece {
     // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
     // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
     // the pane (and its visibility) survives a document switch.
-    inspector(
+    let editor_with_inspector = inspector(
         inspector::visible(),
         when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor),
         inspector::panel,
     )
-    .sheet_done(res::str::insp_done())
+    .sheet_done(res::str::insp_done());
+    // The layers pane wraps the whole editor on its LEADING side wherever the tree piece is
+    // native (`Cap::Tree` — macOS today, docs/tree.md); every other target keeps exactly the
+    // window it had until the tree lands there.
+    if capability(Cap::Tree) == Support::Native {
+        inspector(
+            inspector::layers_visible(),
+            editor_with_inspector,
+            inspector::layers_panel,
+        )
+        .width(220.0)
+        .edge(PaneEdge::Leading)
+        .any()
+    } else {
+        editor_with_inspector.any()
+    }
 }
 
 // The mobile / embedded entry point. Expands to the export each platform's shell binds against —

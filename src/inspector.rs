@@ -24,6 +24,84 @@ pub(crate) fn toggle() {
     visible().update(|v| *v = !*v);
 }
 
+/// Whether the layers pane is showing — the leading tree over the document (docs/tree.md).
+/// Shown by default on the targets that have it (`Cap::Tree`), per-run like [`visible`].
+pub(crate) fn layers_visible() -> Signal<bool> {
+    thread_local! {
+        static VIS: Signal<bool> = Signal::global(true);
+    }
+    VIS.with(|s| *s)
+}
+
+pub(crate) fn layers_toggle() {
+    layers_visible().update(|v| *v = !*v);
+}
+
+/// A layer row's kind glyph — language-neutral symbols, like the sheet's `✕`, picked from
+/// one optical family: the geometric-shape block's x-height forms plus the division slash,
+/// whose metrics sit inside a text line (the box-drawing `╱` spans the whole line, the
+/// large circle `◯` overshoots it, and `▭` collapses to a pair of dashes at row size —
+/// what made the first cut look misaligned).
+fn kind_glyph(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Rect => "□",
+        NodeKind::Oval => "○",
+        NodeKind::Line => "∕",
+        NodeKind::Group => "⊞",
+    }
+}
+
+/// The layers pane, rebuilt per document exactly like the editor (`root`'s `when`): the
+/// tree's connection captures the CURRENT doc's store, and a new document is a new store —
+/// without the rebuild the panel would keep watching the old one.
+pub(crate) fn layers_panel() -> AnyPiece {
+    when(
+        move || model::doc_rev().get().is_multiple_of(2),
+        layers_tree,
+    )
+    .otherwise(layers_tree)
+    .any()
+}
+
+/// The tree itself (docs/tree.md). Selection is the SAME signal the canvas reads, expansion
+/// is [`model::open_groups`], and a drag commits through [`model::reparent`] — one model,
+/// three surfaces.
+fn layers_tree() -> AnyPiece {
+    tree(
+        model::nodes().tree(model::children_of),
+        |slot: ModelSlot<model::Node>| {
+            row((
+                // Centered in a fixed slot, so every name starts on one column whatever
+                // the glyph's advance; the row's default cross-align centers both labels
+                // on the row's vertical middle.
+                label(move || kind_glyph(slot.kind().read()).to_string())
+                    .align(TextAlign::Center)
+                    .width(18.0),
+                label(move || model::layer_label(slot.kind().read(), slot.key())),
+            ))
+            .spacing(5.0)
+            // Clear of the selection pill's rounded corner (the appkit row insets it 5pt).
+            .padding(Insets::symmetric(8.0, 0.0))
+        },
+    )
+    .row_height(RowHeight::Uniform(28.0))
+    .expanded(model::open_groups())
+    .expandable(|id| model::node_kind(*id) == Some(NodeKind::Group))
+    .multi_select(true)
+    .selected(|| model::selection().get())
+    .on_selection(|keys| model::selection().set(keys))
+    .movable(true)
+    .on_move(model::reparent)
+    .type_ahead(|id| {
+        model::node_kind(*id)
+            .map(|k| model::layer_label(k, *id))
+            .unwrap_or_default()
+    })
+    .row_id(|id| format!("layer-{id}"))
+    .id("layers")
+    .any()
+}
+
 // ---------------------------------------------------------------------------
 // Tabs: Canvas (document settings) and Selected (the selection's properties). The selection
 // drives which one shows — see [`retarget`] — and the segmented control on top of the panel
@@ -79,12 +157,11 @@ struct NumProp {
 }
 
 /// Move a node by (dx, dy): its own frame for a shape, every shape descendant for a group —
-/// the same rule the canvas drag applies.
+/// the same rule the canvas drag applies. A group's bounds are DERIVED from its members
+/// (`node_bounds`), so moving them is the whole move.
 fn move_by(id: u64, dx: f64, dy: f64) {
     let store = model::nodes();
-    // `moved_nodes`, so a group's own frame travels with its members — it is what the X and Y
-    // rows read back, and what the outline and the next turn are measured from.
-    for s in model::moved_nodes(id) {
+    for s in model::shape_descendants(id) {
         let e = store.elem(s);
         e.x().write_commit(e.x().peek() + dx);
         e.y().write_commit(e.y().peek() + dy);

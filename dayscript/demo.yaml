@@ -21,8 +21,7 @@ flow:
   # A placement lands in the middle of the VISIBLE canvas, which differs per target (a phone's
   # viewport is not a desktop's), so every shape's frame is set through the inspector right
   # after — from here on the geometry is identical everywhere.
-  - tap: { id: tool-shape }
-  - respond: { button: 0 }
+  - menu: { key: tool_rect, path: [menu_insert] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 1 } }
   # Placing selects the new shape, and selecting flips the inspector to the SELECTED tab.
   - wait_for: { id: insp-x }
@@ -31,16 +30,14 @@ flow:
   - input: { id: insp-y, text: "40" }
   - submit: { id: insp-y }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - tap: { id: tool-shape }
-  - respond: { button: 1 }
+  - menu: { key: tool_oval, path: [menu_insert] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 2 } }
   - input: { id: insp-x, text: "200" }
   - submit: { id: insp-x }
   - input: { id: insp-y, text: "160" }
   - submit: { id: insp-y }
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
-  - tap: { id: tool-shape }
-  - respond: { button: 0 }
+  - menu: { key: tool_rect, path: [menu_insert] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
   - input: { id: insp-x, text: "80" }
   - submit: { id: insp-x }
@@ -56,7 +53,7 @@ flow:
   - tap: { id: canvas, at: [90, 70] }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
   # …and one undo restores the stacking.
-  - tap: { id: sk-undo }
+  - undo: {}
   - tap: { id: canvas, at: [90, 70] }
   - assert_text: { id: sk-frame, text: "80,60 96x64" }
 
@@ -94,7 +91,7 @@ flow:
   # Undo lands on shape 3's placement — the selection THAT unit sealed with; the transient
   # switch to shape 2 is not history (docs/model.md "Transient UI state"). Re-select 2 to
   # check its restored frame.
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-frame, text: "80,60 96x64" }
   - tap: { id: canvas, at: [248, 192] }
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
@@ -102,7 +99,7 @@ flow:
   # ---- Resize by the bottom-right handle: four fields, one undo step ----
   - drag: { id: canvas, from: [296, 224], to: [346, 274] }
   - assert_text: { id: sk-frame, text: "200,160 146x114" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-frame, text: "80,60 96x64" }
   - tap: { id: canvas, at: [248, 192] }
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
@@ -125,7 +122,36 @@ flow:
   # Dragging any member moves the WHOLE group, one undo step.
   - drag: { id: canvas, from: [50, 50], to: [60, 70] }
   - assert_text: { id: sk-frame, text: "50,60 136x84" }
-  - tap: { id: sk-undo }
+  - undo: {}
+  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+
+  # ---- Double-click drill-down: the pair's second click selects INSIDE the group ----
+  # `repeat: 2` delivers a double-click's two arrivals; the second descends one level toward
+  # the shape under the pointer, so the selection narrows from the group to its rectangle.
+  - tap: { id: canvas, at: [45, 45], repeat: 2 }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  # A repeat on the shape itself HOLDS the deep selection (no bounce back to the group).
+  - tap: { id: canvas, at: [45, 45], repeat: 2 }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+
+  # ---- The group outline is ALWAYS the box around its members: drag the drilled rectangle
+  # 20 right and down (from an interior point clear of its corner HANDLES — a drilled shape
+  # has them where a group does not), and re-selecting the group reads the RESHAPED union —
+  # the member at 60,60 96x64 with its partner at 80,60 96x64 — not a box frozen at grouping
+  # time. ----
+  - drag: { id: canvas, from: [60, 50], to: [80, 70] }
+  - assert_text: { id: sk-frame, text: "60,60 96x64" }
+  - tap: { id: canvas, at: [600, 500] }
+  - tap: { id: canvas, at: [70, 70] }
+  - assert_text: { id: sk-frame, text: "60,60 116x64" }
+  # Undo the member move: history lands on the GROUPING unit, whose seal selected the group
+  # (docs/model.md "Transient UI state") — and its outline is the ORIGINAL union again.
+  - undo: {}
+  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  # A neutral click (which also breaks the double-click pairing), then the group again for
+  # the rotation section below.
+  - tap: { id: canvas, at: [600, 500] }
+  - tap: { id: canvas, at: [45, 45] }
   - assert_text: { id: sk-frame, text: "40,40 136x84" }
 
   # ---- Rotate the group: the arrangement turns, not each shape in place ----
@@ -145,8 +171,8 @@ flow:
   - assert_text: { id: sk-frame, text: "80,60 96x64" }
   - assert_text: { id: insp-rotation, text: "180" }
   # Both units back out, leaving the group as this section found it.
-  - tap: { id: sk-undo }
-  - tap: { id: sk-undo }
+  - undo: {}
+  - undo: {}
   - assert_text: { id: sk-frame, text: "40,40 136x84" }
   - assert_text: { id: insp-rotation, text: "0" }
 
@@ -155,10 +181,10 @@ flow:
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
   - assert_text: { id: insp-x, text: "" }
   - assert_text: { id: insp-w, text: "96" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
   - assert_text: { id: sk-frame, text: "40,40 136x84" }
-  - tap: { id: sk-redo }
+  - redo: {}
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
   - assert_text: { id: insp-x, text: "" }
   - assert_text: { id: insp-w, text: "96" }
@@ -168,7 +194,7 @@ flow:
   - assert_text: { id: sk-frame, text: "200,160 96x64" }
   - menu: { key: menu_delete, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 2 } }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
   # …landing on the ungroup's point, whose selection was the two ungrouped shapes.
   - assert_text: { id: insp-x, text: "" }
@@ -176,8 +202,7 @@ flow:
 
   # ---- Edit ▸ Undo/Redo: the ROLE items drive the same document stack ----
   # (`day-undo`/`day-redo` are the core catalog keys role items are labeled by.)
-  - tap: { id: tool-shape }
-  - respond: { button: 0 }
+  - menu: { key: tool_rect, path: [menu_insert] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
   - menu: { key: day-undo, path: [menu_edit] }
   - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
@@ -251,7 +276,7 @@ flow:
   # The same four moves, on the toolkits whose canvas cannot hold the keyboard, driven through
   # the inspector fields instead — the one rail every backend has. The point is not the input
   # method: each move is a document edit, so this keeps the UNDO HISTORY the same depth
-  # everywhere. Without it the block above is the only writer, and every `sk-undo` after this
+  # everywhere. Without it the block above is the only writer, and every `undo` after this
   # section lands four entries deeper on the backends that skipped it — which is exactly how
   # android-mdc came to read a shape at "56,56" where the rest of the fleet reads "40,40".
   - input: { id: insp-x, text: "41", skip_on: [appkit, gtk, qt, dom, uikit] }
@@ -285,7 +310,7 @@ flow:
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
   - tap: { id: canvas, at: [90, 70] }
   - assert_text: { id: sk-frame, text: "80,60 116x84" }
-  - tap: { id: sk-undo }
+  - undo: {}
 
   # ---- Inspector: live geometry fields, multi-select editing (docs/inspector.md) ----
   # The single selection's live frame, field by field.
@@ -299,14 +324,14 @@ flow:
   - assert_text: { id: insp-x, text: "120" }
   - assert_text: { id: sk-frame, text: "120,40 96x64" }
   # …and one undo takes the whole edit back.
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-x, text: "40" }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
   # A canvas drag live-updates the fields (previews flow through the same bindings).
   - drag: { id: canvas, from: [45, 45], to: [65, 75] }
   - assert_text: { id: insp-x, text: "60" }
   - assert_text: { id: insp-y, text: "70" }
-  - tap: { id: sk-undo }
+  - undo: {}
   # Multi-select: widths agree, x positions differ — x reads empty behind its "multi"
   # placeholder, and typing into it aligns EVERY selected shape in one undo step.
   - tap: { id: canvas, at: [90, 70], modifiers: [shift] }
@@ -317,7 +342,7 @@ flow:
   - assert_text: { id: insp-x, text: "40" }
   # Undo lands on the last nudge — shape 1 alone — so the field shows its value, not "multi":
   # the shift-tap that widened the selection was transient, and is not history.
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
   - assert_text: { id: insp-x, text: "40" }
 
@@ -332,9 +357,9 @@ flow:
   - submit: { id: insp-stroke-w }
   - assert_text: { id: insp-stroke-w, text: "6" }
   # Each style commit is one undo unit, selection riding along as ever.
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-stroke-w, text: "1" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 100 } }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
 
@@ -359,25 +384,25 @@ flow:
   - drag: { id: canvas, from: [56, 120], to: [56, 140] }
   - assert_text: { id: sk-frame, text: "30,50 116x64" }
   # Both units back out, leaving the history exactly where this section found it.
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-rotation, text: "45" }
 
   # 360° is 0° — the angle wraps rather than growing without bound.
   - input: { id: insp-rotation, text: "360" }
   - submit: { id: insp-rotation }
   - assert_text: { id: insp-rotation, text: "0" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-rotation, text: "45" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-rotation, text: "0" }
   # Corner radius belongs to rectangles: shape 1 is one, so the row is there…
   - assert_text: { id: insp-corner, text: "0" }
   - input: { id: insp-corner, text: "12" }
   - submit: { id: insp-corner }
   - assert_text: { id: insp-corner, text: "12" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: insp-corner, text: "0" }
   # …and the OVAL has no corners, so the row is not in its inspector at all.
   - tap: { id: canvas, at: [248, 192] }
@@ -447,7 +472,7 @@ flow:
   # meet it.
   - drag: { id: canvas, from: [300, 300], to: [350, 300] }
   - assert_text: { id: sk-frame, text: "350,300 94x80" }
-  - tap: { id: sk-undo }
+  - undo: {}
   - assert_text: { id: sk-frame, text: "300,300 144x80" }
   # A press near the segment selects it; the same distance from the segment but inside its
   # bounding box is bare canvas — a line has no interior.
@@ -474,7 +499,7 @@ flow:
 
   # Close the panel so the parting shot is the same canvas on every target — and give the
   # mobile sheet its dismiss transition, or the capture races it and catches a sliver.
-  - tap: { id: tool-inspector }
+  - menu: { key: menu_inspector }
   - pause: 1
 
   - screenshot:

@@ -46,6 +46,13 @@ status_zoom = { $pct }%
 menu_inspector = Inspector
     .key = i
 tool_inspector = Inspector
+menu_layers = Layers
+    .key = l
+# The layers tree names its rows by kind: "Rectangle 3", where 3 is the node's id.
+layer_rect = Rectangle { $n }
+layer_oval = Oval { $n }
+layer_line = Line { $n }
+layer_group = Group { $n }
 insp_tab_canvas = Canvas
 # The Selected tab names its own contents: "No Items" / "1 Item" / "N Items". Fluent's plural
 # selector picks the CLDR category for the locale, so a language with more than two forms
@@ -82,6 +89,7 @@ undo_resize = Resize
 undo_group = Group
 undo_ungroup = Ungroup
 undo_arrange = Arrange
+undo_reparent = Move Layer
 undo_delete = Delete
 undo_cut = Cut
 undo_paste = Paste

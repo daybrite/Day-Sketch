@@ -45,6 +45,9 @@ thread_local! {
     /// [`handle_click`].
     static LAST_CLICK: Cell<Option<(std::time::Instant, f64, f64, ClickSource)>> =
         const { Cell::new(None) };
+    /// The previous TAP, for the double-click drill (see [`drill_at`]): a second tap within
+    /// the window and slop below counts as a REPEAT of the first.
+    static LAST_TAP: Cell<Option<(std::time::Instant, f64, f64)>> = const { Cell::new(None) };
 }
 
 /// The canvas magnification: screen = model × zoom + pan. Transient view state — never
@@ -985,16 +988,88 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
         }
         LAST_CLICK.with(|c| c.set(Some((now, p_screen.x, p_screen.y, source))));
     }
+    // Is this tap the SECOND arrival of a double-click? Same spot, within the window —
+    // that pair's second click drills into a selected group (see [`drill_at`]). A drag's
+    // stationary-click report never pairs, and clears the memory so the next tap starts
+    // a fresh pair.
+    #[cfg(not(target_arch = "wasm32"))]
+    let repeat = match source {
+        ClickSource::Tap => {
+            let now = std::time::Instant::now();
+            let repeat = LAST_TAP.with(|c| c.get()).is_some_and(|(t, x, y)| {
+                now.duration_since(t).as_millis() < 350
+                    && (p_screen.x - x).abs() < 5.0
+                    && (p_screen.y - y).abs() < 5.0
+            });
+            LAST_TAP.with(|c| c.set(Some((now, p_screen.x, p_screen.y))));
+            repeat
+        }
+        ClickSource::DragEnd => {
+            LAST_TAP.with(|c| c.set(None));
+            false
+        }
+    };
+    // No clock on wasm (std::time is unavailable): every tap may drill. The drill only fires
+    // when the hit already sits inside the SOLE selected node, so a first click never drills
+    // — the cost is that a slow second click on a selected group drills where desktop would
+    // require a true double-click.
     #[cfg(target_arch = "wasm32")]
-    let _ = source;
-    on_tap(to_model(p_screen), mods);
+    let repeat = matches!(source, ClickSource::Tap);
+    on_tap(to_model(p_screen), mods, repeat);
 }
 
 /// `p` is in MODEL space — callers convert from screen coordinates first. A canvas tap always
 /// SELECTS: shapes are placed from the toolbar's shape menu (centered in the viewport), so
-/// there is no armed-tool mode to be in.
-fn on_tap(p: Point, mods: day::Modifiers) {
+/// there is no armed-tool mode to be in. A REPEAT plain tap (a double-click's second arrival)
+/// drills into a selected group instead.
+fn on_tap(p: Point, mods: day::Modifiers, repeat: bool) {
+    if repeat && !(mods.shift || mods.primary) && drill_at(p) {
+        return;
+    }
     select_at(p, mods);
+}
+
+/// The double-click drill: with the shape under `p` inside the SOLE selected node, select one
+/// level deeper toward it — group, sub-group, then shape, one level per double-click. Once
+/// the shape itself is the sole selection a repeat click HOLDS it (consuming the click)
+/// rather than letting the plain rule bounce the selection back to the top level. Returns
+/// whether the click was consumed.
+pub(crate) fn drill_at(p: Point) -> bool {
+    let Some(leaf) = hit_leaf(p.x, p.y) else {
+        return false;
+    };
+    let sel = model::selection().get_untracked();
+    let [sole] = sel[..] else { return false };
+    if sole == leaf {
+        return true;
+    }
+    match model::child_toward(sole, leaf) {
+        Some(next) => {
+            model::selection().set(vec![next]);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The deepest SHAPE under the point — the drill's target: the same top-down z walk as
+/// [`hit_top_level`], descended into groups.
+fn hit_leaf(px: f64, py: f64) -> Option<u64> {
+    fn descend(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> Option<u64> {
+        if store.elem(id).kind().peek() == NodeKind::Group {
+            model::children_of(Some(id))
+                .into_iter()
+                .rev()
+                .find_map(|c| descend(store, c, px, py))
+        } else {
+            point_in_shape(store, id, px, py).then_some(id)
+        }
+    }
+    let store = model::nodes();
+    model::children_of(None)
+        .into_iter()
+        .rev()
+        .find_map(|top| descend(store, top, px, py))
 }
 
 /// The select tool's tap rule, with the modifiers that were held: shift or the platform's
@@ -1046,9 +1121,13 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 // Dragging an unselected shape selects it first, then moves the WHOLE
                 // selection if the hit is part of it. Shift or command ADDS it rather than
                 // replacing — the rule a click already follows, so a modified press can never
-                // throw away what was selected before it.
+                // throw away what was selected before it. "Part of it" is subtree-deep: a
+                // double-click-drilled member drags ALONE rather than snapping back to its
+                // group.
                 let mut sel = model::selection().get_untracked();
-                if !sel.contains(&top) {
+                let covered = hit_leaf(m.x, m.y)
+                    .is_some_and(|leaf| sel.iter().any(|s| model::is_within(leaf, *s)));
+                if !covered {
                     if mods.shift || mods.primary {
                         sel.push(top);
                     } else {
@@ -1058,10 +1137,9 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 }
                 let mut starts = Vec::new();
                 for t in &sel {
-                    // `moved_nodes`, not `shape_descendants`: a group's own frame travels with
-                    // its members, or the selection outline (and the centre its next turn
-                    // pivots on) would stay behind where the group used to be.
-                    for s in model::moved_nodes(*t) {
+                    // The shapes only: a group's bounds are DERIVED from its members
+                    // (`node_bounds`), so moving them is what moves its outline.
+                    for s in model::shape_descendants(*t) {
                         let e = store.elem(s);
                         starts.push((s, e.x().peek(), e.y().peek()));
                     }
@@ -2017,9 +2095,9 @@ mod tests {
         assert_eq!(model::nodes().elem(b).rotation().peek(), 90.0);
         assert_eq!(model::nodes().elem(g).rotation().peek(), 90.0);
 
-        // The group's own frame does not move: it is the body's, not the box around where the
-        // body currently happens to be.
-        assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 40.0)));
+        // The outline follows the turned body: the bounds are ALWAYS the box around what is
+        // actually on the canvas — a 200-wide pair turned upright reads 40 wide, 200 tall.
+        assert_eq!(model::node_bounds(g), Some((80.0, -80.0, 40.0, 200.0)));
     }
 
     #[test]
@@ -2056,17 +2134,66 @@ mod tests {
         sweep_gesture((mx, my), (mx + 50.0, my + 30.0), plain());
         day::reactive::flush_sync();
         near(centre(a), (before.0 + 50.0, before.1 + 30.0));
+        // The derived bounds travelled with the members: the turned pair stands upright
+        // (40 × 200), now 50 right and 30 down of where the turn left it.
         assert_eq!(
             model::node_bounds(g),
-            Some((50.0, 30.0, 200.0, 40.0)),
-            "the frame travelled with the members"
+            Some((130.0, -50.0, 40.0, 200.0)),
+            "the outline travelled with the members"
         );
-        // And the next turn still pivots on the frame's centre, which moved with it to
-        // (150, 50). The angle is ABSOLUTE, so going to 180 from 90 turns by 90: `a`'s centre
-        // (150, -30) swings a quarter about (150, 50) and lands at (230, 50).
+        // And the next turn pivots on the members' collective centre, which moved with them
+        // to (150, 50). The angle is ABSOLUTE, so going to 180 from 90 turns by 90: `a`'s
+        // centre (150, -30) swings a quarter about (150, 50) and lands at (230, 50).
         model::set_rotation(g, 180.0, true);
         day::reactive::flush_sync();
         near(centre(a), (230.0, 50.0));
+    }
+
+    #[test]
+    fn group_bounds_always_rederive_from_the_members() {
+        // The reported bug: move a member OUT of the grouped arrangement and re-select the
+        // group — the outline used to be the group's stored frame, frozen at grouping time.
+        let _doc = install_test_doc();
+        unzoomed();
+        let (g, a, _b) = pair_group();
+        assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 40.0)));
+
+        // Deep-select `a` (the double-click drill) and drag it far below the old box.
+        model::selection().set(vec![a]);
+        sweep_gesture((20.0, 20.0), (20.0, 320.0), plain());
+        day::reactive::flush_sync();
+        near(centre(a), (20.0, 320.0));
+
+        // The group's outline now encompasses where the members actually are.
+        model::selection().set(vec![g]);
+        assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 340.0)));
+
+        // A member's TURN widens the box too: the outline covers what the member visually
+        // occupies, not just its unrotated frame. `b` is 40×40 at (160, 0); at 45° its
+        // corners reach √2·20 ≈ 28.28 from its centre (180, 20).
+        model::set_rotation(_b, 45.0, true);
+        day::reactive::flush_sync();
+        let (bx, by, bw, bh) = model::node_bounds(g).expect("bounds");
+        let r = 20.0 * std::f64::consts::SQRT_2;
+        assert!((bx - 0.0).abs() < 1e-9, "left still a's edge: {bx}");
+        assert!(
+            ((bx + bw) - (180.0 + r)).abs() < 1e-9,
+            "the right edge follows the turned corner: {bw}"
+        );
+        assert!(
+            (by - (20.0 - r)).abs() < 1e-9,
+            "the top follows the turned corner: {by}"
+        );
+        assert!(
+            (by + bh - 340.0).abs() < 1e-9,
+            "bottom still a's edge: {bh}"
+        );
+
+        // And an EMPTY group has no bounds at all rather than a stale box.
+        model::reparent(a, None, None);
+        model::reparent(_b, None, None);
+        day::reactive::flush_sync();
+        assert_eq!(model::node_bounds(g), None);
     }
 
     #[test]

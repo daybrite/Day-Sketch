@@ -638,6 +638,143 @@ pub(crate) fn select_all() {
     selection().set(children_of(None));
 }
 
+/// Which groups the layers tree shows open. Session state, not document state — per-run like
+/// the inspector's visibility, and shared as a signal so grouping can disclose the new group.
+pub(crate) fn open_groups() -> Signal<std::collections::HashSet<u64>> {
+    thread_local! {
+        static OPEN: Signal<std::collections::HashSet<u64>> =
+            Signal::global(std::collections::HashSet::new());
+    }
+    OPEN.with(|s| *s)
+}
+
+/// A node's kind, untracked — the layers tree's branch/leaf rule and its labels read it
+/// outside any reactive scope (guards, type-ahead).
+pub(crate) fn node_kind(id: u64) -> Option<NodeKind> {
+    nodes().with_untracked(|k| k.get(id).map(|n| n.kind))
+}
+
+/// A layer row's display name — the node's kind plus its id ("Rectangle 3"), which is also
+/// the tree's type-ahead text.
+pub(crate) fn layer_label(kind: NodeKind, id: u64) -> String {
+    let n = id as i64;
+    match kind {
+        NodeKind::Rect => crate::res::str::layer_rect(n).format(),
+        NodeKind::Oval => crate::res::str::layer_oval(n).format(),
+        NodeKind::Line => crate::res::str::layer_line(n).format(),
+        NodeKind::Group => crate::res::str::layer_group(n).format(),
+    }
+}
+
+/// `id`'s parent, untracked (`None` = a top-level node).
+pub(crate) fn parent_of(id: u64) -> Option<u64> {
+    nodes()
+        .elem(id)
+        .parent()
+        .peek()
+        .and_then(|r| r.id())
+        .map(|p| p.handle())
+}
+
+/// The child of `ancestor` that lies on the path down to `descendant` — the double-click
+/// drill's next selection (docs/tree.md's canvas counterpart). `None` when `ancestor` is not
+/// a proper ancestor of `descendant`.
+pub(crate) fn child_toward(ancestor: u64, descendant: u64) -> Option<u64> {
+    let mut cur = descendant;
+    loop {
+        let p = parent_of(cur)?;
+        if p == ancestor {
+            return Some(cur);
+        }
+        cur = p;
+    }
+}
+
+/// Is `node` inside `ancestor`'s subtree — or the node itself?
+pub(crate) fn is_within(node: u64, ancestor: u64) -> bool {
+    let mut cur = Some(node);
+    while let Some(c) = cur {
+        if c == ancestor {
+            return true;
+        }
+        cur = parent_of(c);
+    }
+    false
+}
+
+/// Move `id` under `new_parent` (`None` = the top level) at `index` among the target's
+/// children, bottom→top (`None` = on top of them) — the layers tree's drop commit, as ONE
+/// undo unit. `index` counts the target's children BEFORE the move (the drop vocabulary
+/// native trees speak, docs/tree.md), so a same-parent move past its own old slot lands
+/// where the user aimed rather than one row short.
+pub(crate) fn reparent(id: u64, new_parent: Option<u64>, index: Option<usize>) {
+    let store = nodes();
+    if Some(id) == new_parent {
+        return;
+    }
+    // Mirror the tree's structural guard for programmatic callers: only groups take
+    // children, and a node never moves into its own subtree.
+    if let Some(p) = new_parent {
+        if node_kind(p) != Some(NodeKind::Group) {
+            return;
+        }
+        let mut cur = Some(p);
+        while let Some(c) = cur {
+            if c == id {
+                return;
+            }
+            cur = parent_of(c);
+        }
+    }
+    let old_parent = parent_of(id);
+    let before = children_of(new_parent);
+    // The final resting position among the target's OTHER children.
+    let old_pos = (old_parent == new_parent)
+        .then(|| before.iter().position(|s| *s == id))
+        .flatten();
+    let others_len = before.len() - old_pos.map(|_| 1).unwrap_or(0);
+    let target = match index {
+        None => others_len,
+        Some(i) => {
+            let mut t = i;
+            if let Some(p) = old_pos
+                && p < i
+            {
+                t -= 1;
+            }
+            t.min(others_len)
+        }
+    };
+    undo_stack().grouped("reparent", || {
+        if old_parent != new_parent {
+            store.elem(id).parent().write(new_parent.map(One::to));
+        }
+        match new_parent {
+            // The ordered relation places it: `target` is the final index among the
+            // siblings (self included — it is one of them by now).
+            Some(p) => {
+                store.elem(p).children().move_to(id, target);
+            }
+            // The top level hangs off no parent row — the same fractional-z scheme
+            // `arrange_selection` uses, against the OTHER roots.
+            None => {
+                let others: Vec<u64> = children_of(None).into_iter().filter(|s| *s != id).collect();
+                let z_of = |i: usize| store.elem(others[i]).z().peek();
+                let new_z = if others.is_empty() {
+                    1.0
+                } else if target == 0 {
+                    z_of(0) - 1.0
+                } else if target >= others.len() {
+                    z_of(others.len() - 1) + 1.0
+                } else {
+                    (z_of(target - 1) + z_of(target)) / 2.0
+                };
+                store.elem(id).z().write(new_z);
+            }
+        }
+    });
+}
+
 /// Move the selection by (dx, dy) as ONE undo unit — the arrow keys' work (1px, or 10 with
 /// shift). A no-op with nothing selected.
 pub(crate) fn nudge_selection(dx: f64, dy: f64) {
@@ -648,7 +785,7 @@ pub(crate) fn nudge_selection(dx: f64, dy: f64) {
     let store = nodes();
     undo_stack().grouped("move", || {
         for top in &sel {
-            for s in moved_nodes(*top) {
+            for s in shape_descendants(*top) {
                 let e = store.elem(s);
                 // Only the axis the key moves. An arrow changes exactly one coordinate, and
                 // writing the other back unchanged would put a column in the `UPDATE` with
@@ -663,21 +800,6 @@ pub(crate) fn nudge_selection(dx: f64, dy: f64) {
             }
         }
     });
-}
-
-/// Every node a move has to carry: the shapes that draw, plus the GROUPS above them, whose
-/// own frames are what the selection outline and the next turn are measured from. Deeper than
-/// [`shape_descendants`] by exactly the group rows it keeps in step.
-pub(crate) fn moved_nodes(id: u64) -> Vec<u64> {
-    let store = nodes();
-    if store.elem(id).kind().peek() != NodeKind::Group {
-        return vec![id];
-    }
-    let mut out = vec![id];
-    for c in children_of(Some(id)) {
-        out.extend(moved_nodes(c));
-    }
-    out
 }
 
 /// Every shape (non-group) under `id`, itself included when it is a shape.
@@ -757,13 +879,23 @@ pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
         return;
     }
     let delta = angle - e.rotation().peek();
-    // The center a group turns about is its own frame's, which does NOT move as it turns —
-    // so a second turn pivots on the same point as the first rather than walking away.
-    let Some((gx, gy, gw, gh)) = node_bounds(id) else {
+    // The pivot is the members' COLLECTIVE centre — the mean of their centres — because the
+    // turn itself fixes that point: any sequence of turns pivots on the same spot and a full
+    // circle comes home exactly. (The derived union's centre would reshape with every turn
+    // and walk the pivot; the group's bounds are always derived now, so there is no stored
+    // frame to anchor on.)
+    let shapes = shape_descendants(id);
+    if shapes.is_empty() {
         return;
-    };
-    let (cx, cy) = (gx + gw / 2.0, gy + gh / 2.0);
-    for s in shape_descendants(id) {
+    }
+    let (mut cx, mut cy) = (0.0, 0.0);
+    for s in &shapes {
+        let (x, y, w, h) = shape_frame(*s);
+        (cx, cy) = (cx + x + w / 2.0, cy + y + h / 2.0);
+    }
+    let n = shapes.len() as f64;
+    let (cx, cy) = (cx / n, cy / n);
+    for s in shapes {
         let m = store.elem(s);
         match m.kind().peek() {
             NodeKind::Line => {
@@ -790,24 +922,19 @@ pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
     write(e.rotation(), angle);
 }
 
-/// A node's frame: its own for shapes, the union of its shape descendants for groups.
-/// `None` for an empty group.
+/// A node's frame: its own for shapes, the union of its members for groups — ALWAYS derived,
+/// so the outline can never go stale as members move, resize, turn, or leave through the
+/// layers tree. (Groups carried a frame of their own until 2026-08; it stopped tracking the
+/// members the moment one was edited individually, which deep selection made easy to do.)
+/// A rotated member contributes the box it VISUALLY occupies. `None` for an empty group.
 pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
     let store = nodes();
     if store.elem(id).kind().peek() != NodeKind::Group {
         return Some(shape_frame(id));
     }
-    // A group's own frame, when it has one: it survives a turn, where the union of the members
-    // does not — turn a wide arrangement and the box around it grows and shifts, which would
-    // walk the pivot a little further with every turn. Groups from before groups carried a
-    // frame have none, so those still answer with the union.
-    let own = shape_frame(id);
-    if own.2 > 0.0 && own.3 > 0.0 {
-        return Some(own);
-    }
     let mut acc: Option<(f64, f64, f64, f64)> = None;
     for s in shape_descendants(id) {
-        let (x, y, w, h) = shape_frame(s);
+        let (x, y, w, h) = visual_frame(store, s);
         acc = Some(match acc {
             None => (x, y, w, h),
             Some((ax, ay, aw, ah)) => {
@@ -818,6 +945,32 @@ pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
         });
     }
     acc
+}
+
+/// The box a shape VISUALLY occupies: its frame, widened to its corners' reach when it is
+/// turned — a rotated rectangle pokes outside its own x/y/w/h, and a group outline that
+/// "encompasses its members" has to cover what is actually on the canvas. (An oval's turned
+/// box is the rectangle's — a slight over-cover, never an under-cover.)
+fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64, f64) {
+    let (x, y, w, h) = shape_frame(id);
+    let e = store.elem(id);
+    let r = match e.kind().peek() {
+        NodeKind::Rect | NodeKind::Oval => e.rotation().peek().rem_euclid(360.0),
+        // A line's direction IS its endpoints; a group never reaches here
+        // (`shape_descendants` yields shapes).
+        NodeKind::Line | NodeKind::Group => 0.0,
+    };
+    if r == 0.0 {
+        return (x, y, w, h);
+    }
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let (mut lx, mut ly, mut hx, mut hy) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for (px, py) in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)] {
+        let (rx, ry) = turn_about(px, py, cx, cy, r);
+        (lx, ly) = (lx.min(rx), ly.min(ry));
+        (hx, hy) = (hx.max(rx), hy.max(ry));
+    }
+    (lx, ly, hx - lx, hy - ly)
 }
 
 // ---------------------------------------------------------------------------
@@ -895,23 +1048,8 @@ pub(crate) fn group_selection() {
         .iter()
         .filter_map(|id| store.with_untracked(|k| k.get(*id).map(|n| n.z)))
         .fold(0.0, f64::max);
-    // The group keeps a frame of its own: the box its members occupied at the moment they
-    // became one. It is what the selection outline draws and what a turn pivots on, and
-    // unlike the union of the members it does not move as the group turns.
-    let (fx, fy, fw, fh) = sel
-        .iter()
-        .filter_map(|id| node_bounds(*id))
-        .fold(None, |acc: Option<(f64, f64, f64, f64)>, b| {
-            Some(match acc {
-                None => b,
-                Some(a) => {
-                    let (r, bo) = ((a.0 + a.2).max(b.0 + b.2), (a.1 + a.3).max(b.1 + b.3));
-                    let (x, y) = (a.0.min(b.0), a.1.min(b.1));
-                    (x, y, r - x, bo - y)
-                }
-            })
-        })
-        .unwrap_or_default();
+    // The group carries NO frame of its own: its bounds are always derived from its members
+    // (`node_bounds`), so the outline can never go stale as they change.
     store.restructure("group", Op::Insert, gid, move |v| {
         v.push(Node {
             id: gid,
@@ -919,10 +1057,6 @@ pub(crate) fn group_selection() {
             children: Many::default(),
             z,
             kind: NodeKind::Group,
-            x: fx,
-            y: fy,
-            w: fw,
-            h: fh,
             ..Default::default()
         });
     });
@@ -931,6 +1065,11 @@ pub(crate) fn group_selection() {
         store.elem(*id).z().write(i as f64 + 1.0);
     }
     selection().set(vec![gid]);
+    // The new group starts open in the layers tree: its members just visibly became its
+    // children, and a collapsed row would hide the very thing the user did.
+    open_groups().update(|open| {
+        open.insert(gid);
+    });
 }
 
 /// Ungroup every selected group: children return to the top level at the group's z, the group
@@ -2026,6 +2165,150 @@ mod tests {
         let deletes: Vec<&String> = sql.iter().filter(|s| s.starts_with("DELETE")).collect();
         assert_eq!(deletes.len(), 1, "{sql:?}");
         assert_eq!(deletes[0], "DELETE FROM nodes WHERE id IN (?, ?, ?, ?, ?)");
+    }
+
+    #[test]
+    fn drill_selects_one_level_deeper_per_repeat_click() {
+        use crate::canvas::drill_at;
+        let _doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0); // 96x64 at the origin
+        let b = place_shape(NodeKind::Rect, 200.0, 0.0);
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let g1 = selection().get_untracked()[0];
+        let c = place_shape(NodeKind::Rect, 400.0, 0.0);
+        selection().set(vec![g1, c]);
+        group_selection();
+        day::reactive::flush_sync();
+        let g2 = selection().get_untracked()[0];
+
+        // With the OUTER group solely selected, each repeat click steps one level down the
+        // path to the shape under the pointer: g2 → g1 → a — then HOLDS at the shape.
+        selection().set(vec![g2]);
+        assert!(drill_at(Point::new(10.0, 10.0)));
+        assert_eq!(selection().get_untracked(), vec![g1]);
+        assert!(drill_at(Point::new(10.0, 10.0)));
+        assert_eq!(selection().get_untracked(), vec![a]);
+        assert!(
+            drill_at(Point::new(10.0, 10.0)),
+            "a repeat on the leaf holds it"
+        );
+        assert_eq!(selection().get_untracked(), vec![a]);
+
+        // A hit OUTSIDE the sole selection is not a drill — the plain rule handles it.
+        selection().set(vec![g1]);
+        assert!(!drill_at(Point::new(410.0, 10.0)));
+        // Neither is a multi-selection, whatever it covers.
+        selection().set(vec![g2, c]);
+        assert!(!drill_at(Point::new(10.0, 10.0)));
+        // Empty canvas: nothing to drill into.
+        selection().set(vec![g2]);
+        assert!(!drill_at(Point::new(4000.0, 4000.0)));
+    }
+
+    #[test]
+    fn child_toward_and_is_within_walk_the_parent_chain() {
+        let _doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        let b = place_shape(NodeKind::Rect, 200.0, 0.0);
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let g = selection().get_untracked()[0];
+
+        assert_eq!(child_toward(g, a), Some(a));
+        assert_eq!(child_toward(a, g), None, "not an ancestor");
+        assert_eq!(child_toward(g, g), None, "a node is not toward itself");
+        assert_eq!(child_toward(g, b), Some(b));
+        assert!(is_within(a, g));
+        assert!(is_within(g, g));
+        assert!(!is_within(g, a));
+        assert!(!is_within(b, a));
+    }
+
+    #[test]
+    fn reparent_moves_across_parents_and_orders_by_drop_index() {
+        let doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        let b = place_shape(NodeKind::Oval, 10.0, 0.0);
+        let c = place_shape(NodeKind::Line, 20.0, 0.0);
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let gid = selection().get_untracked()[0];
+        assert_eq!(children_of(None), vec![gid, c]);
+
+        // Into the group, on top (a drop ONTO the group row).
+        reparent(c, Some(gid), None);
+        day::reactive::flush_sync();
+        assert_eq!(children_of(Some(gid)), vec![a, b, c]);
+        assert_eq!(children_of(None), vec![gid]);
+
+        // To the bottom of the group (a drop between the group row and its first child).
+        reparent(c, Some(gid), Some(0));
+        day::reactive::flush_sync();
+        assert_eq!(children_of(Some(gid)), vec![c, a, b]);
+
+        // Back out to the top level, below everything.
+        reparent(c, None, Some(0));
+        day::reactive::flush_sync();
+        assert_eq!(children_of(None), vec![c, gid]);
+        assert_eq!(children_of(Some(gid)), vec![a, b]);
+
+        // Each move is ONE undo unit, and undo restores parent AND order together.
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!(children_of(Some(gid)), vec![c, a, b]);
+        assert_eq!(children_of(None), vec![gid]);
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!(children_of(Some(gid)), vec![a, b, c]);
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!(children_of(None), vec![gid, c]);
+        assert_eq!(children_of(Some(gid)), vec![a, b]);
+    }
+
+    #[test]
+    fn reparent_adjusts_a_same_parent_drop_past_its_own_slot() {
+        let _doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        let b = place_shape(NodeKind::Rect, 10.0, 0.0);
+        let c = place_shape(NodeKind::Rect, 20.0, 0.0);
+        // The drop index counts the PRE-move list [a, b, c]: dropping a at index 3 (after c)
+        // lands it on top, not one short.
+        reparent(a, None, Some(3));
+        day::reactive::flush_sync();
+        assert_eq!(children_of(None), vec![b, c, a]);
+        // And dropping a at index 1 (between b and c) lands exactly there.
+        reparent(a, None, Some(1));
+        day::reactive::flush_sync();
+        assert_eq!(children_of(None), vec![b, a, c]);
+    }
+
+    #[test]
+    fn reparent_refuses_itself_non_groups_and_its_own_subtree() {
+        let _doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        let b = place_shape(NodeKind::Rect, 10.0, 0.0);
+        let c = place_shape(NodeKind::Rect, 20.0, 0.0);
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let g1 = selection().get_untracked()[0];
+        selection().set(vec![g1, c]);
+        group_selection();
+        day::reactive::flush_sync();
+        let g2 = selection().get_untracked()[0];
+
+        reparent(g2, Some(g2), None); // itself
+        reparent(c, Some(a), None); // a leaf takes no children
+        reparent(g2, Some(g1), None); // its own subtree
+        day::reactive::flush_sync();
+        assert_eq!(children_of(None), vec![g2]);
+        assert_eq!(children_of(Some(g2)), vec![g1, c]);
+        assert_eq!(children_of(Some(g1)), vec![a, b]);
     }
 
     #[test]

@@ -1,0 +1,90 @@
+name: sketch-layers-tree
+description: >-
+  The leading layers tree against the shared scene model, on the targets where the tree
+  piece is native (Cap::Tree — macOS today). Rows mirror the document; disclosure follows
+  the expansion state both ways; tree_move commits through the same guard → commit seam a
+  pointer drop uses, writing parent + z as one undo unit; and undo/redo move panel and
+  canvas together, because there is only one truth to move. Structure is asserted through
+  what the app SHOWS: row ids exist exactly for visible rows, and Select All counts the
+  top level through the Selected tab's pluralized title.
+flow:
+  - wait_for: { id: layers }
+  - wait_for: { id: canvas }
+  # A fresh numbered document every run — node ids (and so row ids) are deterministic.
+  - menu: { key: menu_new }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 0 } }
+
+  # ---- Rows mirror the scene: three inserts, three rows, insertion order ----
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - menu: { key: tool_oval, path: [menu_insert] }
+  - menu: { key: tool_line, path: [menu_insert] }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - wait_for: { id: layer-1 }
+  - wait_for: { id: layer-2 }
+  - wait_for: { id: layer-3 }
+
+  # ---- Group: the new group's row appears already OPEN (the app discloses what it just
+  # made), so the members' rows never blink out ----
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - menu: { key: menu_group }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - wait_for: { id: layer-4 }
+  - wait_for: { id: layer-1 }
+  - wait_for: { id: layer-2 }
+  - wait_for: { id: layer-3 }
+
+  # ---- Disclosure, both directions: collapsing hides exactly the members ----
+  - expand: { id: layers, row: layer-4, expanded: false }
+  - assert_missing: { id: layer-1 }
+  - assert_missing: { id: layer-2 }
+  - assert_missing: { id: layer-3 }
+  - wait_for: { id: layer-4 }
+  - expand: { id: layers, row: layer-4 }
+  - wait_for: { id: layer-1 }
+  - wait_for: { id: layer-3 }
+
+  # ---- A move commits through the model: the line leaves the group for the top level.
+  # Select All counts the top level, so the Selected tab's title is the structure assert:
+  # one root (the group) before, two (group + line) after. ----
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
+  - tree_move: { id: layers, row: layer-3, index: 1 }
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
+
+  # ---- And back in: a drop ONTO the group row (no index = append) ----
+  - tree_move: { id: layers, row: layer-3, parent: layer-4 }
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
+
+  # ---- Undo walks both moves back; redo replays one — panel and canvas share the units ----
+  - undo: {}
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
+  - undo: {}
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
+  - redo: {}
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
+  - undo: {}
+
+  # ---- Expansion survives a reload: with the group collapsed, adding a shape reloads the
+  # tree, the new row appears, and the group's members stay hidden ----
+  - expand: { id: layers, row: layer-4, expanded: false }
+  - assert_missing: { id: layer-1 }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 5 } }
+  - wait_for: { id: layer-5 }
+  - assert_missing: { id: layer-1 }
+  - expand: { id: layers, row: layer-4 }
+  - wait_for: { id: layer-1 }
+
+  # ---- Selection is one signal: canvas taps land while the panel watches (the reverse
+  # direction — clicking a ROW — is a native gesture, checked by hand, docs/tree.md) ----
+  - tap: { id: canvas, at: [8, 8] }
+  - menu: { key: day-select-all, path: [menu_edit] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
+
+  - pause: 1
+  - screenshot: layers-tree
