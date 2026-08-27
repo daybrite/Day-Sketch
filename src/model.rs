@@ -1909,14 +1909,15 @@ mod tests {
 
         selection().set(vec![a]);
         arrange_named(Arrange::Top);
-        // Two drains: the z write flushes at turn end and the root query re-derives there,
-        // waking the bind on the drain that follows — the same runloop pass in the app.
-        day::reactive::flush_sync();
+        // ONE drain settles it: the z write flushes at turn end, the root query re-derives
+        // there, and flush_sync keeps draining until the turn is quiescent — a stale
+        // readout after a single flush is a framework regression (day-reactive's turn
+        // rounds), not a timing quirk to paper over with a second drain.
         day::reactive::flush_sync();
         assert_eq!(
             seen.borrow().last(),
             Some(&vec![b, a]),
-            "a plain z write repaints the order on the next drain"
+            "a plain z write repaints the order at once"
         );
     }
 
@@ -2482,6 +2483,63 @@ mod tests {
             day::model::observed_paths(),
             with_five,
             "six times the nodes must not mean six times the subscriptions"
+        );
+    }
+
+    /// The demo walkthrough's rotate-then-ungroup section, headless (dayscript/demo.yaml
+    /// ~160-177): rotate the group a half turn, ungroup, then two undos — the group must be
+    /// BACK, with both members in its relation, its bounds their union, and the rotation
+    /// unwound. Regression: under the lazy engine the undo replay restored only one member.
+    #[test]
+    fn rotate_ungroup_double_undo_restores_the_group() {
+        let doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        day::reactive::flush_sync();
+        let b = place_shape(NodeKind::Oval, 50.0, 10.0);
+        day::reactive::flush_sync();
+
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let gid = selection().get_untracked()[0];
+        assert_eq!(node_bounds(gid), Some((0.0, 0.0, 146.0, 74.0)));
+
+        set_rotation(gid, 180.0, true);
+        day::reactive::flush_sync();
+        assert_eq!(nodes().elem(gid).rotation().peek(), 180.0);
+
+        ungroup_selection();
+        day::reactive::flush_sync();
+        assert_eq!(
+            children_of(None).len(),
+            2,
+            "ungroup put both members at the root"
+        );
+
+        // The demo taps one shape between the edits; selection is transient, not history.
+        selection().set(vec![a]);
+
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+
+        assert_eq!(parent_of(a), Some(gid), "undo re-membered the first shape");
+        assert_eq!(parent_of(b), Some(gid), "undo re-membered the second shape");
+        assert_eq!(
+            children_of(Some(gid)).len(),
+            2,
+            "the relation holds both again"
+        );
+        assert_eq!(
+            nodes().elem(gid).rotation().peek(),
+            0.0,
+            "the rotation unwound"
+        );
+        assert_eq!(
+            node_bounds(gid),
+            Some((0.0, 0.0, 146.0, 74.0)),
+            "group bounds are the members' union again"
         );
     }
 
