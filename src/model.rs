@@ -257,6 +257,8 @@ fn wire_undo(doc: &Doc) {
                 "rotate" => crate::res::str::undo_rotate().format(),
                 "corner" => crate::res::str::undo_corner().format(),
                 "background" => crate::res::str::undo_background().format(),
+                "reparent" => crate::res::str::undo_reparent().format(),
+                "duplicate" => crate::res::str::undo_duplicate().format(),
                 other => other.to_string(),
             }
         });
@@ -708,6 +710,12 @@ pub(crate) fn is_within(node: u64, ancestor: u64) -> bool {
 /// native trees speak, docs/tree.md), so a same-parent move past its own old slot lands
 /// where the user aimed rather than one row short.
 pub(crate) fn reparent(id: u64, new_parent: Option<u64>, index: Option<usize>) {
+    undo_stack().grouped("reparent", || reparent_now(id, new_parent, index));
+}
+
+/// [`reparent`]'s body, WITHOUT the undo grouping — so a multi-node operation (Remove from
+/// Group) can wrap several moves in one unit.
+fn reparent_now(id: u64, new_parent: Option<u64>, index: Option<usize>) {
     let store = nodes();
     if Some(id) == new_parent {
         return;
@@ -745,34 +753,59 @@ pub(crate) fn reparent(id: u64, new_parent: Option<u64>, index: Option<usize>) {
             t.min(others_len)
         }
     };
-    undo_stack().grouped("reparent", || {
-        if old_parent != new_parent {
-            store.elem(id).parent().write(new_parent.map(One::to));
+    if old_parent != new_parent {
+        store.elem(id).parent().write(new_parent.map(One::to));
+    }
+    match new_parent {
+        // The ordered relation places it: `target` is the final index among the
+        // siblings (self included — it is one of them by now).
+        Some(p) => {
+            store.elem(p).children().move_to(id, target);
         }
-        match new_parent {
-            // The ordered relation places it: `target` is the final index among the
-            // siblings (self included — it is one of them by now).
-            Some(p) => {
-                store.elem(p).children().move_to(id, target);
-            }
-            // The top level hangs off no parent row — the same fractional-z scheme
-            // `arrange_selection` uses, against the OTHER roots.
-            None => {
-                let others: Vec<u64> = children_of(None).into_iter().filter(|s| *s != id).collect();
-                let z_of = |i: usize| store.elem(others[i]).z().peek();
-                let new_z = if others.is_empty() {
-                    1.0
-                } else if target == 0 {
-                    z_of(0) - 1.0
-                } else if target >= others.len() {
-                    z_of(others.len() - 1) + 1.0
-                } else {
-                    (z_of(target - 1) + z_of(target)) / 2.0
-                };
-                store.elem(id).z().write(new_z);
-            }
+        // The top level hangs off no parent row — the same fractional-z scheme
+        // `arrange_selection` uses, against the OTHER roots.
+        None => {
+            let others: Vec<u64> = children_of(None).into_iter().filter(|s| *s != id).collect();
+            let z_of = |i: usize| store.elem(others[i]).z().peek();
+            let new_z = if others.is_empty() {
+                1.0
+            } else if target == 0 {
+                z_of(0) - 1.0
+            } else if target >= others.len() {
+                z_of(others.len() - 1) + 1.0
+            } else {
+                (z_of(target - 1) + z_of(target)) / 2.0
+            };
+            store.elem(id).z().write(new_z);
+        }
+    }
+}
+
+/// Move every selected node that sits inside a group out to the TOP LEVEL (on top, in
+/// selection order) — the context menu's "Remove from Group", one undo unit.
+pub(crate) fn remove_selection_from_group() {
+    let sel: Vec<u64> = selection()
+        .get_untracked()
+        .into_iter()
+        .filter(|id| parent_of(*id).is_some())
+        .collect();
+    if sel.is_empty() {
+        return;
+    }
+    undo_stack().grouped("reparent", || {
+        for id in sel {
+            reparent_now(id, None, None);
         }
     });
+}
+
+/// Duplicate the selection in place (offset, on top, selected) — the same insert path a
+/// paste takes, WITHOUT touching the system clipboard.
+pub(crate) fn duplicate_selection() {
+    let Some(svg) = copy_selection_svg() else {
+        return;
+    };
+    paste_text(&svg, "duplicate");
 }
 
 /// Move the selection by (dx, dy) as ONE undo unit — the arrow keys' work (1px, or 10 with
@@ -1541,6 +1574,12 @@ pub(crate) fn cut_selection_svg() -> Option<String> {
 /// Paste SVG text: parsed shapes land offset +16 (stepping on repeats), stacked above
 /// everything, selected, as one undo unit.
 pub(crate) fn paste_clipboard(text: &str) {
+    paste_text(text, "paste");
+}
+
+/// [`paste_clipboard`]'s body with its own undo label — Duplicate shares the insert path
+/// but should read "Undo Duplicate", not "Undo Paste".
+fn paste_text(text: &str, label: &'static str) {
     let parsed = svg_parse(text);
     if parsed.is_empty() {
         return;
@@ -1638,7 +1677,7 @@ pub(crate) fn paste_clipboard(text: &str) {
         id
     }
 
-    undo_stack().grouped("paste", || {
+    undo_stack().grouped(label, || {
         let mut fallback = |id: u64| PALETTE[(id as usize) % PALETTE.len()].to_string();
         for node in &parsed {
             z += 1.0;
@@ -2225,6 +2264,64 @@ mod tests {
         assert!(is_within(g, g));
         assert!(!is_within(g, a));
         assert!(!is_within(b, a));
+    }
+
+    #[test]
+    fn remove_from_group_moves_members_to_the_top_level_in_one_unit() {
+        let doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 0.0, 0.0);
+        let b = place_shape(NodeKind::Rect, 100.0, 0.0);
+        let c = place_shape(NodeKind::Rect, 200.0, 0.0);
+        selection().set(vec![a, b, c]);
+        group_selection();
+        day::reactive::flush_sync();
+        let g = selection().get_untracked()[0];
+
+        // Two members out (the third stays); a top-level id in the selection is ignored.
+        selection().set(vec![a, b, g]);
+        remove_selection_from_group();
+        day::reactive::flush_sync();
+        assert_eq!(children_of(Some(g)), vec![c]);
+        assert_eq!(
+            children_of(None),
+            vec![g, a, b],
+            "out on top, in selection order"
+        );
+
+        // ONE undo unit puts both back.
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!(children_of(Some(g)), vec![a, b, c]);
+        assert_eq!(children_of(None), vec![g]);
+
+        // Nothing selected sits in a group → a no-op that pushes no unit.
+        selection().set(vec![g]);
+        remove_selection_from_group();
+        day::reactive::flush_sync();
+        assert_eq!(children_of(None), vec![g]);
+    }
+
+    #[test]
+    fn duplicate_copies_in_place_and_selects_the_copies() {
+        let doc = test_doc();
+        let a = place_shape(NodeKind::Rect, 40.0, 40.0);
+        let before = nodes().keys().len();
+        selection().set(vec![a]);
+        duplicate_selection();
+        day::reactive::flush_sync();
+
+        assert_eq!(nodes().keys().len(), before + 1);
+        let sel = selection().get_untracked();
+        assert_eq!(sel.len(), 1, "the COPY is selected");
+        assert_ne!(sel[0], a);
+        // The paste path's +16 offset — a duplicate lands beside its original, not under it.
+        let e = nodes().elem(sel[0]);
+        assert_eq!((e.x().peek(), e.y().peek()), (56.0, 56.0));
+
+        // One undo unit removes the copy.
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!(nodes().keys().len(), before);
     }
 
     #[test]

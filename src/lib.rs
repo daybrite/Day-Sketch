@@ -105,20 +105,6 @@ fn arrange_entries(track: bool) -> Vec<MenuEntry> {
     ]
 }
 
-/// The canvas right-click/long-press menu: the standard clipboard trio (role items — the
-/// platform's own commands), then the arrange set. The Arrange BAR menu deliberately carries
-/// only the arrange set; Cut/Copy/Paste live in the standard Edit menu.
-pub(crate) fn context_menu_entries() -> Vec<MenuEntry> {
-    let mut items = vec![
-        menu_role(MenuRole::Cut),
-        menu_role(MenuRole::Copy),
-        menu_role(MenuRole::Paste),
-        menu_separator(),
-    ];
-    items.extend(arrange_entries(false));
-    items
-}
-
 fn menus() -> Vec<MenuEntry> {
     let file = vec![
         menu_item(res::str::menu_new().format())
@@ -149,9 +135,9 @@ fn menus() -> Vec<MenuEntry> {
             .action(inspector::toggle)
             .shortcut(cmd_alt(res::str::menu_inspector_key())),
     ];
-    // The layers pane exists where the tree piece does (`Cap::Tree`, docs/tree.md) — no menu
-    // item for a pane a target cannot show.
-    if capability(Cap::Tree) == Support::Native {
+    // The layers pane exists where the tree piece does (`Cap::Tree`, docs/tree.md) — native
+    // or composed — no menu item for a pane a target cannot show.
+    if capability(Cap::Tree) != Support::Unsupported {
         view.push(
             menu_item(res::str::menu_layers().format())
                 .action(inspector::layers_toggle)
@@ -201,7 +187,7 @@ fn menus() -> Vec<MenuEntry> {
 
 fn toolbar() -> Vec<ToolbarEntry> {
     let mut items = Vec::new();
-    if capability(Cap::Tree) == Support::Native {
+    if capability(Cap::Tree) != Support::Unsupported {
         // Leading, like every sidebar toggle: the pane it shows is the leading pane.
         items.push(
             toolbar_toggle(
@@ -215,11 +201,11 @@ fn toolbar() -> Vec<ToolbarEntry> {
     }
     items.extend(vec![
         toolbar_button("tb-group", res::str::menu_group())
-            .icon(Symbol::Add)
+            .icon(Symbol::Group)
             .tooltip(res::str::menu_group())
             .action(model::group_selection),
         toolbar_button("tb-ungroup", res::str::menu_ungroup())
-            .icon(Symbol::Remove)
+            .icon(Symbol::Ungroup)
             .tooltip(res::str::menu_ungroup())
             .action(model::ungroup_selection),
         // Insert: a pull-down of the shape vocabulary, each item drawn with the platform's
@@ -230,12 +216,13 @@ fn toolbar() -> Vec<ToolbarEntry> {
             .tooltip(res::str::tool_shape()),
         toolbar_separator(),
         // The zoom group: out, actual size, in — the separator sets the trio off from its
-        // neighbors, and the reset button carries text (there is no glyph for "100%").
+        // neighbors.
         toolbar_button("tb-zoom-out", res::str::menu_zoom_out())
             .icon(Symbol::ZoomOut)
             .tooltip(res::str::menu_zoom_out())
             .action(|| canvas::zoom_step(0.8)),
         toolbar_button("tb-zoom-reset", res::str::menu_zoom_reset())
+            .icon(Symbol::ZoomReset)
             .tooltip(res::str::menu_zoom_reset())
             .action(canvas::zoom_reset),
         toolbar_button("tb-zoom-in", res::str::menu_zoom_in())
@@ -282,6 +269,60 @@ fn shape_menu_entries() -> Vec<MenuEntry> {
             .icon(Symbol::Line)
             .action(|| canvas::place_centered(model::NodeKind::Line)),
     ]
+}
+
+/// The SELECTION's context menu — the canvas's right-click and the layers tree's rows serve
+/// the same commands, built at summon time so they describe the selection as it stands:
+/// Delete; whichever grouping ops apply (Group needs two nodes, Ungroup a group, Remove
+/// from Group a grouped member); the z-order moves; Cut/Copy through the edit bridge (the
+/// same clipboard path the Edit menu takes) and Duplicate (clipboard untouched).
+pub(crate) fn selection_context_menu() -> Vec<MenuEntry> {
+    let sel = model::selection().get_untracked();
+    if sel.is_empty() {
+        return Vec::new();
+    }
+    let mut items = vec![
+        menu_item(res::str::menu_delete().format()).action(model::delete_selection),
+        menu_separator(),
+    ];
+    let before_grouping = items.len();
+    if sel.len() >= 2 {
+        items.push(menu_item(res::str::menu_group().format()).action(model::group_selection));
+    }
+    if sel
+        .iter()
+        .any(|id| model::node_kind(*id) == Some(model::NodeKind::Group))
+    {
+        items.push(menu_item(res::str::menu_ungroup().format()).action(model::ungroup_selection));
+    }
+    if sel.iter().any(|id| model::parent_of(*id).is_some()) {
+        items.push(
+            menu_item(res::str::ctx_remove_group().format())
+                .action(model::remove_selection_from_group),
+        );
+    }
+    if items.len() > before_grouping {
+        items.push(menu_separator());
+    }
+    items.extend([
+        menu_item(res::str::ctx_move_up().format())
+            .action(|| model::arrange_named(model::Arrange::Up)),
+        menu_item(res::str::ctx_move_down().format())
+            .action(|| model::arrange_named(model::Arrange::Down)),
+        menu_item(res::str::ctx_move_front().format())
+            .action(|| model::arrange_named(model::Arrange::Top)),
+        menu_item(res::str::ctx_move_back().format())
+            .action(|| model::arrange_named(model::Arrange::Bottom)),
+        menu_separator(),
+        menu_item(res::str::ctx_cut().format()).action(|| {
+            let _ = day::invoke_edit(day::EditOp::Cut);
+        }),
+        menu_item(res::str::ctx_copy().format()).action(|| {
+            let _ = day::invoke_edit(day::EditOp::Copy);
+        }),
+        menu_item(res::str::ctx_duplicate().format()).action(model::duplicate_selection),
+    ]);
+    items
 }
 
 /// The tool row's shape button: the same two choices as an action sheet, so every target can
@@ -446,10 +487,10 @@ pub fn root() -> impl Piece {
         inspector::panel,
     )
     .sheet_done(res::str::insp_done());
-    // The layers pane wraps the whole editor on its LEADING side wherever the tree piece is
-    // native (`Cap::Tree` — macOS today, docs/tree.md); every other target keeps exactly the
-    // window it had until the tree lands there.
-    if capability(Cap::Tree) == Support::Native {
+    // The layers pane wraps the whole editor on its LEADING side wherever the tree piece
+    // exists — native (macOS/GTK/iOS) or composed (web, docs/tree.md M2); a target that
+    // answers `Unsupported` keeps exactly the window it had until the tree lands there.
+    if capability(Cap::Tree) != Support::Unsupported {
         inspector(
             inspector::layers_visible(),
             editor_with_inspector,

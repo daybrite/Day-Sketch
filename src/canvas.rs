@@ -1304,6 +1304,32 @@ pub(crate) fn editor_canvas() -> impl Piece {
     // shift-drag and shift-click both change meaning, and a handler that reads them itself
     // could only ever run with a toolkit under it.
     .on_tap_at(|p| handle_click(p, day::modifiers(), ClickSource::Tap))
+    // The selection's context menu, built at SUMMON time: a right-click that lands outside
+    // the current selection selects what is under it first (subtree-deep, the drag rule),
+    // one on empty canvas clears — the menu then describes exactly what it acts on.
+    .context_menu_fn(|p| {
+        let m = to_model(p);
+        match hit_top_level(m.x, m.y) {
+            None => model::selection().set(Vec::new()),
+            Some(top) => {
+                let sel = model::selection().get_untracked();
+                let covered = hit_leaf(m.x, m.y)
+                    .is_some_and(|leaf| sel.iter().any(|s| model::is_within(leaf, *s)));
+                if !covered {
+                    model::selection().set(vec![top]);
+                }
+            }
+        }
+        day::reactive::flush_sync();
+        let items = crate::selection_context_menu();
+        if !items.is_empty() {
+            return items;
+        }
+        // Empty canvas: the one command that still applies is Paste.
+        vec![menu_item(crate::res::str::ctx_paste().format()).action(|| {
+            let _ = day::invoke_edit(day::EditOp::Paste);
+        })]
+    })
     .on_drag(move |drag| on_drag(drag, day::modifiers(), &op2))
     .on_pinch(move |g| {
         if g.phase == DragPhase::Began {
@@ -1322,7 +1348,6 @@ pub(crate) fn editor_canvas() -> impl Piece {
     // than on every keystroke.
     .on_key(|ev| canvas_key(ev, capability(Cap::AppMenu) == Support::Unsupported))
     .focused(canvas_focused())
-    .context_menu(crate::context_menu_entries())
     .id("canvas")
     .grow()
 }

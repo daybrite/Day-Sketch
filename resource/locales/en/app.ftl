@@ -90,6 +90,18 @@ undo_group = Group
 undo_ungroup = Ungroup
 undo_arrange = Arrange
 undo_reparent = Move Layer
+undo_duplicate = Duplicate
+
+# The selection's context menu (canvas right-click; layers-tree rows).
+ctx_remove_group = Remove from Group
+ctx_move_up = Move Up
+ctx_move_down = Move Down
+ctx_move_front = Move to Front
+ctx_move_back = Move to Back
+ctx_cut = Cut
+ctx_copy = Copy
+ctx_duplicate = Duplicate
+ctx_paste = Paste
 undo_delete = Delete
 undo_cut = Cut
 undo_paste = Paste

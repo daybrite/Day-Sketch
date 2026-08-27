@@ -98,6 +98,15 @@ fn layers_tree() -> AnyPiece {
             .unwrap_or_default()
     })
     .row_id(|id| format!("layer-{id}"))
+    // The same context menu the canvas serves, per row: a summon on a row outside the
+    // current selection selects that row first, so the menu describes what it acts on.
+    .row_context_menu(|id| {
+        if !model::selection().get_untracked().contains(id) {
+            model::selection().set(vec![*id]);
+            day::reactive::flush_sync();
+        }
+        crate::selection_context_menu()
+    })
     .id("layers")
     .any()
 }
