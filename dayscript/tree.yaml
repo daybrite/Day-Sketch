@@ -8,15 +8,21 @@ description: >-
   what the app SHOWS: row ids exist exactly for visible rows, and Select All counts the
   top level through the Selected tab's pluralized title.
 flow:
-  - wait_for: { id: layers }
   - wait_for: { id: canvas }
   # iOS presents the trailing inspector as a FULLSCREEN sheet, and a fullscreen modal
   # removes the presenting view from the window — where a detached UICollectionView will
-  # never create cells. Close it for the tree work; the `insp-tab` assert blocks below
-  # re-open it just long enough to read the count. Visibility toggles only — the undo
-  # history stays the same depth on every target.
+  # never create cells. Close it BEFORE the layers pane opens (a pane mounted behind the
+  # sheet starves the same way); the `insp-tab` assert blocks below re-open it just long
+  # enough to read the count. Visibility toggles only — the undo history stays the same
+  # depth on every target.
   - menu: { key: menu_inspector, only_on: [uikit] }
   - pause: { secs: 1, only_on: [uikit] }
+  # Compact windows start with the layers pane CLOSED (a phone's canvas needs the room):
+  # open it for the whole run on the phone targets, before anything waits on its rows.
+  # Visibility only — undo-neutral.
+  - menu: { key: menu_layers, only_on: [uikit, mdc, arkui] }
+  - pause: { secs: 1, only_on: [uikit, mdc, arkui] }
+  - wait_for: { id: layers }
   # A fresh numbered document every run — node ids (and so row ids) are deterministic.
   - menu: { key: menu_new }
   - assert_text: { id: sk-count, key: status_count, args: { n: 0 } }

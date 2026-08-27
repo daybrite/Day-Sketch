@@ -358,6 +358,18 @@ fn tool_row() -> impl Piece {
     let stack = model::undo_stack();
     let (u1, u2, r1, r2) = (stack.clone(), stack.clone(), stack.clone(), stack);
     row((
+        // The layers pane's in-content toggle, leading like the desktop toolbar's — compact
+        // windows start with the pane closed (see `inspector::layers_visible`), and a phone
+        // has no toolbar or menu bar to reopen it from.
+        when(
+            || capability(Cap::Tree) != Support::Unsupported,
+            || {
+                button(res::str::menu_layers())
+                    .bordered()
+                    .action(inspector::layers_toggle)
+                    .id("tool-layers")
+            },
+        ),
         // The same shape choices as the window toolbar's item, for the targets that have no
         // window toolbar (`Cap::Toolbar` is Unsupported on mobile and the web).
         button(res::str::tool_shape())

@@ -25,10 +25,17 @@ pub(crate) fn toggle() {
 }
 
 /// Whether the layers pane is showing — the leading tree over the document (docs/tree.md).
-/// Shown by default on the targets that have it (`Cap::Tree`), per-run like [`visible`].
+/// Open by default where the window has room; a COMPACT window (a phone) starts with it
+/// closed, since the pane would squeeze the canvas it exists to describe — the View-menu
+/// item, the toolbar toggle and the tool row's Layers button all reopen it. Per-run, like
+/// [`visible`]; the class is already seeded when the root builds (docs/size-classes.md).
 pub(crate) fn layers_visible() -> Signal<bool> {
     thread_local! {
-        static VIS: Signal<bool> = Signal::global(true);
+        static VIS: Signal<bool> = Signal::global(
+            day::size_class()
+                .map(|s| s.width != day::prelude::WidthClass::Compact)
+                .unwrap_or(true),
+        );
     }
     VIS.with(|s| *s)
 }
