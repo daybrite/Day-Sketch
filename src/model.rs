@@ -397,8 +397,14 @@ fn doc_from_driver_inner(
 ) -> Result<Doc, day::persistence::DbError> {
     let container =
         day::persistence::ModelContainer::open(driver, day::persistence::schema![Node, DocMeta])?;
-    let store = container.store::<Node>();
-    let meta = container.store::<DocMeta>();
+    // A sketch is a DOCUMENT: the canvas draws the whole scene, so the whole scene is the
+    // working set — lift the cache bound and warm every table (the lazy engine loads nothing
+    // at open).
+    container.set_cache_limit(usize::MAX);
+    container.warm::<Node>()?;
+    container.warm::<DocMeta>()?;
+    let store = container.cache::<Node>();
+    let meta = container.cache::<DocMeta>();
     ensure_meta(meta);
     let stack = container.undo(1000);
     // The top level of the scene, kept live. A relation hangs off a parent ROW, and the top
@@ -1764,8 +1770,9 @@ pub(crate) fn install_test_doc() -> Rc<Doc> {
         day::persistence::schema![Node, DocMeta],
     )
     .expect("open");
-    let store = container.store::<Node>();
-    let meta = container.store::<DocMeta>();
+    container.set_cache_limit(usize::MAX);
+    let store = container.cache::<Node>();
+    let meta = container.cache::<DocMeta>();
     ensure_meta(meta);
     // Flush the seed now: the SQL-counting tests must start from a settled file, the way a
     // real document is settled by the first autosave.
@@ -1902,11 +1909,14 @@ mod tests {
 
         selection().set(vec![a]);
         arrange_named(Arrange::Top);
+        // Two drains: the z write flushes at turn end and the root query re-derives there,
+        // waking the bind on the drain that follows — the same runloop pass in the app.
+        day::reactive::flush_sync();
         day::reactive::flush_sync();
         assert_eq!(
             seen.borrow().last(),
             Some(&vec![b, a]),
-            "a plain z write repaints the order at once"
+            "a plain z write repaints the order on the next drain"
         );
     }
 
