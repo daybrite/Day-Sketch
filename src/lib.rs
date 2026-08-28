@@ -10,6 +10,10 @@ mod canvas;
 mod inspector;
 mod model;
 
+// The mobile / embedded entry point. Expands to the export each platform's shell binds against —
+// and to nothing at all on a plain cargo desktop build, where src/main.rs is the entry instead.
+day::day_start!("Day Sketch", root);
+
 /// Typed constants for the files under `resource/`, generated at build time by `day-build`.
 pub mod res {
     include!(concat!(env!("OUT_DIR"), "/day_resources.rs"));
@@ -515,7 +519,3 @@ pub fn root() -> impl Piece {
         editor_with_inspector.any()
     }
 }
-
-// The mobile / embedded entry point. Expands to the export each platform's shell binds against —
-// and to nothing at all on a plain cargo desktop build, where src/main.rs is the entry instead.
-day::day_main!("Day Sketch", root);
