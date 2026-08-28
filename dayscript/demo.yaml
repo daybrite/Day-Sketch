@@ -506,3 +506,254 @@ flow:
       name: editor
       title: { en: "Editor" }
       source: src/canvas.rs
+
+  # =========================================================================
+  # Gallery: compositions the app can draw, captured for the website
+  # =========================================================================
+  # Each one starts from a NEW drawing so it is reproducible on its own, builds its picture
+  # through the inspector (geometry is typed, never dragged, so every target draws the same
+  # thing), then deselects and closes the panel so the capture is the artwork alone.
+  #
+  # Everything is laid out inside roughly 340x430 of canvas. That is nearly full-bleed on a
+  # phone and a modest corner of a desktop window, which is the price of one composition
+  # serving every column of the gallery — the alternative is a picture that reads well on one
+  # target and runs off the edge of another.
+  #
+  # Colours are not typed anywhere: a shape takes the next entry of the app's six-colour
+  # palette by id, so the variety in these shots is the palette cycling, not the script
+  # choosing. (A colour well is a native chooser with no headless rail — see the note on the
+  # style section above.)
+
+  # ---- Rounded rectangles, one per palette colour ----
+  # Deselect first: every composition below starts from an empty selection, and the section
+  # above deliberately ends with a shape selected for its parting shot.
+  - tap: { id: canvas, at: [620, 500] }
+  - menu: { key: menu_new }
+  - menu: { key: menu_inspector }
+  - wait_for: { id: insp-bg }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "20" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "40" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "132" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "40" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "244" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "40" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "20" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "120" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "132" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "120" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "244" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "120" }
+  - submit: { id: insp-y }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 6 } }
+  # One band across all six, so the corner radius is typed once and fans out to every one of
+  # them — the same multi-selection edit the style section proves, put to work.
+  - drag: { id: canvas, from: [4, 8], to: [352, 200] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 6 } }
+  - input: { id: insp-corner, text: "14" }
+  - submit: { id: insp-corner }
+  - tap: { id: canvas, at: [180, 300] }
+  - menu: { key: menu_inspector }
+  - pause: 1
+  - screenshot:
+      name: palette
+      title: { en: "The palette" }
+      caption: { en: "Six rounded rectangles, one per colour a new shape draws from. The radius was typed once across the whole selection." }
+      source: src/model.rs
+
+  # ---- A fan: the same rectangle at five angles ----
+  - menu: { key: menu_new }
+  - menu: { key: menu_inspector }
+  - wait_for: { id: insp-bg }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "110" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "110" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - input: { id: insp-rotation, text: "36" }
+  - submit: { id: insp-rotation }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "110" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - input: { id: insp-rotation, text: "72" }
+  - submit: { id: insp-rotation }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "110" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - input: { id: insp-rotation, text: "108" }
+  - submit: { id: insp-rotation }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "110" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - input: { id: insp-rotation, text: "144" }
+  - submit: { id: insp-rotation }
+  # Half-transparent, so every layer of the fan shows through the ones above it.
+  - drag: { id: canvas, from: [4, 60], to: [300, 300] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 5 } }
+  - input: { id: insp-fill-op, text: "55%" }
+  - submit: { id: insp-fill-op }
+  - tap: { id: canvas, at: [20, 380] }
+  - menu: { key: menu_inspector }
+  - pause: 1
+  - screenshot:
+      name: rotation-fan
+      title: { en: "A turn at a time" }
+      caption: { en: "One rectangle, five times, each turned a further 36° about its own centre and let through at 55%." }
+      source: src/canvas.rs
+
+  # ---- Overlapping ovals: what translucency does to colour ----
+  - menu: { key: menu_new }
+  - menu: { key: menu_inspector }
+  - wait_for: { id: insp-bg }
+  - menu: { key: tool_oval, path: [menu_insert] }
+  - input: { id: insp-x, text: "40" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "90" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "150" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "150" }
+  - submit: { id: insp-h }
+  - menu: { key: tool_oval, path: [menu_insert] }
+  - input: { id: insp-x, text: "130" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "90" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "150" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "150" }
+  - submit: { id: insp-h }
+  - menu: { key: tool_oval, path: [menu_insert] }
+  - input: { id: insp-x, text: "85" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "170" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "150" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "150" }
+  - submit: { id: insp-h }
+  - drag: { id: canvas, from: [4, 60], to: [340, 350] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
+  - input: { id: insp-fill-op, text: "50%" }
+  - submit: { id: insp-fill-op }
+  - tap: { id: canvas, at: [300, 400] }
+  - menu: { key: menu_inspector }
+  - pause: 1
+  - screenshot:
+      name: translucency
+      title: { en: "Three circles, half seen" }
+      caption: { en: "Overlapping ovals at 50% fill: where two meet the colours mix, where all three do they mix again." }
+      source: src/canvas.rs
+
+  # ---- Outlines: the same shapes with their fill taken away ----
+  - menu: { key: menu_new }
+  - menu: { key: menu_inspector }
+  - wait_for: { id: insp-bg }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "40" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "80" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "180" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "180" }
+  - submit: { id: insp-h }
+  - menu: { key: tool_oval, path: [menu_insert] }
+  - input: { id: insp-x, text: "110" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "180" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "180" }
+  - submit: { id: insp-h }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "75" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "115" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "180" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "180" }
+  - submit: { id: insp-h }
+  - input: { id: insp-rotation, text: "45" }
+  - submit: { id: insp-rotation }
+  # No fill at all, and a stroke heavy enough to carry the drawing on its own.
+  - drag: { id: canvas, from: [4, 40], to: [340, 400] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
+  - input: { id: insp-fill-op, text: "0%" }
+  - submit: { id: insp-fill-op }
+  - input: { id: insp-stroke-w, text: "5" }
+  - submit: { id: insp-stroke-w }
+  - input: { id: insp-stroke-op, text: "100%" }
+  - submit: { id: insp-stroke-op }
+  - tap: { id: canvas, at: [300, 420] }
+  - menu: { key: menu_inspector }
+  - pause: 1
+  - screenshot:
+      name: outlines
+      title: { en: "Outline only" }
+      caption: { en: "Fill dropped to nothing and the stroke widened: a square, a circle and a turned square, drawn as line work." }
+      source: src/inspector.rs
+
+  # ---- A group, turned as one body, with its frame showing ----
+  # Left SELECTED on purpose: the blue frame is the point of the picture. It turns with the
+  # arrangement, which is what tells you the group moved as one thing and not as three.
+  - menu: { key: menu_new }
+  - menu: { key: menu_inspector }
+  - wait_for: { id: insp-bg }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "30" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_oval, path: [menu_insert] }
+  - input: { id: insp-x, text: "140" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "250" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "150" }
+  - submit: { id: insp-y }
+  - drag: { id: canvas, from: [4, 120], to: [352, 240] }
+  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
+  - menu: { key: menu_group }
+  - input: { id: insp-rotation, text: "20" }
+  - submit: { id: insp-rotation }
+  - assert_text: { id: insp-rotation, text: "20" }
+  - menu: { key: menu_inspector }
+  - pause: 1
+  - screenshot:
+      name: group-turned
+      title: { en: "One body, turned" }
+      caption: { en: "Three shapes grouped and turned 20° together: each orbits the group's centre, and the frame turns with them." }
+      source: src/model.rs
