@@ -519,12 +519,12 @@ flow:
   # serving every column of the gallery — the alternative is a picture that reads well on one
   # target and runs off the edge of another.
   #
-  # Colours are not typed anywhere: a shape takes the next entry of the app's six-colour
+  # Colors are not typed anywhere: a shape takes the next entry of the app's six-color
   # palette by id, so the variety in these shots is the palette cycling, not the script
-  # choosing. (A colour well is a native chooser with no headless rail — see the note on the
+  # choosing. (A color well is a native chooser with no headless rail — see the note on the
   # style section above.)
 
-  # ---- Rounded rectangles, one per palette colour ----
+  # ---- Rounded rectangles, one per palette color ----
   # Deselect first: every composition below starts from an empty selection, and the section
   # above deliberately ends with a shape selected for its parting shot.
   - tap: { id: canvas, at: [620, 500] }
@@ -574,7 +574,7 @@ flow:
   - screenshot:
       name: palette
       title: { en: "The palette" }
-      caption: { en: "Six rounded rectangles, one per colour a new shape draws from. The radius was typed once across the whole selection." }
+      caption: { en: "Six rounded rectangles, one per color a new shape draws from. The radius was typed once across the whole selection." }
       source: src/model.rs
 
   # ---- A fan: the same rectangle at five angles ----
@@ -628,7 +628,7 @@ flow:
       caption: { en: "One rectangle, five times, each turned a further 36° about its own centre and let through at 55%." }
       source: src/canvas.rs
 
-  # ---- Overlapping ovals: what translucency does to colour ----
+  # ---- Overlapping ovals: what translucency does to color ----
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
   - wait_for: { id: insp-bg }
@@ -669,7 +669,7 @@ flow:
   - screenshot:
       name: translucency
       title: { en: "Three circles, half seen" }
-      caption: { en: "Overlapping ovals at 50% fill: where two meet the colours mix, where all three do they mix again." }
+      caption: { en: "Overlapping ovals at 50% fill: where two meet the colors mix, where all three do they mix again." }
       source: src/canvas.rs
 
   # ---- Outlines: the same shapes with their fill taken away ----
