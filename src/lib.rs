@@ -467,55 +467,154 @@ fn editor() -> impl Piece {
     ))
 }
 
+/// Everything ONE WINDOW owns (docs/state.md): what it is looking at and how, but never what
+/// the drawing IS.
+///
+/// The document is app-wide (`model::doc()`) — two windows edit the SAME drawing, the way two
+/// windows on one Illustrator file do. Everything here is that window's own view of it: its
+/// zoom and pan, its selection, its rubber band, which inspector tab is showing, which groups
+/// are disclosed. None of it is persisted and none of it is undoable.
+///
+/// `Clone`, not `Copy`, because the transient gesture cells ride along behind an `Rc`; every
+/// accessor below calls `scene()` fresh, so no call site had to change.
+#[derive(Clone)]
+pub(crate) struct Scene {
+    // --- the view transform + gesture state (canvas.rs) ---
+    pub(crate) zoom: Signal<f64>,
+    pub(crate) pan: Signal<Point>,
+    pub(crate) band: Signal<Option<(f64, f64, f64, f64)>>,
+    pub(crate) canvas_focused: Signal<bool>,
+    // --- the editor's own selection + disclosure (model.rs) ---
+    pub(crate) selection: Signal<Vec<u64>>,
+    pub(crate) open_groups: Signal<std::collections::HashSet<u64>>,
+    // --- the inspector (inspector.rs) ---
+    pub(crate) inspector_visible: Signal<bool>,
+    pub(crate) layers_visible: Signal<bool>,
+    pub(crate) active_tab: Signal<usize>,
+    pub(crate) refresh: Signal<u64>,
+    /// Transient, non-reactive scratch: the last laid-out canvas size and the click/tap
+    /// debounce the double-click drill needs, plus the paste ladder.
+    pub(crate) cells: std::rc::Rc<SceneCells>,
+}
+
+#[derive(Default)]
+pub(crate) struct SceneCells {
+    /// The canvas's last laid-out size — the anchor for menu/toolbar zoom (its center).
+    pub(crate) viewport: std::cell::Cell<(f64, f64)>,
+    pub(crate) last_click:
+        std::cell::Cell<Option<(std::time::Instant, f64, f64, canvas::ClickSource)>>,
+    pub(crate) last_tap: std::cell::Cell<Option<(std::time::Instant, f64, f64)>>,
+    /// Repeated pastes of the SAME payload step further (+16 each), so copies never stack
+    /// invisibly; a new copy resets the ladder.
+    pub(crate) paste_step: std::cell::RefCell<(u64, f64)>,
+}
+
+impl Ambient for Scene {
+    fn create() -> Self {
+        Scene {
+            zoom: Signal::new(1.0),
+            pan: Signal::new(Point::ZERO),
+            band: Signal::new(None),
+            canvas_focused: Signal::new(true),
+            selection: Signal::new(Vec::new()),
+            open_groups: Signal::new(std::collections::HashSet::new()),
+            inspector_visible: Signal::new(true),
+            // The class is already seeded when the root builds (docs/size-classes.md).
+            layers_visible: Signal::new(
+                day::size_class()
+                    .map(|s| s.width != day::prelude::WidthClass::Compact)
+                    .unwrap_or(true),
+            ),
+            active_tab: Signal::new(inspector::TAB_CANVAS),
+            refresh: Signal::new(0),
+            cells: std::rc::Rc::new(SceneCells {
+                viewport: std::cell::Cell::new((800.0, 600.0)),
+                ..Default::default()
+            }),
+        }
+    }
+}
+
+/// This window's `Scene` — the ambient one while a piece BUILDS, the FOCUSED window's when a
+/// command runs later from a handler that belongs to no scope (docs/state.md).
+pub(crate) fn scene() -> Scene {
+    Scene::try_ambient()
+        .or_else(Scene::focused)
+        .expect("no window is open, so there is no Scene to act on")
+}
+
 pub fn root() -> impl Piece {
     res::locales::install();
     day_piece_settings::apply_startup(THEME_KEY, LOCALE_KEY);
     day::prefs::install_nav_store();
     day::register_preferences(settings_body);
-    app_menu_reactive(menus);
-    toolbar_reactive(toolbar);
-    // Opening the (or a) document wires its undo stack to the platform — synchronously on
-    // every target; the web's day-sql worker is up before app code runs.
-    let _ = model::doc();
-    // The platform's Cut/Copy/Paste reach the shape editor as SVG (docs/menus.md); a focused
-    // text field keeps its own clipboard behavior ahead of these.
-    day::install_edit_commands(
-        || !model::selection().get().is_empty(),
-        model::copy_selection_svg,
-        model::cut_selection_svg,
-        model::paste_clipboard,
-        model::select_all,
-    );
-    // The selection drives the inspector's tab: any change lands it on the tab that talks
-    // about the current state — Selected while something is, Canvas when nothing is. The
-    // bind fires on every selection change (taps, paste, undo/redo restoration), and only
-    // on change, so a manual tab choice stands until the selection next moves.
-    day::reactive::bind(
-        || model::selection().get(),
-        |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
-    );
-    // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
-    // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
-    // the pane (and its visibility) survives a document switch.
-    let editor_with_inspector = inspector(
-        inspector::visible(),
-        when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor),
-        inspector::panel,
-    )
-    .sheet_done(res::str::insp_done());
-    // The layers pane wraps the whole editor on its LEADING side wherever the tree piece
-    // exists — native (macOS/GTK/iOS) or composed (web, docs/tree.md M2); a target that
-    // answers `Unsupported` keeps exactly the window it had until the tree lands there.
-    if capability(Cap::Tree) != Support::Unsupported {
-        inspector(
-            inspector::layers_visible(),
-            editor_with_inspector,
-            inspector::layers_panel,
+    // File ▸ New Window (docs/windows.md): the SAME shell again, which is why the view state —
+    // zoom, pan, selection, the inspector — lives on a `Scene` rather than in globals. The
+    // DOCUMENT stays shared, so two windows show one drawing from two vantage points.
+    day::register_new_window(window_shell);
+
+    window_shell()
+}
+
+/// One window's UI — the first window's, and every File ▸ New Window's.
+fn window_shell() -> impl Piece {
+    Scene::scoped(|_scene| {
+        // Installed from inside the scope, because both read what THIS window is looking at —
+        // the toolbar per window (docs/toolbars.md), and the menu bar's enabled/checked states
+        // through `scene()`. The menu bar is one bar for the app, so it installs once.
+        // The menu bar and the clipboard bridge are ONE per app, but both read what the front
+        // window is looking at (through `scene()`), so they install from inside a window's
+        // scope — once, in the order `root()` used to run them.
+        static APP_ONCE: std::sync::Once = std::sync::Once::new();
+        APP_ONCE.call_once(|| app_menu_reactive(menus));
+        toolbar_reactive(toolbar);
+        // Opening the (or a) document wires its undo stack to the platform — synchronously on
+        // every target; the web's day-sql worker is up before app code runs. Idempotent, so each
+        // window simply finds the document already open.
+        let _ = model::doc();
+        // The platform's Cut/Copy/Paste reach the shape editor as SVG (docs/menus.md); a focused
+        // text field keeps its own clipboard behavior ahead of these. After `doc()`, exactly as
+        // `root()` ordered it — the edit-state bind reads a selection the document owns.
+        static EDIT_ONCE: std::sync::Once = std::sync::Once::new();
+        EDIT_ONCE.call_once(|| {
+            day::install_edit_commands(
+                || !model::selection().get().is_empty(),
+                model::copy_selection_svg,
+                model::cut_selection_svg,
+                model::paste_clipboard,
+                model::select_all,
+            );
+        });
+        // The selection drives the inspector's tab, per window: any change lands it on the tab
+        // that talks about the current state. Inside the scope, so the bind reads THIS window's
+        // selection.
+        day::reactive::bind(
+            || model::selection().get(),
+            |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
+        );
+        // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
+        // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
+        // the pane (and its visibility) survives a document switch.
+        let editor_with_inspector = inspector(
+            inspector::visible(),
+            when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor),
+            inspector::panel,
         )
-        .width(220.0)
-        .edge(PaneEdge::Leading)
-        .any()
-    } else {
-        editor_with_inspector.any()
-    }
+        .sheet_done(res::str::insp_done());
+        // The layers pane wraps the whole editor on its LEADING side wherever the tree piece
+        // exists — native (macOS/GTK/iOS) or composed (web, docs/tree.md M2); a target that
+        // answers `Unsupported` keeps exactly the window it had until the tree lands there.
+        if capability(Cap::Tree) != Support::Unsupported {
+            inspector(
+                inspector::layers_visible(),
+                editor_with_inspector,
+                inspector::layers_panel,
+            )
+            .width(220.0)
+            .edge(PaneEdge::Leading)
+            .any()
+        } else {
+            editor_with_inspector.any()
+        }
+    })
 }

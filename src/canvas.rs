@@ -34,41 +34,19 @@ const HANDLE_STROKE: Color = Color::rgba(0.145, 0.388, 0.922, 0.9);
 const ZOOM_MIN: f64 = 0.25;
 const ZOOM_MAX: f64 = 4.0;
 
-thread_local! {
-    /// The canvas's last laid-out size — the anchor for menu/toolbar zoom (its center).
-    static VIEWPORT: Cell<(f64, f64)> = const { Cell::new((800.0, 600.0)) };
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    /// The last click this canvas acted on, and which recognizer reported it — see
-    /// [`handle_click`].
-    static LAST_CLICK: Cell<Option<(std::time::Instant, f64, f64, ClickSource)>> =
-        const { Cell::new(None) };
-    /// The previous TAP, for the double-click drill (see [`drill_at`]): a second tap within
-    /// the window and slop below counts as a REPEAT of the first.
-    static LAST_TAP: Cell<Option<(std::time::Instant, f64, f64)>> = const { Cell::new(None) };
-}
-
 /// The canvas magnification: screen = model × zoom + pan. Transient view state — never
 /// persisted and never undoable; unlike the selection it is not even restored by undo.
 pub(crate) fn zoom() -> Signal<f64> {
-    thread_local! {
-        static Z: Signal<f64> = Signal::global(1.0);
-    }
-    Z.with(|s| *s)
+    crate::scene().zoom
 }
 
 /// The canvas translation, in screen pixels — where the model's origin sits in the viewport.
 fn pan() -> Signal<Point> {
-    thread_local! {
-        static P: Signal<Point> = Signal::global(Point::ZERO);
-    }
-    P.with(|s| *s)
+    crate::scene().pan
 }
 
 fn viewport_center() -> Point {
-    let (w, h) = VIEWPORT.with(|v| v.get());
+    let (w, h) = crate::scene().cells.viewport.get();
     Point::new(w / 2.0, h / 2.0)
 }
 
@@ -135,10 +113,7 @@ fn to_screen(p: Point) -> Point {
 /// never an undo step. Written on every pointer move; the draw closure reads it TRACKED, which
 /// is the whole of the repaint wiring.
 fn band() -> Signal<Option<(f64, f64, f64, f64)>> {
-    thread_local! {
-        static B: Signal<Option<(f64, f64, f64, f64)>> = Signal::global(None);
-    }
-    B.with(|s| *s)
+    crate::scene().band
 }
 
 /// A corner handle, named by which frame edges it moves.
@@ -960,7 +935,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
 
 /// Which recognizer reported a click — the dedup key in [`handle_click`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ClickSource {
+pub(crate) enum ClickSource {
     Tap,
     DragEnd,
 }
@@ -978,7 +953,7 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let now = std::time::Instant::now();
-        if let Some((t, x, y, s)) = LAST_CLICK.with(|c| c.get())
+        if let Some((t, x, y, s)) = crate::scene().cells.last_click.get()
             && s != source
             && now.duration_since(t).as_millis() < 30
             && (p_screen.x - x).abs() < 5.0
@@ -986,7 +961,10 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
         {
             return;
         }
-        LAST_CLICK.with(|c| c.set(Some((now, p_screen.x, p_screen.y, source))));
+        crate::scene()
+            .cells
+            .last_click
+            .set(Some((now, p_screen.x, p_screen.y, source)));
     }
     // Is this tap the SECOND arrival of a double-click? Same spot, within the window —
     // that pair's second click drills into a selected group (see [`drill_at`]). A drag's
@@ -996,16 +974,23 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
     let repeat = match source {
         ClickSource::Tap => {
             let now = std::time::Instant::now();
-            let repeat = LAST_TAP.with(|c| c.get()).is_some_and(|(t, x, y)| {
-                now.duration_since(t).as_millis() < 350
-                    && (p_screen.x - x).abs() < 5.0
-                    && (p_screen.y - y).abs() < 5.0
-            });
-            LAST_TAP.with(|c| c.set(Some((now, p_screen.x, p_screen.y))));
+            let repeat = crate::scene()
+                .cells
+                .last_tap
+                .get()
+                .is_some_and(|(t, x, y)| {
+                    now.duration_since(t).as_millis() < 350
+                        && (p_screen.x - x).abs() < 5.0
+                        && (p_screen.y - y).abs() < 5.0
+                });
+            crate::scene()
+                .cells
+                .last_tap
+                .set(Some((now, p_screen.x, p_screen.y)));
             repeat
         }
         ClickSource::DragEnd => {
-            LAST_TAP.with(|c| c.set(None));
+            crate::scene().cells.last_tap.set(None);
             false
         }
     };
@@ -1250,10 +1235,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
 /// inspector takes it — which is exactly when the arrows have to stop nudging shapes and go
 /// back to moving a caret.
 pub(crate) fn canvas_focused() -> Signal<bool> {
-    thread_local! {
-        static F: Signal<bool> = Signal::global(true);
-    }
-    F.with(|s| *s)
+    crate::scene().canvas_focused
 }
 
 /// The canvas's keyboard: arrows nudge, Delete removes. Hung on the canvas rather than the
@@ -1297,7 +1279,7 @@ pub(crate) fn editor_canvas() -> impl Piece {
     // into itself.
     let pinch_base: Rc<Cell<(f64, Point)>> = Rc::new(Cell::new((1.0, Point::ZERO)));
     canvas(move |d, size| {
-        VIEWPORT.with(|v| v.set((size.width, size.height)));
+        crate::scene().cells.viewport.set((size.width, size.height));
         draw_scene(d, size)
     })
     // The live modifiers are read HERE, at the edge, and travel into the machine as data:

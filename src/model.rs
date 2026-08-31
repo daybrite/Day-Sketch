@@ -183,21 +183,33 @@ pub(crate) struct Doc {
     pub path: Option<PathBuf>,
 }
 
-thread_local! {
-    static DOC: RefCell<Option<Rc<Doc>>> = const { RefCell::new(None) };
+/// The open DRAWING — app-wide (docs/state.md), not per-window. Two windows edit the same
+/// document, the way two windows on one Illustrator file do; what differs between them is the
+/// view, which lives on `crate::Scene`.
+#[derive(Clone)]
+struct Document {
+    doc: Rc<RefCell<Option<Rc<Doc>>>>,
+    /// Bumped whenever a DIFFERENT document becomes current; the editor rebuilds off it.
+    rev: Signal<u64>,
 }
 
-/// Bumped whenever a DIFFERENT document becomes current; the editor rebuilds off it.
-pub(crate) fn doc_rev() -> Signal<u64> {
-    thread_local! {
-        static REV: Signal<u64> = Signal::global(0);
+impl Ambient for Document {
+    fn create() -> Self {
+        Document {
+            doc: Rc::new(RefCell::new(None)),
+            rev: Signal::new(0),
+        }
     }
-    REV.with(|s| *s)
+}
+
+pub(crate) fn doc_rev() -> Signal<u64> {
+    Document::app().rev
 }
 
 pub(crate) fn doc() -> Rc<Doc> {
-    let (doc, fresh) = DOC.with(|d| {
-        let mut slot = d.borrow_mut();
+    let handle = Document::app().doc;
+    let (doc, fresh) = {
+        let mut slot = handle.borrow_mut();
         match slot.as_ref() {
             Some(doc) => (doc.clone(), false),
             None => {
@@ -206,7 +218,7 @@ pub(crate) fn doc() -> Rc<Doc> {
                 (doc, true)
             }
         }
-    });
+    };
     // The BOOT document must reach the platform exactly like a New/Open one: without this,
     // the undo bridge stays uninstalled until the first File ▸ New and the stock Edit ▸
     // Undo/Redo sit dead on a fresh launch (the borrow is released above, so the wiring's
@@ -322,7 +334,7 @@ fn install_doc(doc: Doc) {
     // document's empty selection, not whatever the outgoing document had selected.
     selection().set(Vec::new());
     wire_undo(&doc);
-    DOC.with(|d| *d.borrow_mut() = Some(doc));
+    *Document::app().doc.borrow_mut() = Some(doc);
     doc_rev().update(|r| *r += 1);
 }
 
@@ -602,10 +614,7 @@ pub(crate) fn export_copy_dialog() {
 
 /// The selected TOP-LEVEL node ids, in selection order.
 pub(crate) fn selection() -> Signal<Vec<u64>> {
-    thread_local! {
-        static SEL: Signal<Vec<u64>> = Signal::global(Vec::new());
-    }
-    SEL.with(|s| *s)
+    crate::scene().selection
 }
 
 // ---------------------------------------------------------------------------
@@ -649,11 +658,7 @@ pub(crate) fn select_all() {
 /// Which groups the layers tree shows open. Session state, not document state — per-run like
 /// the inspector's visibility, and shared as a signal so grouping can disclose the new group.
 pub(crate) fn open_groups() -> Signal<std::collections::HashSet<u64>> {
-    thread_local! {
-        static OPEN: Signal<std::collections::HashSet<u64>> =
-            Signal::global(std::collections::HashSet::new());
-    }
-    OPEN.with(|s| *s)
+    crate::scene().open_groups
 }
 
 /// A node's kind, untracked — the layers tree's branch/leaf rule and its labels read it
@@ -1543,26 +1548,19 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
     roots
 }
 
-thread_local! {
-    /// Repeated pastes of the SAME payload step further (+16 each), so copies never stack
-    /// invisibly; a new copy resets the ladder.
-    static PASTE_STEP: RefCell<(u64, f64)> = const { RefCell::new((0, 0.0)) };
-}
-
 fn paste_offset(text: &str) -> f64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut h);
     let key = h.finish();
-    PASTE_STEP.with(|p| {
-        let mut p = p.borrow_mut();
-        if p.0 == key {
-            p.1 += 16.0;
-        } else {
-            *p = (key, 16.0);
-        }
-        p.1
-    })
+    let scene = crate::scene();
+    let mut p = scene.cells.paste_step.borrow_mut();
+    if p.0 == key {
+        p.1 += 16.0;
+    } else {
+        *p = (key, 16.0);
+    }
+    p.1
 }
 
 /// Copy: the selection as SVG (the edit bridge places it on the clipboard).
@@ -1791,7 +1789,7 @@ pub(crate) fn install_test_doc() -> Rc<Doc> {
         stack,
         path: None,
     });
-    DOC.with(|d| *d.borrow_mut() = Some(doc.clone()));
+    *Document::app().doc.borrow_mut() = Some(doc.clone());
     selection().set(Vec::new());
     // The selection context, but not the platform bridge — tests exercise the transient
     // restoration exactly as the app wires it.

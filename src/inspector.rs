@@ -14,10 +14,7 @@ use day::prelude::*;
 /// property surface — and deliberately per-run (not persisted): every target starts from the
 /// same state, which is what the walkthrough scripts assume.
 pub(crate) fn visible() -> Signal<bool> {
-    thread_local! {
-        static VIS: Signal<bool> = Signal::global(true);
-    }
-    VIS.with(|s| *s)
+    crate::scene().inspector_visible
 }
 
 pub(crate) fn toggle() {
@@ -30,14 +27,7 @@ pub(crate) fn toggle() {
 /// item, the toolbar toggle and the tool row's Layers button all reopen it. Per-run, like
 /// [`visible`]; the class is already seeded when the root builds (docs/size-classes.md).
 pub(crate) fn layers_visible() -> Signal<bool> {
-    thread_local! {
-        static VIS: Signal<bool> = Signal::global(
-            day::size_class()
-                .map(|s| s.width != day::prelude::WidthClass::Compact)
-                .unwrap_or(true),
-        );
-    }
-    VIS.with(|s| *s)
+    crate::scene().layers_visible
 }
 
 pub(crate) fn layers_toggle() {
@@ -128,10 +118,7 @@ pub(crate) const TAB_CANVAS: usize = 0;
 pub(crate) const TAB_SELECTED: usize = 1;
 
 pub(crate) fn active_tab() -> Signal<usize> {
-    thread_local! {
-        static TAB: Signal<usize> = Signal::global(TAB_CANVAS);
-    }
-    TAB.with(|s| *s)
+    crate::scene().active_tab
 }
 
 /// Follow the selection: any selection change lands the inspector on the tab that talks about
@@ -149,10 +136,7 @@ pub(crate) fn retarget(selected: bool) {
 /// edit, so the canonical text paints back over whatever was typed. A global `Signal` rather
 /// than a `Trigger`, which has no scope-free constructor.
 fn refresh() -> Signal<u64> {
-    thread_local! {
-        static R: Signal<u64> = Signal::global(0);
-    }
-    R.with(|s| *s)
+    crate::scene().refresh
 }
 
 fn refresh_fields() {
