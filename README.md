@@ -4,11 +4,21 @@ A [Day](https://daybrite.dev) app: one Rust codebase, native widgets on every pl
 
 ## Run it
 
-Day compiles **exactly one backend per binary**, so choose a target when you build or launch. The
-Day CLI supplies the right feature for each target:
+`day launch --git` clones this repo, builds it for your desktop, and runs it — no checkout needed:
 
 ```sh
-day doctor                  # check the toolchains for your targets
+cargo install day-cli
+day doctor                                                  # what's installed, what's missing
+day launch --git https://github.com/daybrite/Day-Sketch.git
+```
+
+`day doctor` prints the fix for anything it can't find. `day launch --git` prints where it put the
+checkout, so you can `cd` there and edit the code.
+
+From inside a clone, name a target instead. Day compiles **exactly one backend per binary**, and
+the Day CLI supplies the right feature for each:
+
+```sh
 day launch -p macos-appkit   # build + run
 day build  -p macos-appkit   # build only
 ```
