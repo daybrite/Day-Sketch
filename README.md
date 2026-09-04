@@ -29,10 +29,10 @@ system where it has one, so ⌘Z on a Mac and the shake gesture on an iPhone bot
 their platform expects.
 
 <p align="center">
-  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/en/editor.png" width="200" alt="The editor on iPhone"></kbd>
-  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/en/palette.png" width="200" alt="The palette on iPhone"></kbd>
-  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/en/rotation-fan.png" width="200" alt="A fan of rotated shapes on Android"></kbd>
-  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/en/translucency.png" width="200" alt="Three translucent circles on Android"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/iphone/en/editor.png" width="200" alt="The editor on iPhone"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/iphone/en/palette.png" width="200" alt="The palette on iPhone"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/pixel-5/en/rotation-fan.png" width="200" alt="A fan of rotated shapes on Android"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/pixel-5/en/translucency.png" width="200" alt="Three translucent circles on Android"></kbd>
 </p>
 
 Under the canvas, a drawing is one observable table in a SQLite file. A drag edits it live through
