@@ -260,7 +260,12 @@ flow:
   # presenting view out of the window — so the canvas cannot hold the keyboard until the sheet
   # closes. That is correct behavior (you cannot nudge what is covered), so the block closes it
   # first and puts it back afterwards, on the toolkit that presents one.
-  - tap: { id: tool-inspector, only_on: [uikit] }
+  #
+  # Through the WINDOW TOOLBAR's own toggle, not the in-content `tool-inspector` button: the
+  # tool row exists only where the window has no toolbar (`Cap::Toolbar`, src/lib.rs), and iOS
+  # has had one since 2026-09. `on:` names the state rather than flipping, so the step says
+  # what it wants even when something else moved the pane first.
+  - toolbar: { item: tb-inspector, on: false, only_on: [uikit] }
   # A modal is still ANIMATING when the tree goes idle, and a view mid-transition is not yet in
   # (or out of) the window — so the settle is a pause, not a wait_idle.
   - pause: { secs: 1, only_on: [uikit] }
@@ -292,7 +297,7 @@ flow:
   - assert_text: { id: sk-frame, text: "40,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
   # …and with the keyboard back in a text field, the same arrows move a caret and nothing else.
   # (The sheet comes back first on iOS — its fields do not exist while it is closed.)
-  - tap: { id: tool-inspector, only_on: [uikit] }
+  - toolbar: { item: tb-inspector, on: true, only_on: [uikit] }
   - pause: { secs: 1, only_on: [uikit] }
   - wait_for: { id: insp-x, only_on: [appkit, gtk, qt, dom, uikit] }
   - focus: { id: insp-x, only_on: [appkit, gtk, qt, dom, uikit] }

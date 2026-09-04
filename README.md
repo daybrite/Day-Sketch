@@ -6,7 +6,7 @@ Mac, iPhone, Android, Windows, Linux, HarmonyOS, and the web. Every drawing is a
 you can copy, share, and inspect.
 
 <p align="center">
-  <img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/editor.png" width="760" alt="The editor on macOS">
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/editor.png" width="760" alt="The editor on macOS"></kbd>
 </p>
 
 ## Run it in one command
@@ -29,10 +29,10 @@ system where it has one, so ⌘Z on a Mac and the shake gesture on an iPhone bot
 their platform expects.
 
 <p align="center">
-  <img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/en/editor.png" width="200" alt="The editor on iPhone">
-  <img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/en/palette.png" width="200" alt="The palette on iPhone">
-  <img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/en/rotation-fan.png" width="200" alt="A fan of rotated shapes on Android">
-  <img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/en/translucency.png" width="200" alt="Three translucent circles on Android">
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/en/editor.png" width="200" alt="The editor on iPhone"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/en/palette.png" width="200" alt="The palette on iPhone"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/en/rotation-fan.png" width="200" alt="A fan of rotated shapes on Android"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/en/translucency.png" width="200" alt="Three translucent circles on Android"></kbd>
 </p>
 
 Under the canvas, a drawing is one observable table in a SQLite file. A drag edits it live through
@@ -47,11 +47,11 @@ publishes the results to the [gallery](https://daybrite.dev/gallery/Day-Sketch/)
 
 | Windows · XAML | Linux · GTK | Linux · Qt |
 |:---:|:---:|:---:|
-| <img src="https://daybrite.github.io/Day-Sketch/gallery/windows-xaml/en/editor.png" width="300" alt="The editor on Windows"> | <img src="https://daybrite.github.io/Day-Sketch/gallery/linux-gtk/en/editor.png" width="300" alt="The editor on GTK"> | <img src="https://daybrite.github.io/Day-Sketch/gallery/linux-qt/en/editor.png" width="300" alt="The editor on Qt"> |
+| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/windows-xaml/en/editor.png" width="300" alt="The editor on Windows"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/linux-gtk/en/editor.png" width="300" alt="The editor on GTK"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/linux-qt/en/editor.png" width="300" alt="The editor on Qt"></kbd> |
 
 | Web · DOM | macOS · outlines | macOS · a group, turned |
 |:---:|:---:|:---:|
-| <img src="https://daybrite.github.io/Day-Sketch/gallery/web-dom/en/editor.png" width="300" alt="The editor in the browser"> | <img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/outlines.png" width="300" alt="Outline-only shapes on macOS"> | <img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/group-turned.png" width="300" alt="A grouped body rotated as one on macOS"> |
+| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/web-dom/en/editor.png" width="300" alt="The editor in the browser"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/outlines.png" width="300" alt="Outline-only shapes on macOS"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/group-turned.png" width="300" alt="A grouped body rotated as one on macOS"></kbd> |
 
 ## Build from a clone
 
