@@ -23,6 +23,21 @@ jobs:
       scripts: dayscript/demo.yaml
       #launch-env: WEATHER_MOCK=1
       locales: en
+      # Two form factors per phone platform, each its own parallel job, its own screenshot
+      # artifact and its own column in the published gallery. A drawing app is a different
+      # program on a tablet — the layers pane and the inspector tile beside the canvas at that
+      # width instead of covering it — so a phone capture alone shows half of what ships.
+      #
+      # `device` is a name PREFIX on iOS (runner images retire exact device names, and a pinned
+      # one starts failing the day the image moves) and an exact `avdmanager list device` id on
+      # Android. The first profile stays primary: it packs, and keeps the plain
+      # screenshots-<target> artifact; the second uploads screenshots-<target>-<slug>.
+      ios-devices: |
+        device=iPhone,           orientation=portrait
+        device=iPad Pro 13-inch, orientation=landscape, slug=ipad
+      android-devices: |
+        device=pixel_5,      os=36, orientation=portrait
+        device=pixel_tablet, os=36, orientation=landscape, slug=tablet
       deploy-web: true
       daysite-version: main
 
