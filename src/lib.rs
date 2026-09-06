@@ -200,6 +200,8 @@ fn toolbar() -> Vec<ToolbarEntry> {
                 inspector::layers_visible(),
             )
             .icon(Symbol::Sidebar)
+            // Leading: it reveals the pane to its left.
+            .placement(ToolbarPlacement::Navigation)
             .tooltip(res::str::menu_layers()),
         );
     }
@@ -233,13 +235,17 @@ fn toolbar() -> Vec<ToolbarEntry> {
             .icon(Symbol::ZoomIn)
             .tooltip(res::str::menu_zoom_in())
             .action(|| canvas::zoom_step(1.25)),
-        toolbar_flexible_space(),
+        // The arrange pair and the inspector toggle trail the rest: `Secondary` is what packs
+        // them to the far end of a desktop bar and folds them away first on a phone
+        // (docs/toolbars.md), which is what the flexible space used to say by position.
         toolbar_button("tb-forward", res::str::menu_forward())
             .icon(Symbol::Up)
+            .placement(ToolbarPlacement::Secondary)
             .tooltip(res::str::menu_forward())
             .action(|| model::arrange_named(model::Arrange::Up)),
         toolbar_button("tb-backward", res::str::menu_backward())
             .icon(Symbol::Down)
+            .placement(ToolbarPlacement::Secondary)
             .tooltip(res::str::menu_backward())
             .action(|| model::arrange_named(model::Arrange::Down)),
         // Two-way: a menu/button toggle elsewhere re-checks this item through the signal.
@@ -249,6 +255,7 @@ fn toolbar() -> Vec<ToolbarEntry> {
             inspector::visible(),
         )
         .icon(Symbol::Info)
+        .placement(ToolbarPlacement::Secondary)
         .tooltip(res::str::menu_inspector()),
     ]);
     items
@@ -460,11 +467,15 @@ fn status_row() -> impl Piece {
 }
 
 fn editor() -> impl Piece {
+    // The commands act on the CANVAS, so they are declared on it (docs/toolbars.md) — they ride
+    // whichever chrome the editor has, and a phone that pushes an inspector page over the canvas
+    // gets that page's own commands instead of these.
     column((
         tool_row_if_no_toolbar(),
         canvas::editor_canvas(),
         status_row(),
     ))
+    .toolbar(toolbar)
 }
 
 /// Everything ONE WINDOW owns (docs/state.md): what it is looking at and how, but never what
@@ -567,7 +578,6 @@ fn window_shell() -> impl Piece {
         // scope — once, in the order `root()` used to run them.
         static APP_ONCE: std::sync::Once = std::sync::Once::new();
         APP_ONCE.call_once(|| app_menu_reactive(menus));
-        toolbar_reactive(toolbar);
         // Opening the (or a) document wires its undo stack to the platform — synchronously on
         // every target; the web's day-sql worker is up before app code runs. Idempotent, so each
         // window simply finds the document already open.
