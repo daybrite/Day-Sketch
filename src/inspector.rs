@@ -644,7 +644,8 @@ const STROKE_COLOR: StyleColor = StyleColor {
 fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
     row((
         slider(num).range(0.0..=1.0).step(0.01).grow(),
-        text_field(PctField { num }).id(id).width(64.0),
+        // 72, not 64: Material's text field pads its text enough that "100%" clipped at 64.
+        text_field(PctField { num }).id(id).width(72.0),
     ))
     .spacing(6.0)
     .align(VAlign::Center)
@@ -1042,27 +1043,45 @@ fn text_section() -> AnyPiece {
     .any()
 }
 
+/// A color well with its opacity beside it — one row per paint, the Keynote arrangement, so
+/// the label column stays as narrow as "Stroke" and a 280-point pane still fits every row.
+fn paint_row(
+    well: StyleColor,
+    well_key: &'static str,
+    num: StyleNum,
+    id: &'static str,
+) -> impl Piece {
+    row((
+        day_piece_colorpicker::color_picker(well).key(well_key),
+        // The slider needs travel: below 160 points for the pair the row stacks under its
+        // label (docs/forms.md) rather than squeezing the slider to a sliver beside the well.
+        opacity_row(num, id).min_width(160.0).grow(),
+    ))
+    .spacing(8.0)
+    .align(VAlign::Center)
+}
+
 fn style_section() -> impl Piece {
     section((
-        // The fill pair mounts only for shapes that have an interior (docs: `when` disposes
-        // the arm, so a line's inspector has no fill rows at all rather than dead ones).
+        // The fill row mounts only for shapes that have an interior (docs: `when` disposes
+        // the arm, so a line's inspector has no fill row at all rather than a dead one).
         when(selection_has_fill, || {
             labeled(
                 crate::res::str::insp_fill(),
-                day_piece_colorpicker::color_picker(FILL_COLOR).key("insp-fill"),
+                paint_row(FILL_COLOR, "insp-fill", FILL_OPACITY, "insp-fill-op").grow(),
             )
         }),
-        when(selection_has_fill, || {
-            labeled(
-                crate::res::str::insp_fill_opacity(),
-                opacity_row(FILL_OPACITY, "insp-fill-op"),
-            )
-        }),
-        // The stroke trio mounts for what strokes: shapes and lines, never type.
+        // The stroke pair mounts for what strokes: shapes and lines, never type.
         when(selection_has_stroke, || {
             labeled(
                 crate::res::str::insp_stroke(),
-                day_piece_colorpicker::color_picker(STROKE_COLOR).key("insp-stroke"),
+                paint_row(
+                    STROKE_COLOR,
+                    "insp-stroke",
+                    STROKE_OPACITY,
+                    "insp-stroke-op",
+                )
+                .grow(),
             )
         }),
         when(selection_has_stroke, || {
@@ -1073,14 +1092,8 @@ fn style_section() -> impl Piece {
                     .step(1.0)
                     .decimals(0)
                     .key("insp-stroke-w")
-                    // Same right edge as the opacity rows below it.
+                    // Same right edge as the paint rows above it.
                     .grow(),
-            )
-        }),
-        when(selection_has_stroke, || {
-            labeled(
-                crate::res::str::insp_stroke_opacity(),
-                opacity_row(STROKE_OPACITY, "insp-stroke-op"),
             )
         }),
     ))

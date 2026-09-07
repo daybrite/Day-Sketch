@@ -75,13 +75,12 @@ insp_h = Height
 insp_multi = multi
 insp_done = Done
 insp_style = Style
+# The paint rows: a color well with its opacity beside it, so the labels stay one word.
 insp_fill = Fill
-insp_fill_opacity = Fill Opacity
 insp_stroke = Stroke
-insp_stroke_width = Stroke Width
-insp_stroke_opacity = Stroke Opacity
+insp_stroke_width = Thickness
 insp_rotation = Rotation
-insp_corner = Corner Radius
+insp_corner = Corners
 # The Text section: a text node's content, family, style and size.
 insp_text = Text
 insp_content = Content
