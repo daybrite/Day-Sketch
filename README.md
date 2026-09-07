@@ -25,7 +25,9 @@ missing. The launch prints where it put the checkout, so you can open the code a
 
 Place rectangles, ovals, lines, and text, drag them around, resize them by their handles, turn
 them, group them, and arrange the layers. A text node is a line of type in any font the platform
-lists, sized by its handles. Every operation is one undoable turn, fronted by the platform's own undo
+lists, sized by its handles. Alignment guides appear as you drag, and a shape snaps onto a
+neighbor's edge or center when it comes within a few pixels of lining up (a preference turns the
+snapping off). Every operation is one undoable turn, fronted by the platform's own undo
 system where it has one, so ⌘Z on a Mac and the shake gesture on an iPhone both work the way
 their platform expects.
 

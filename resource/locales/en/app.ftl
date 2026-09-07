@@ -109,6 +109,9 @@ undo_add_rect = Add Rectangle
 undo_add_oval = Add Oval
 undo_add_line = Add Line
 undo_add_text = Add Text
+# Preferences: the Editing section.
+pref_editing = Editing
+pref_snap = Snap to alignment guides
 undo_edit_text = Edit Text
 undo_move = Move
 undo_resize = Resize

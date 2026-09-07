@@ -31,6 +31,10 @@ const HANDLE_STROKE: Color = Color::rgba(0.145, 0.388, 0.922, 0.9);
 // ---------------------------------------------------------------------------
 
 /// The zoom range: far enough out to see a whole drawing, close enough in for pixel work.
+/// How close, in SCREEN pixels, a dragged edge or center must come to another shape's for the
+/// drag to snap onto it — the guide's magnetic reach, constant at every zoom.
+const SNAP_TOLERANCE: f64 = 6.0;
+const GUIDE: Color = Color::hex(0xF2A900);
 const ZOOM_MIN: f64 = 0.25;
 const ZOOM_MAX: f64 = 4.0;
 
@@ -41,6 +45,18 @@ pub(crate) fn zoom() -> Signal<f64> {
 }
 
 /// The canvas translation, in screen pixels — where the model's origin sits in the viewport.
+/// The alignment guides of the drag in flight, in MODEL coordinates: a vertical guide is an
+/// x, a horizontal one a y. Empty between drags.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Guide {
+    Vertical(f64),
+    Horizontal(f64),
+}
+
+pub(crate) fn guides() -> Signal<Vec<Guide>> {
+    crate::scene().guides
+}
+
 fn pan() -> Signal<Point> {
     crate::scene().pan
 }
@@ -139,9 +155,11 @@ enum Handle {
 
 enum DragOp {
     Idle,
-    /// Every affected SHAPE with its starting origin (a group drags its descendants).
+    /// Every affected SHAPE with its starting origin (a group drags its descendants), and the
+    /// box they all start in — what the alignment guides measure against as it moves.
     Move {
         starts: Vec<(u64, f64, f64)>,
+        frame: Option<(f64, f64, f64, f64)>,
     },
     /// One shape, one corner, its starting frame, and the rotation that frame is drawn under.
     Resize {
@@ -191,6 +209,150 @@ fn line_dragged(
         LineEnd::Start => (x + dx, y + dy, w - dx, h - dy),
         LineEnd::End => (x, y, w + dx, h + dy),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Alignment guides (the iWork idiom): a dragged shape snaps to another's edge or center when it
+// comes within SNAP_TOLERANCE screen pixels of lining up, and a guide shows what it snapped to.
+// ---------------------------------------------------------------------------
+
+/// The alignment lines every shape NOT being dragged offers: the x of its left edge, center
+/// and right edge, and the y of its top, middle and bottom. A turned shape offers the box it
+/// visually occupies. Groups offer nothing of their own — their members do.
+fn alignment_targets(exclude: &[u64]) -> (Vec<f64>, Vec<f64>) {
+    let store = model::nodes();
+    let (mut xs, mut ys) = (Vec::new(), Vec::new());
+    for root in model::children_of(None) {
+        for s in model::shape_descendants(root) {
+            if exclude.contains(&s) {
+                continue;
+            }
+            let (x, y, w, h) = model::visual_frame(store, s);
+            xs.extend([x, x + w / 2.0, x + w]);
+            ys.extend([y, y + h / 2.0, y + h]);
+        }
+    }
+    (xs, ys)
+}
+
+/// The best snap along one axis: the smallest correction that lines one of `moving` up with one
+/// of `targets`, if any is within `tol`. Returns the correction and every target value that
+/// holds under it (two guides when both edges land at once).
+fn snap_axis(moving: &[f64], targets: &[f64], tol: f64) -> Option<(f64, Vec<f64>)> {
+    let mut best: Option<f64> = None;
+    for m in moving {
+        for t in targets {
+            let d = t - m;
+            if d.abs() <= tol && best.is_none_or(|b: f64| d.abs() < b.abs()) {
+                best = Some(d);
+            }
+        }
+    }
+    let d = best?;
+    let mut lines: Vec<f64> = Vec::new();
+    for m in moving {
+        for t in targets {
+            if ((t - m) - d).abs() < 1e-6 && !lines.iter().any(|l| (l - t).abs() < 1e-6) {
+                lines.push(*t);
+            }
+        }
+    }
+    Some((d, lines))
+}
+
+/// A drag's snap: the (dx, dy) correction to apply on top of the pointer's travel, and the
+/// guides to show. `moving_xs`/`moving_ys` are the dragged geometry's alignment values as the
+/// pointer has them now. Nothing when snapping is off in the preferences.
+fn snap(moving_xs: &[f64], moving_ys: &[f64], exclude: &[u64]) -> (f64, f64, Vec<Guide>) {
+    if !crate::snap_enabled().get_untracked() {
+        return (0.0, 0.0, Vec::new());
+    }
+    let tol = SNAP_TOLERANCE / zoom().get_untracked();
+    let (xs, ys) = alignment_targets(exclude);
+    let mut guides = Vec::new();
+    let mut dx = 0.0;
+    let mut dy = 0.0;
+    if let Some((d, lines)) = snap_axis(moving_xs, &xs, tol) {
+        dx = d;
+        guides.extend(lines.into_iter().map(Guide::Vertical));
+    }
+    if let Some((d, lines)) = snap_axis(moving_ys, &ys, tol) {
+        dy = d;
+        guides.extend(lines.into_iter().map(Guide::Horizontal));
+    }
+    (dx, dy, guides)
+}
+
+/// The union of the moving shapes' frames at the start of a drag — the box a move snaps by.
+fn union_frame(ids: &[u64]) -> Option<(f64, f64, f64, f64)> {
+    let mut acc: Option<(f64, f64, f64, f64)> = None;
+    for id in ids {
+        let (x, y, w, h) = model::shape_frame(*id);
+        acc = Some(match acc {
+            None => (x, y, w, h),
+            Some((ax, ay, aw, ah)) => {
+                let (r, b) = ((ax + aw).max(x + w), (ay + ah).max(y + h));
+                let (nx, ny) = (ax.min(x), ay.min(y));
+                (nx, ny, r - nx, b - ny)
+            }
+        });
+    }
+    acc
+}
+
+/// A move's travel after snapping: the box's left/center/right and top/middle/bottom, carried
+/// by the pointer, pulled onto the nearest alignment within reach. Publishes the guides.
+fn snapped_move(
+    dx: f64,
+    dy: f64,
+    frame: Option<(f64, f64, f64, f64)>,
+    starts: &[(u64, f64, f64)],
+) -> (f64, f64) {
+    let Some((x, y, w, h)) = frame else {
+        return (dx, dy);
+    };
+    let exclude: Vec<u64> = starts.iter().map(|(id, ..)| *id).collect();
+    let xs = [x + dx, x + dx + w / 2.0, x + dx + w];
+    let ys = [y + dy, y + dy + h / 2.0, y + dy + h];
+    let (sx, sy, g) = snap(&xs, &ys, &exclude);
+    guides().set(g);
+    (dx + sx, dy + sy)
+}
+
+/// A resize's travel after snapping: only the edges the corner moves take part, and only for
+/// an upright shape — a turned frame's edges are not lines other shapes align to.
+fn snapped_resize(
+    start: (f64, f64, f64, f64),
+    corner: Corner,
+    dx: f64,
+    dy: f64,
+    rotation: f64,
+    id: u64,
+) -> (f64, f64) {
+    if rotation.abs() > f64::EPSILON {
+        guides().set(Vec::new());
+        return (dx, dy);
+    }
+    let f = resized(start, corner, dx, dy);
+    let x_edge = match corner {
+        Corner::TopLeft | Corner::BottomLeft => f.0,
+        Corner::TopRight | Corner::BottomRight => f.0 + f.2,
+    };
+    let y_edge = match corner {
+        Corner::TopLeft | Corner::TopRight => f.1,
+        Corner::BottomLeft | Corner::BottomRight => f.1 + f.3,
+    };
+    let (sx, sy, g) = snap(&[x_edge], &[y_edge], &[id]);
+    guides().set(g);
+    (dx + sx, dy + sy)
+}
+
+/// An endpoint drag's travel after snapping: the moving end is a point, and it snaps to any
+/// edge or center line.
+fn snapped_point(px: f64, py: f64, dx: f64, dy: f64, id: u64) -> (f64, f64) {
+    let (sx, sy, g) = snap(&[px + dx], &[py + dy], &[id]);
+    guides().set(g);
+    (dx + sx, dy + sy)
 }
 
 fn field_previews_move(dx: f64, dy: f64, starts: &[(u64, f64, f64)]) {
@@ -1036,6 +1198,23 @@ fn draw_scene(d: &mut Draw, size: Size) {
         }
     }
 
+    // The alignment guides of the drag in flight: a hairline across the whole viewport at each
+    // snapped line, in screen space so it is one pixel at any zoom. TRACKED: the drag sets
+    // them every frame, and this read is what paints them.
+    for guide in guides().get() {
+        let shape = match guide {
+            Guide::Vertical(x) => {
+                let sx = to_screen(Point::new(x, 0.0)).x;
+                segment_shape((sx, 0.0), (sx, size.height))
+            }
+            Guide::Horizontal(y) => {
+                let sy = to_screen(Point::new(0.0, y)).y;
+                segment_shape((0.0, sy), (size.width, sy))
+            }
+        };
+        d.stroke(shape, GUIDE, 1.0);
+    }
+
     // The rubber band, over everything including the outlines it is drawing: a faint wash
     // under a dashed edge, the marquee every drawing program wears. Screen space, like the
     // outlines and for the same reason — one pixel of dash means one pixel at any zoom.
@@ -1196,6 +1375,10 @@ pub(crate) fn select_at(p: Point, mods: day::Modifiers) {
 
 fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
     let store = model::nodes();
+    // Guides belong to one drag: none at the press, none after the release.
+    if !matches!(drag.phase, DragPhase::Changed) {
+        guides().set(Vec::new());
+    }
     // The drag arrives in screen pixels; the model lives behind the view transform. Handles
     // are hit in screen space (constant grab target), shapes in model space, and every
     // translation is divided by the zoom so the shape tracks the pointer 1:1 on screen.
@@ -1251,7 +1434,9 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                         starts.push((s, e.x().peek(), e.y().peek()));
                     }
                 }
-                DragOp::Move { starts }
+                let ids: Vec<u64> = starts.iter().map(|(id, ..)| *id).collect();
+                let frame = union_frame(&ids);
+                DragOp::Move { starts, frame }
             } else {
                 // Blank canvas: sweep a band. Shift or the platform's command key keeps what
                 // was already selected and adds to it — the same modifier rule a click follows.
@@ -1271,8 +1456,14 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
             *op.borrow_mut() = next;
         }
         DragPhase::Changed => match &*op.borrow() {
-            DragOp::Move { starts } => {
-                field_previews_move(drag.translation.x / zf, drag.translation.y / zf, starts)
+            DragOp::Move { starts, frame } => {
+                let (dx, dy) = snapped_move(
+                    drag.translation.x / zf,
+                    drag.translation.y / zf,
+                    *frame,
+                    starts,
+                );
+                field_previews_move(dx, dy, starts)
             }
             DragOp::Resize {
                 id,
@@ -1280,22 +1471,27 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 start,
                 rotation,
             } => {
-                let f = resized_under_rotation(
+                let (dx, dy) = snapped_resize(
                     *start,
                     *corner,
                     drag.translation.x / zf,
                     drag.translation.y / zf,
                     *rotation,
+                    *id,
                 );
+                let f = resized_under_rotation(*start, *corner, dx, dy, *rotation);
                 apply_resize(*id, f, *start, false);
             }
             DragOp::Endpoint { id, end, start } => {
-                let f = line_dragged(
-                    *start,
-                    *end,
+                let (px, py) = moving_end(*start, *end);
+                let (dx, dy) = snapped_point(
+                    px,
+                    py,
                     drag.translation.x / zf,
                     drag.translation.y / zf,
+                    *id,
                 );
+                let f = line_dragged(*start, *end, dx, dy);
                 apply_resize(*id, f, *start, false);
             }
             DragOp::Scale {
@@ -1327,27 +1523,40 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
         DragPhase::Ended => {
             let finished = std::mem::replace(&mut *op.borrow_mut(), DragOp::Idle);
             match finished {
-                DragOp::Move { starts } => model::undo_stack().grouped("move", || {
-                    field_commits_move(drag.translation.x / zf, drag.translation.y / zf, &starts)
-                }),
+                DragOp::Move { starts, frame } => {
+                    let (dx, dy) = snapped_move(
+                        drag.translation.x / zf,
+                        drag.translation.y / zf,
+                        frame,
+                        &starts,
+                    );
+                    guides().set(Vec::new());
+                    model::undo_stack().grouped("move", || field_commits_move(dx, dy, &starts))
+                }
                 DragOp::Resize {
                     id,
                     corner,
                     start,
                     rotation,
                 } => {
-                    let f = resized_under_rotation(
+                    let (dx, dy) = snapped_resize(
                         start,
                         corner,
                         drag.translation.x / zf,
                         drag.translation.y / zf,
                         rotation,
+                        id,
                     );
+                    guides().set(Vec::new());
+                    let f = resized_under_rotation(start, corner, dx, dy, rotation);
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
                 DragOp::Endpoint { id, end, start } => {
-                    let f =
-                        line_dragged(start, end, drag.translation.x / zf, drag.translation.y / zf);
+                    let (px, py) = moving_end(start, end);
+                    let (dx, dy) =
+                        snapped_point(px, py, drag.translation.x / zf, drag.translation.y / zf, id);
+                    guides().set(Vec::new());
+                    let f = line_dragged(start, end, dx, dy);
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
                 DragOp::Scale {
@@ -1390,6 +1599,15 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 DragOp::Idle => {}
             }
         }
+    }
+}
+
+/// Where a line's dragged END starts, in model space, from its raw fields.
+fn moving_end(start: (f64, f64, f64, f64), end: LineEnd) -> (f64, f64) {
+    let (x, y, w, h) = start;
+    match end {
+        LineEnd::Start => (x, y),
+        LineEnd::End => (x + w, y + h),
     }
 }
 
@@ -2585,5 +2803,138 @@ mod tests {
         let was = held_corner(start, Corner::BottomRight, 30.0);
         let now = held_corner(f, Corner::BottomRight, 30.0);
         assert!((was.x - now.x).abs() < 1e-6 && (was.y - now.y).abs() < 1e-6);
+    }
+
+    #[test]
+    fn snap_axis_takes_the_nearest_line_within_reach_and_every_line_that_holds() {
+        // Left edge 3 from a target, right edge 5 from another: the 3 wins, alone.
+        assert_eq!(
+            snap_axis(&[10.0, 30.0, 50.0], &[13.0, 55.0], 6.0),
+            Some((3.0, vec![13.0]))
+        );
+        // Both edges land at once under the same correction: two guides.
+        assert_eq!(
+            snap_axis(&[10.0, 30.0, 50.0], &[12.0, 52.0], 6.0),
+            Some((2.0, vec![12.0, 52.0]))
+        );
+        assert_eq!(snap_axis(&[10.0], &[20.0], 6.0), None);
+    }
+
+    #[test]
+    fn a_move_snaps_onto_a_neighbors_edge_and_shows_the_guide_until_release() {
+        let _doc = install_test_doc();
+        unzoomed();
+        crate::snap_enabled().set(true);
+        let a = rect_at(10.0, 10.0, 40.0, 40.0);
+        // Shorter than A, so only its TOP lines up with A's (equal boxes align at the top,
+        // the middle and the bottom at once, and show all three guides).
+        let b = rect_at(100.0, 13.0, 40.0, 24.0);
+        let store = model::nodes();
+        // Press on B's middle and move 5 to the right: B's top sits 3 from A's top, within
+        // reach, so it snaps to 10 while x follows the pointer.
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        let at = |phase, (x, y): (f64, f64)| Drag {
+            phase,
+            location: Point::new(x, y),
+            translation: Point::new(x - 120.0, y - 33.0),
+        };
+        on_drag(at(DragPhase::Began, (120.0, 33.0)), plain(), &op);
+        on_drag(at(DragPhase::Changed, (125.0, 33.0)), plain(), &op);
+        assert_eq!(
+            store.elem(b).y().peek(),
+            10.0,
+            "the preview is already snapped"
+        );
+        assert_eq!(guides().get_untracked(), vec![Guide::Horizontal(10.0)]);
+        on_drag(at(DragPhase::Ended, (125.0, 33.0)), plain(), &op);
+        assert_eq!(
+            (store.elem(b).x().peek(), store.elem(b).y().peek()),
+            (105.0, 10.0)
+        );
+        assert!(
+            guides().get_untracked().is_empty(),
+            "guides go with the drag"
+        );
+        assert_eq!(store.elem(a).y().peek(), 10.0, "the neighbor never moves");
+
+        // Off in the preferences: the same drag lands where the pointer left it.
+        crate::snap_enabled().set(false);
+        let c = rect_at(200.0, 13.0, 40.0, 24.0);
+        let at = |phase, (x, y): (f64, f64)| Drag {
+            phase,
+            location: Point::new(x, y),
+            translation: Point::new(x - 220.0, y - 33.0),
+        };
+        on_drag(at(DragPhase::Began, (220.0, 33.0)), plain(), &op);
+        on_drag(at(DragPhase::Changed, (225.0, 33.0)), plain(), &op);
+        assert!(guides().get_untracked().is_empty());
+        on_drag(at(DragPhase::Ended, (225.0, 33.0)), plain(), &op);
+        assert_eq!(
+            (store.elem(c).x().peek(), store.elem(c).y().peek()),
+            (205.0, 13.0)
+        );
+        crate::snap_enabled().set(true);
+    }
+
+    #[test]
+    fn a_resize_snaps_the_edge_it_moves_and_a_center_line_counts() {
+        let _doc = install_test_doc();
+        unzoomed();
+        crate::snap_enabled().set(true);
+        let _a = rect_at(10.0, 10.0, 40.0, 40.0); // bottom = 50
+        let b = rect_at(100.0, 30.0, 40.0, 40.0); // bottom = 70
+        model::selection().set(vec![b]);
+        let store = model::nodes();
+        // Pull B's bottom-right corner up by 16: its bottom sits at 54, within reach of A's
+        // bottom at 50, and snaps onto it — the width follows the pointer.
+        let (cx, cy) = corner(b, Corner::BottomRight);
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        let at = |phase, (x, y): (f64, f64)| Drag {
+            phase,
+            location: Point::new(x, y),
+            translation: Point::new(x - cx, y - cy),
+        };
+        on_drag(at(DragPhase::Began, (cx, cy)), plain(), &op);
+        on_drag(at(DragPhase::Changed, (cx + 10.0, cy - 16.0)), plain(), &op);
+        assert_eq!(guides().get_untracked(), vec![Guide::Horizontal(50.0)]);
+        on_drag(at(DragPhase::Ended, (cx + 10.0, cy - 16.0)), plain(), &op);
+        let e = store.elem(b);
+        assert_eq!(e.y().peek() + e.h().peek(), 50.0, "the bottom edge snapped");
+        assert_eq!(e.w().peek(), 50.0, "the width followed the pointer");
+    }
+
+    #[test]
+    fn guides_draw_as_hairlines_across_the_viewport_while_set() {
+        let _doc = install_test_doc();
+        unzoomed();
+        guides().set(vec![Guide::Vertical(30.0), Guide::Horizontal(50.0)]);
+        let mut d = Draw::new();
+        draw_scene(&mut d, Size::new(400.0, 300.0));
+        let lines: Vec<(Point, Point)> = d
+            .ops()
+            .iter()
+            .filter_map(|op| match op {
+                DrawOp::Stroke(Shape::Path(p), Paint::Solid(c), _) if *c == GUIDE => {
+                    let mut pts = p.segs.iter().filter_map(|s| match s {
+                        PathSeg::Move(p) | PathSeg::Line(p) => Some(*p),
+                        _ => None,
+                    });
+                    Some((pts.next()?, pts.next()?))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lines.len(), 2, "one hairline per guide");
+        assert_eq!(lines[0], (Point::new(30.0, 0.0), Point::new(30.0, 300.0)));
+        assert_eq!(lines[1], (Point::new(0.0, 50.0), Point::new(400.0, 50.0)));
+        guides().set(Vec::new());
+        let mut d = Draw::new();
+        draw_scene(&mut d, Size::new(400.0, 300.0));
+        assert!(
+            !d.ops()
+                .iter()
+                .any(|op| matches!(op, DrawOp::Stroke(_, Paint::Solid(c), _) if *c == GUIDE)),
+            "no guides, no hairlines"
+        );
     }
 }

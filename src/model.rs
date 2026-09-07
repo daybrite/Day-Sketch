@@ -1132,7 +1132,7 @@ pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
 /// turned — a rotated rectangle pokes outside its own x/y/w/h, and a group outline that
 /// "encompasses its members" has to cover what is actually on the canvas. (An oval's turned
 /// box is the rectangle's — a slight over-cover, never an under-cover.)
-fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64, f64) {
+pub(crate) fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64, f64) {
     let (x, y, w, h) = shape_frame(id);
     let e = store.elem(id);
     let r = match e.kind().peek() {

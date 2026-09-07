@@ -23,11 +23,34 @@ const THEME_KEY: &str = "app.theme";
 const LOCALE_KEY: &str = "app.locale";
 
 fn settings_body() -> impl Piece {
-    form((day_piece_settings::settings_sections(
-        THEME_KEY,
-        LOCALE_KEY,
-        res::locales::ALL,
-    ),))
+    form((
+        day_piece_settings::settings_sections(THEME_KEY, LOCALE_KEY, res::locales::ALL),
+        section((labeled(
+            res::str::pref_snap(),
+            toggle(snap_enabled()).id("pref-snap"),
+        ),))
+        .title(res::str::pref_editing()),
+    ))
+}
+
+const SNAP_KEY: &str = "sketch.snap";
+
+/// Whether a drag snaps to the alignment guides (canvas.rs): a preference, app-wide, stored
+/// under `sketch.snap` and seeded from it. One signal for the process, made on the root scope
+/// so the store write-back outlives any page.
+pub(crate) fn snap_enabled() -> Signal<bool> {
+    thread_local! {
+        static SNAP: std::cell::OnceCell<Signal<bool>> = const { std::cell::OnceCell::new() };
+    }
+    SNAP.with(|c| {
+        *c.get_or_init(|| {
+            day::reactive::Scope::root().enter(|| {
+                let s = Signal::new(true);
+                day::prefs::bind(SNAP_KEY, s);
+                s
+            })
+        })
+    })
 }
 
 /// ⌘/Ctrl + the LOCALIZED key: the letter comes from the command's `.key` attribute in the
@@ -498,6 +521,8 @@ pub(crate) struct Scene {
     pub(crate) zoom: Signal<f64>,
     pub(crate) pan: Signal<Point>,
     pub(crate) band: Signal<Option<(f64, f64, f64, f64)>>,
+    /// The alignment guides the drag in flight is snapped to (canvas.rs); empty between drags.
+    pub(crate) guides: Signal<Vec<canvas::Guide>>,
     pub(crate) canvas_focused: Signal<bool>,
     // --- the editor's own selection + disclosure (model.rs) ---
     pub(crate) selection: Signal<Vec<u64>>,
@@ -530,6 +555,7 @@ impl Ambient for Scene {
             zoom: Signal::new(1.0),
             pan: Signal::new(Point::ZERO),
             band: Signal::new(None),
+            guides: Signal::new(Vec::new()),
             canvas_focused: Signal::new(true),
             selection: Signal::new(Vec::new()),
             open_groups: Signal::new(std::collections::HashSet::new()),
