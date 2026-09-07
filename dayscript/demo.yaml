@@ -496,6 +496,59 @@ flow:
   - wait_for: { id: insp-x }
   - assert_text: { id: sk-frame, text: "40,40 96x64" }
 
+  # ---- Text: a line of type whose frame is what its font measures to ----
+  # Insert ▸ Text lands a node reading "Text" at 24 points in the platform's own face. Its
+  # frame is MEASURED, so sk-frame is never asserted here: each platform's fonts measure
+  # differently. What is the same everywhere: the Text section's rows, the absent stroke
+  # rows, the style menu's synthesized faces for the System family, and the undo depth.
+  - menu: { key: tool_text, path: [menu_insert] }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - wait_for: { id: insp-text }
+  - input: { id: insp-x, text: "300" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "300" }
+  - submit: { id: insp-y }
+  - assert_text: { id: insp-x, text: "300" }
+  - assert_text: { id: insp-text, key: text_default }
+  - wait_for: { id: insp-font }
+  - wait_for: { id: insp-style }
+  - assert_text: { id: insp-size, text: "24" }
+  # Type is filled — the fill IS its color — and never stroked or rounded.
+  - wait_for: { id: insp-fill }
+  - assert_missing: { id: insp-stroke }
+  - assert_missing: { id: insp-stroke-w }
+  - assert_missing: { id: insp-stroke-op }
+  - assert_missing: { id: insp-corner }
+  # New words, one undo unit with the refit that follows them.
+  - input: { id: insp-text, text: "Day Sketch" }
+  - submit: { id: insp-text }
+  - assert_text: { id: insp-text, text: "Day Sketch" }
+  # The System family offers the four synthesized faces in a fixed order, so index 1 is Bold
+  # on every platform.
+  - select: { id: insp-style, index: 1 }
+  - assert_text: { id: insp-style, key: style_bold }
+  - input: { id: insp-size, text: "36" }
+  - submit: { id: insp-size }
+  - assert_text: { id: insp-size, text: "36" }
+  - input: { id: insp-rotation, text: "30" }
+  - submit: { id: insp-rotation }
+  - assert_text: { id: insp-rotation, text: "30" }
+  # Four edits, four undos, in reverse: rotation, size, style, words.
+  - undo: {}
+  - assert_text: { id: insp-rotation, text: "0" }
+  - undo: {}
+  - assert_text: { id: insp-size, text: "24" }
+  - undo: {}
+  - assert_text: { id: insp-style, key: style_regular }
+  - undo: {}
+  - assert_text: { id: insp-text, key: text_default }
+  # Delete it, so the parting shot is the same three shapes on every target.
+  - menu: { key: menu_delete, path: [menu_edit] }
+  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - tap: { id: canvas, at: [45, 45] }
+  - wait_for: { id: insp-x }
+  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+
   # ---- Tabs by hand: a manual switch shows the other tab until the selection next moves ----
   - select: { id: insp-tab, index: 0 }
   - wait_for: { id: insp-bg }
@@ -762,3 +815,79 @@ flow:
       title: { en: "One body, turned" }
       caption: { en: "Three shapes grouped and turned 20° together: each orbits the group's centre, and the frame turns with them." }
       source: src/model.rs
+
+  # ---- Type specimen: six lines in the system face, four styles and four sizes ----
+  # Every line is typed through the inspector; the System family only, since the font list
+  # differs per platform. The palette colors them in insertion order.
+  - tap: { id: canvas, at: [620, 500] }
+  - menu: { key: menu_new }
+  - menu: { key: menu_inspector }
+  - wait_for: { id: insp-bg }
+  - menu: { key: tool_text, path: [menu_insert] }
+  - input: { id: insp-text, text: "Aa Bb Cc" }
+  - submit: { id: insp-text }
+  - input: { id: insp-size, text: "56" }
+  - submit: { id: insp-size }
+  - input: { id: insp-x, text: "24" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "24" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_text, path: [menu_insert] }
+  - input: { id: insp-text, text: "Bold" }
+  - submit: { id: insp-text }
+  - select: { id: insp-style, index: 1 }
+  - input: { id: insp-size, text: "32" }
+  - submit: { id: insp-size }
+  - input: { id: insp-x, text: "24" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "110" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_text, path: [menu_insert] }
+  - input: { id: insp-text, text: "Italic" }
+  - submit: { id: insp-text }
+  - select: { id: insp-style, index: 2 }
+  - input: { id: insp-size, text: "32" }
+  - submit: { id: insp-size }
+  - input: { id: insp-x, text: "24" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "160" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_text, path: [menu_insert] }
+  - input: { id: insp-text, text: "Bold Italic" }
+  - submit: { id: insp-text }
+  - select: { id: insp-style, index: 3 }
+  - input: { id: insp-size, text: "32" }
+  - submit: { id: insp-size }
+  - input: { id: insp-x, text: "24" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "210" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_text, path: [menu_insert] }
+  - input: { id: insp-text, text: "Turned fifteen degrees" }
+  - submit: { id: insp-text }
+  - input: { id: insp-size, text: "20" }
+  - submit: { id: insp-size }
+  - input: { id: insp-rotation, text: "15" }
+  - submit: { id: insp-rotation }
+  - input: { id: insp-x, text: "24" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "280" }
+  - submit: { id: insp-y }
+  - menu: { key: tool_text, path: [menu_insert] }
+  - input: { id: insp-text, text: "Twelve point" }
+  - submit: { id: insp-text }
+  - input: { id: insp-size, text: "12" }
+  - submit: { id: insp-size }
+  - input: { id: insp-x, text: "24" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "360" }
+  - submit: { id: insp-y }
+  - tap: { id: canvas, at: [300, 420] }
+  - wait_for: { id: insp-bg }
+  - menu: { key: menu_inspector }
+  - pause: 1
+  - screenshot:
+      name: type-specimen
+      title: { en: "Type specimen" }
+      caption: { en: "Six lines in the system face at four styles and four sizes, one turned 15°. Each frame is measured from its text, so dragging a corner changes the point size." }
+      source: src/inspector.rs

@@ -23,8 +23,9 @@ missing. The launch prints where it put the checkout, so you can open the code a
 
 ## What you get
 
-Place rectangles and ovals, drag them around, resize them by their handles, turn them, group them,
-and arrange the layers. Every operation is one undoable turn, fronted by the platform's own undo
+Place rectangles, ovals, lines, and text, drag them around, resize them by their handles, turn
+them, group them, and arrange the layers. A text node is a line of type in any font the platform
+lists, sized by its handles. Every operation is one undoable turn, fronted by the platform's own undo
 system where it has one, so ⌘Z on a Mac and the shake gesture on an iPhone both work the way
 their platform expects.
 
@@ -52,6 +53,10 @@ publishes the results to the [gallery](https://daybrite.dev/gallery/Day-Sketch/)
 | Web · DOM | macOS · outlines | macOS · a group, turned |
 |:---:|:---:|:---:|
 | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/web-dom/en/editor.png" width="300" alt="The editor in the browser"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/outlines.png" width="300" alt="Outline-only shapes on macOS"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/group-turned.png" width="300" alt="A grouped body rotated as one on macOS"></kbd> |
+
+| macOS · type specimen | iPad · type specimen | Android tablet · type specimen |
+|:---:|:---:|:---:|
+| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/type-specimen.png" width="300" alt="Six lines of type in four styles on macOS"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/ipad/en/type-specimen.png" width="300" alt="The type specimen on iPad"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/tablet/en/type-specimen.png" width="300" alt="The type specimen on an Android tablet"></kbd> |
 
 ## Build from a clone
 

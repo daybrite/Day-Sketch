@@ -81,10 +81,7 @@ pub(crate) fn place_centered(kind: NodeKind) {
     let c = to_model(viewport_center());
     // Offset by half the kind's own starting extent, so what lands is CENTERED rather than
     // hung off the middle by a rectangle's proportions.
-    let (w, h) = match kind {
-        NodeKind::Line => (model::DEFAULT_LINE, 0.0),
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => (model::DEFAULT_W, model::DEFAULT_H),
-    };
+    let (w, h) = model::default_extent(kind);
     let id = model::place_shape(kind, c.x - w / 2.0, c.y - h / 2.0);
     model::selection().set(vec![id]);
 }
@@ -159,6 +156,15 @@ enum DragOp {
         id: u64,
         end: LineEnd,
         start: (f64, f64, f64, f64),
+    },
+    /// A text node's corner: its frame is measured, never dragged, so the drag SCALES the
+    /// point size by how far the corner moves from the one opposite, and the frame follows.
+    Scale {
+        id: u64,
+        corner: Corner,
+        start: (f64, f64, f64, f64),
+        size: f64,
+        rotation: f64,
     },
     /// A rubber band sweeping the blank canvas. `anchor` is where the press landed, in SCREEN
     /// space — the corner the band grows from. `base` is the selection the press started with,
@@ -280,14 +286,94 @@ fn resized_under_rotation(
     let (sin, cos) = rotation.to_radians().sin_cos();
     // R(-θ) · (dx, dy): the pointer's travel in the shape's own frame.
     let f = resized(start, corner, dx * cos + dy * sin, -dx * sin + dy * cos);
-    let held = |b: (f64, f64, f64, f64)| {
-        let c = Point::new(b.0 + b.2 / 2.0, b.1 + b.3 / 2.0);
-        let p = opposite_point(b, corner);
-        let (ox, oy) = (p.x - c.x, p.y - c.y);
-        Point::new(c.x + ox * cos - oy * sin, c.y + ox * sin + oy * cos)
+    reanchor(start, f, corner, rotation)
+}
+
+/// Where the corner OPPOSITE `corner` of frame `b` lands on the canvas once the frame is
+/// turned about its center.
+fn held_corner(b: (f64, f64, f64, f64), corner: Corner, rotation: f64) -> Point {
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let c = Point::new(b.0 + b.2 / 2.0, b.1 + b.3 / 2.0);
+    let p = opposite_point(b, corner);
+    let (ox, oy) = (p.x - c.x, p.y - c.y);
+    Point::new(c.x + ox * cos - oy * sin, c.y + ox * sin + oy * cos)
+}
+
+/// Shift `new` so its held corner lands where `start`'s did on the canvas — the correction
+/// every turned resize needs, since the rotation is about a center that moved.
+fn reanchor(
+    start: (f64, f64, f64, f64),
+    new: (f64, f64, f64, f64),
+    corner: Corner,
+    rotation: f64,
+) -> (f64, f64, f64, f64) {
+    let (was, now) = (
+        held_corner(start, corner, rotation),
+        held_corner(new, corner, rotation),
+    );
+    (new.0 + was.x - now.x, new.1 + was.y - now.y, new.2, new.3)
+}
+
+/// A text node's frame and point size after its `corner` moved by (dx, dy): the size scales
+/// by the ratio of the corner's distance from the held (opposite) corner, the frame is what
+/// the text measures to at that size, placed so the held corner stays put — and, under a
+/// rotation, re-anchored like any other turned resize.
+fn scaled(
+    start: (f64, f64, f64, f64),
+    corner: Corner,
+    dx: f64,
+    dy: f64,
+    rotation: f64,
+    size0: f64,
+    text: &str,
+    font: &CanvasFont,
+) -> ((f64, f64, f64, f64), f64) {
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    // R(-θ) · (dx, dy): the pointer's travel in the shape's own frame.
+    let (lx, ly) = (dx * cos + dy * sin, -dx * sin + dy * cos);
+    let (sx, sy, sw, sh) = start;
+    let held = opposite_point(start, corner);
+    let grabbed = match corner {
+        Corner::TopLeft => (sx, sy),
+        Corner::TopRight => (sx + sw, sy),
+        Corner::BottomLeft => (sx, sy + sh),
+        Corner::BottomRight => (sx + sw, sy + sh),
     };
-    let (was, now) = (held(start), held(f));
-    (f.0 + was.x - now.x, f.1 + was.y - now.y, f.2, f.3)
+    let d0 = (grabbed.0 - held.x).hypot(grabbed.1 - held.y).max(1.0);
+    let d1 = (grabbed.0 + lx - held.x).hypot(grabbed.1 + ly - held.y);
+    let size = (size0 * d1 / d0).clamp(model::MIN_FONT_SIZE, model::MAX_FONT_SIZE);
+    let (w, h) = model::text_extent(text, size, font);
+    let (x, y) = match corner {
+        Corner::TopLeft => (held.x - w, held.y - h),
+        Corner::TopRight => (held.x, held.y - h),
+        Corner::BottomLeft => (held.x - w, held.y),
+        Corner::BottomRight => (held.x, held.y),
+    };
+    let f = (x, y, w, h);
+    if rotation.abs() <= f64::EPSILON {
+        (f, size)
+    } else {
+        (reanchor(start, f, corner, rotation), size)
+    }
+}
+
+/// [`apply_resize`] for a text node: the four frame fields plus the point size, previewed
+/// every frame and sealed once, so a drag that ends where it began records nothing.
+fn apply_scale(
+    id: u64,
+    frame: (f64, f64, f64, f64),
+    size: f64,
+    start: (f64, f64, f64, f64),
+    size0: f64,
+    commit: bool,
+) {
+    apply_resize(id, frame, start, commit);
+    let e = model::nodes().elem(id);
+    if commit {
+        seal(e.font_size(), size0, size);
+    } else {
+        e.font_size().write_preview(size);
+    }
 }
 
 /// `start` is the frame the gesture began on, and only the commit reads it: the fields that
@@ -365,8 +451,11 @@ fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool 
             nx * nx + ny * ny <= 1.0
         }
         // A group is never tested directly — `hit_top_level` walks its shape descendants —
-        // but the arm is written out so a new kind must decide its own hit shape.
-        NodeKind::Rect | NodeKind::Group => px >= x && py >= y && px <= x + w && py <= y + h,
+        // but the arm is written out so a new kind must decide its own hit shape. Text is
+        // its measured frame.
+        NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
+            px >= x && py >= y && px <= x + w && py <= y + h
+        }
     }
 }
 
@@ -474,8 +563,8 @@ fn shape_touches(id: u64, band: &[Point; 4]) -> bool {
             })
         }
         // A group is never tested directly — the walk below descends to its shapes — but the
-        // arm is written out so a new kind must decide its own hit shape.
-        NodeKind::Rect | NodeKind::Group => {
+        // arm is written out so a new kind must decide its own hit shape. Text is its frame.
+        NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
             let frame = [
                 Point::new(x, y),
                 Point::new(x + w, y),
@@ -554,7 +643,7 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
 fn rotation_of(id: u64) -> f64 {
     let e = model::nodes().elem(id);
     match e.kind().peek() {
-        NodeKind::Rect | NodeKind::Oval => e.rotation().peek(),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Text => e.rotation().peek(),
         // A group's frame is the axis-aligned union of its members and turns with none of
         // them; a line's direction IS its two endpoints, so it carries no separate angle
         // (and the inspector offers it none).
@@ -610,7 +699,7 @@ fn hit_handle(px: f64, py: f64) -> Option<(u64, Handle)> {
                     }
                 }
             }
-            NodeKind::Rect | NodeKind::Oval => {
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Text => {
                 let Some(b) = model::node_bounds(*id) else {
                     continue;
                 };
@@ -639,8 +728,9 @@ fn shape_of(node: &Node) -> Shape {
         // Signed deltas: origin to far point, whichever way it runs.
         NodeKind::Line => segment_shape((node.x, node.y), (node.x + node.w, node.y + node.h)),
         // A group draws nothing of its own — its members draw themselves — but the arm is
-        // written out so a new kind must say what it looks like.
-        NodeKind::Rect | NodeKind::Group => {
+        // written out so a new kind must say what it looks like. Text draws through
+        // `Draw::text`, never through a shape; its frame is what it would be here.
+        NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
             round_rect_shape(node.x, node.y, node.w, node.h, node.corner_radius)
         }
     }
@@ -790,7 +880,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
             let kind = e.kind().with(|k| k.copied().unwrap_or_default());
             match kind {
                 NodeKind::Group => draw_children(d, store, Some(id)),
-                NodeKind::Rect | NodeKind::Oval | NodeKind::Line => {
+                NodeKind::Rect | NodeKind::Oval | NodeKind::Line | NodeKind::Text => {
                     let node = Node {
                         id,
                         children: day::persistence::Many::default(),
@@ -808,13 +898,37 @@ fn draw_scene(d: &mut Draw, size: Size) {
                         stroke_opacity: e.stroke_opacity().read(),
                         rotation: e.rotation().read(),
                         corner_radius: e.corner_radius().read(),
+                        text: e.text().read(),
+                        font_family: e.font_family().read(),
+                        font_weight: e.font_weight().read(),
+                        font_italic: e.font_italic().read(),
+                        font_size: e.font_size().read(),
                     };
                     let paint = |d: &mut Draw| {
+                        // Type: one line from the frame's top-leading corner, in the node's
+                        // font, colored by its fill. It never strokes.
+                        if node.kind == NodeKind::Text {
+                            d.text(
+                                &node.text,
+                                Point::new(node.x, node.y),
+                                TextStyle {
+                                    size: node.font_size,
+                                    color: fill_color(&node.fill).with_alpha(node.fill_opacity),
+                                    anchor: TextAnchor::Leading,
+                                    font: model::canvas_font(
+                                        &node.font_family,
+                                        node.font_weight,
+                                        node.font_italic,
+                                    ),
+                                },
+                            );
+                            return;
+                        }
                         // A line has no interior to fill — it IS its stroke. Everything else
                         // fills, then strokes its outline.
                         let fills = match node.kind {
                             NodeKind::Rect | NodeKind::Oval | NodeKind::Group => true,
-                            NodeKind::Line => false,
+                            NodeKind::Line | NodeKind::Text => false,
                         };
                         if fills {
                             d.fill(
@@ -893,8 +1007,8 @@ fn draw_scene(d: &mut Draw, size: Size) {
                 }
                 continue;
             }
-            // A frame, with corner handles to resize by.
-            NodeKind::Rect | NodeKind::Oval => true,
+            // A frame, with corner handles to resize by — or, for text, to scale by.
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Text => true,
             // A group shows the frame it occupies and no handles: groups move, their members
             // resize.
             NodeKind::Group => false,
@@ -1094,6 +1208,14 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 let e = store.elem(id);
                 let start = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
                 match handle {
+                    // A text node's corner scales its type; a shape's resizes its frame.
+                    Handle::Corner(corner) if e.kind().peek() == NodeKind::Text => DragOp::Scale {
+                        id,
+                        corner,
+                        start,
+                        size: e.font_size().peek(),
+                        rotation: rotation_of(id),
+                    },
                     Handle::Corner(corner) => DragOp::Resize {
                         id,
                         corner,
@@ -1176,6 +1298,26 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 );
                 apply_resize(*id, f, *start, false);
             }
+            DragOp::Scale {
+                id,
+                corner,
+                start,
+                size,
+                rotation,
+            } => {
+                let (text, font) = text_of(*id);
+                let (f, s) = scaled(
+                    *start,
+                    *corner,
+                    drag.translation.x / zf,
+                    drag.translation.y / zf,
+                    *rotation,
+                    *size,
+                    &text,
+                    &font,
+                );
+                apply_scale(*id, f, s, *start, *size, false);
+            }
             DragOp::Band { anchor, base } => {
                 let rect = sweep(*anchor, base, drag.translation.x, drag.translation.y);
                 band().set(Some(rect));
@@ -1208,6 +1350,27 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                         line_dragged(start, end, drag.translation.x / zf, drag.translation.y / zf);
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
+                DragOp::Scale {
+                    id,
+                    corner,
+                    start,
+                    size,
+                    rotation,
+                } => {
+                    let (text, font) = text_of(id);
+                    let (f, s) = scaled(
+                        start,
+                        corner,
+                        drag.translation.x / zf,
+                        drag.translation.y / zf,
+                        rotation,
+                        size,
+                        &text,
+                        &font,
+                    );
+                    model::undo_stack()
+                        .grouped("resize", || apply_scale(id, f, s, start, size, true));
+                }
                 // The band goes away on release whatever it caught; the selection it made is
                 // already in place. A press that never really moved is a CLICK the tap
                 // recognizer lost to the pan recognizer — act on it, or deselection silently
@@ -1228,6 +1391,17 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
             }
         }
     }
+}
+
+/// A text node's content and font, untracked — what a scaling drag measures with.
+fn text_of(id: u64) -> (String, CanvasFont) {
+    let e = model::nodes().elem(id);
+    let text = e.text().with(|t| t.cloned().unwrap_or_default());
+    let family = e.font_family().with(|f| f.cloned().unwrap_or_default());
+    (
+        text,
+        model::canvas_font(&family, e.font_weight().peek(), e.font_italic().peek()),
+    )
 }
 
 /// Whether the canvas holds the keyboard (docs/focus.md). Bound two-way: it takes focus when
@@ -2366,5 +2540,50 @@ mod tests {
             (wx - nx).abs() < 0.001 && (wy - ny).abs() < 0.001,
             "{wx},{wy} vs {nx},{ny}"
         );
+    }
+
+    #[test]
+    fn a_corner_drag_scales_a_text_nodes_type_and_holds_the_opposite_corner() {
+        let _doc = crate::model::install_test_doc();
+        let font = CanvasFont::default();
+        let (w0, h0) = model::text_extent("Text", 24.0, &font);
+        let start = (100.0, 100.0, w0, h0);
+        // Pull the bottom-right corner out along the diagonal to twice its distance from the
+        // top-left: the type doubles and the frame with it, the top-left corner unmoved.
+        let (f, size) = scaled(start, Corner::BottomRight, w0, h0, 0.0, 24.0, "Text", &font);
+        assert!((size - 48.0).abs() < 1e-6, "{size}");
+        assert!((f.2 - 2.0 * w0).abs() < 1e-6 && (f.3 - 2.0 * h0).abs() < 1e-6);
+        assert_eq!((f.0, f.1), (100.0, 100.0));
+        // The opposite corner (top-left drag holds the bottom-right).
+        let (f, size) = scaled(start, Corner::TopLeft, -w0, -h0, 0.0, 24.0, "Text", &font);
+        assert!((size - 48.0).abs() < 1e-6);
+        assert!((f.0 + f.2 - (100.0 + w0)).abs() < 1e-6);
+        assert!((f.1 + f.3 - (100.0 + h0)).abs() < 1e-6);
+        // Pushing the corner INTO the held one shrinks the type down to the floor.
+        let (_, size) = scaled(
+            start,
+            Corner::BottomRight,
+            -w0 * 0.99,
+            -h0 * 0.99,
+            0.0,
+            24.0,
+            "Text",
+            &font,
+        );
+        assert_eq!(size, model::MIN_FONT_SIZE);
+        // Under a rotation the held corner stays where it was on the canvas.
+        let (f, _) = scaled(
+            start,
+            Corner::BottomRight,
+            w0,
+            0.0,
+            30.0,
+            24.0,
+            "Text",
+            &font,
+        );
+        let was = held_corner(start, Corner::BottomRight, 30.0);
+        let now = held_corner(f, Corner::BottomRight, 30.0);
+        assert!((was.x - now.x).abs() < 1e-6 && (was.y - now.y).abs() < 1e-6);
     }
 }

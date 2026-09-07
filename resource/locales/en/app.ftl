@@ -27,6 +27,9 @@ tool_shape = Shape
 tool_rect = Rectangle
 tool_oval = Oval
 tool_line = Line
+tool_text = Text
+# A new text node's content.
+text_default = Text
 menu_insert = Insert
 menu_cancel = Cancel
 
@@ -52,6 +55,7 @@ menu_layers = Layers
 layer_rect = Rectangle { $n }
 layer_oval = Oval { $n }
 layer_line = Line { $n }
+layer_text = Text { $n }
 layer_group = Group { $n }
 insp_tab_canvas = Canvas
 # The Selected tab names its own contents: "No Items" / "1 Item" / "N Items". Fluent's plural
@@ -78,12 +82,34 @@ insp_stroke_width = Stroke Width
 insp_stroke_opacity = Stroke Opacity
 insp_rotation = Rotation
 insp_corner = Corner Radius
+# The Text section: a text node's content, family, style and size.
+insp_text = Text
+insp_content = Content
+insp_font = Font
+insp_size = Size
+# The font menu's first entry: the platform's own face.
+font_system = System
+# The style menu, from a face's weight and slant.
+style_regular = Regular
+style_bold = Bold
+style_italic = Italic
+style_bold_italic = Bold Italic
+style_ultralight = Ultra Light
+style_thin = Thin
+style_light = Light
+style_medium = Medium
+style_semibold = Semibold
+style_heavy = Heavy
+style_black = Black
+style_weight_italic = { $weight } Italic
 insp_degrees = { $deg }°
 insp_percent = { $pct }%
 
 undo_add_rect = Add Rectangle
 undo_add_oval = Add Oval
 undo_add_line = Add Line
+undo_add_text = Add Text
+undo_edit_text = Edit Text
 undo_move = Move
 undo_resize = Resize
 undo_group = Group

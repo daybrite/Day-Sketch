@@ -279,6 +279,9 @@ fn shape_menu_entries() -> Vec<MenuEntry> {
         menu_item(res::str::tool_line().format())
             .icon(Symbol::Line)
             .action(|| canvas::place_centered(model::NodeKind::Line)),
+        menu_item(res::str::tool_text().format())
+            .icon(Symbol::Text)
+            .action(|| canvas::place_centered(model::NodeKind::Text)),
     ]
 }
 
@@ -345,6 +348,7 @@ fn choose_shape() {
             .button(res::str::tool_rect(), model::NodeKind::Rect)
             .button(res::str::tool_oval(), model::NodeKind::Oval)
             .button(res::str::tool_line(), model::NodeKind::Line)
+            .button(res::str::tool_text(), model::NodeKind::Text)
             .cancel(res::str::menu_cancel())
             .present()
             .await;

@@ -26,6 +26,11 @@ pub(crate) const DEFAULT_H: f64 = 64.0;
 /// A new line's length — longer than a rectangle is wide, since a line has only the one
 /// dimension to read.
 pub(crate) const DEFAULT_LINE: f64 = 144.0;
+/// A new text node's point size, and the range a corner drag, a typed size, or a typed
+/// width may take it to.
+pub(crate) const DEFAULT_FONT_SIZE: f64 = 24.0;
+pub(crate) const MIN_FONT_SIZE: f64 = 4.0;
+pub(crate) const MAX_FONT_SIZE: f64 = 400.0;
 const PALETTE: [&str; 6] = [
     "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
 ];
@@ -48,6 +53,11 @@ pub(crate) enum NodeKind {
     /// unions, the inspector's fields) works in.
     Line,
     Group,
+    /// One line of type. Its frame is the MEASURED extent of `text` at `font_size` in its
+    /// font, never typed or dragged directly: a corner drag scales the point size, and
+    /// [`refit_text`] re-derives `w`/`h` after every edit (and once at open, since another
+    /// platform's fonts measure differently). The fill is the text's color; it never strokes.
+    Text,
 }
 
 /// TEXT in the file (`rect`/`oval`/`group`) — readable by any SQLite tool, stable for SVG later.
@@ -60,6 +70,7 @@ impl day::persistence::ColumnValue for NodeKind {
                 NodeKind::Oval => "oval",
                 NodeKind::Line => "line",
                 NodeKind::Group => "group",
+                NodeKind::Text => "text",
             }
             .into(),
         )
@@ -70,6 +81,7 @@ impl day::persistence::ColumnValue for NodeKind {
             "oval" => Ok(NodeKind::Oval),
             "line" => Ok(NodeKind::Line),
             "group" => Ok(NodeKind::Group),
+            "text" => Ok(NodeKind::Text),
             other => Err(day::persistence::DbError::new(
                 day::persistence::DbErrorKind::Decode,
                 format!("not a node kind: {other:?}"),
@@ -115,6 +127,17 @@ pub(crate) struct Node {
     /// Corner rounding in points — SVG's `rx`/`ry` on a `<rect>`. Rectangles only: an oval has
     /// no corners, and the inspector hides the row rather than showing a dead field.
     pub corner_radius: f64,
+    /// A text node's one line — SVG's `<text>` content. Empty for every other kind.
+    pub text: String,
+    /// A text node's family, as `day::font_families` names it; empty = the platform's own
+    /// face — SVG's `font-family`.
+    pub font_family: String,
+    /// A text node's weight as the CSS number (100 … 900) — SVG's `font-weight`.
+    pub font_weight: i64,
+    /// A text node's slant — SVG's `font-style="italic"`.
+    pub font_italic: bool,
+    /// A text node's point size — SVG's `font-size`.
+    pub font_size: f64,
 }
 
 /// Document-level settings: ONE row (id 1), seeded at open. A second model in the same
@@ -165,6 +188,11 @@ impl Default for Node {
             stroke_opacity: 0.35,
             rotation: 0.0,
             corner_radius: 0.0,
+            text: String::new(),
+            font_family: String::new(),
+            font_weight: 400,
+            font_italic: false,
+            font_size: DEFAULT_FONT_SIZE,
         }
     }
 }
@@ -257,6 +285,8 @@ fn wire_undo(doc: &Doc) {
                 "add-rect" => crate::res::str::undo_add_rect().format(),
                 "add-oval" => crate::res::str::undo_add_oval().format(),
                 "add-line" => crate::res::str::undo_add_line().format(),
+                "add-text" => crate::res::str::undo_add_text().format(),
+                "edit-text" => crate::res::str::undo_edit_text().format(),
                 "move" => crate::res::str::undo_move().format(),
                 "resize" => crate::res::str::undo_resize().format(),
                 "group" => crate::res::str::undo_group().format(),
@@ -418,6 +448,9 @@ fn doc_from_driver_inner(
     let store = container.cache::<Node>();
     let meta = container.cache::<DocMeta>();
     ensure_meta(meta);
+    // Text frames are this platform's measurement of their type, so a file made elsewhere
+    // re-measures here — BEFORE the undo stack watches, so the refit is backfill, not history.
+    refit_all_text(store);
     let stack = container.undo(1000);
     // The top level of the scene, kept live. A relation hangs off a parent ROW, and the top
     // level has no such row — so the roots are a query over "no parent", maintained
@@ -676,6 +709,7 @@ pub(crate) fn layer_label(kind: NodeKind, id: u64) -> String {
         NodeKind::Oval => crate::res::str::layer_oval(n).format(),
         NodeKind::Line => crate::res::str::layer_line(n).format(),
         NodeKind::Group => crate::res::str::layer_group(n).format(),
+        NodeKind::Text => crate::res::str::layer_text(n).format(),
     }
 }
 
@@ -878,7 +912,7 @@ pub(crate) fn shape_frame(id: u64) -> (f64, f64, f64, f64) {
     let e = nodes().elem(id);
     let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
     match e.kind().peek() {
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => (x, y, w, h),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text => (x, y, w, h),
         NodeKind::Line => (x.min(x + w), y.min(y + h), w.abs(), h.abs()),
     }
 }
@@ -888,6 +922,109 @@ pub(crate) fn line_ends(id: u64) -> ((f64, f64), (f64, f64)) {
     let e = nodes().elem(id);
     let (x, y) = (e.x().peek(), e.y().peek());
     ((x, y), (x + e.w().peek(), y + e.h().peek()))
+}
+
+// ---------------------------------------------------------------------------
+// Text nodes: the font a node draws in, and the frame that font measures to (docs/fonts.md)
+// ---------------------------------------------------------------------------
+
+/// The stored CSS weight as the framework's rung (nearest hundred).
+pub(crate) fn weight_of(css: i64) -> FontWeight {
+    FontWeight::from_css(css.clamp(100, 900) as u16)
+}
+
+/// A rung as the CSS number the file stores.
+pub(crate) fn weight_value(w: FontWeight) -> i64 {
+    i64::from(w.css())
+}
+
+/// A node's font fields as the canvas font its text draws in.
+pub(crate) fn canvas_font(family: &str, weight: i64, italic: bool) -> CanvasFont {
+    CanvasFont {
+        family: (!family.is_empty()).then(|| family.to_string()),
+        weight: Some(weight_of(weight)),
+        italic,
+    }
+}
+
+/// The frame one line of text occupies at `size` in `font` — the measured line box, each side
+/// floored at [`MIN_SIZE`] so an empty string still has something to grab.
+pub(crate) fn text_extent(text: &str, size: f64, font: &CanvasFont) -> (f64, f64) {
+    let m = day::measure_text(text, size, font);
+    (m.width.max(MIN_SIZE), m.height.max(MIN_SIZE))
+}
+
+/// A node's text fields, read UNTRACKED.
+fn text_fields(id: u64) -> (String, f64, CanvasFont) {
+    text_fields_in(nodes(), id)
+}
+
+/// [`text_fields`] against an explicit store — the open-time pass runs before the document
+/// is installed, when `nodes()` would re-enter the slot being filled.
+fn text_fields_in(store: Store<Keyed<Node>>, id: u64) -> (String, f64, CanvasFont) {
+    let e = store.elem(id);
+    let text = e.text().with(|t| t.cloned().unwrap_or_default());
+    let family = e.font_family().with(|f| f.cloned().unwrap_or_default());
+    let font = canvas_font(&family, e.font_weight().peek(), e.font_italic().peek());
+    (text, e.font_size().peek(), font)
+}
+
+/// The starting extent of a freshly placed kind: a shape's fixed default, a line's length, a
+/// text node's measured default line.
+pub(crate) fn default_extent(kind: NodeKind) -> (f64, f64) {
+    match kind {
+        NodeKind::Line => (DEFAULT_LINE, 0.0),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => (DEFAULT_W, DEFAULT_H),
+        NodeKind::Text => text_extent(
+            &crate::res::str::text_default().format(),
+            DEFAULT_FONT_SIZE,
+            &CanvasFont::default(),
+        ),
+    }
+}
+
+/// Re-derive a text node's frame from its text, size and font — after any of them changed.
+/// `commit` = a sealed write (one field of the enclosing undo unit); else a preview, the way a
+/// drag flows. A non-text node is left alone.
+pub(crate) fn refit_text(id: u64, commit: bool) {
+    let store = nodes();
+    let e = store.elem(id);
+    if e.kind().peek() != NodeKind::Text {
+        return;
+    }
+    let (text, size, font) = text_fields(id);
+    let (w, h) = text_extent(&text, size, &font);
+    if commit {
+        if (e.w().peek() - w).abs() > f64::EPSILON {
+            e.w().write_commit(w);
+        }
+        if (e.h().peek() - h).abs() > f64::EPSILON {
+            e.h().write_commit(h);
+        }
+    } else {
+        e.w().write_preview(w);
+        e.h().write_preview(h);
+    }
+}
+
+/// Every text node's frame re-measured — the open-time pass, before the undo stack watches.
+fn refit_all_text(store: Store<Keyed<Node>>) {
+    let ids: Vec<u64> = store.with_untracked(|k| {
+        k.items()
+            .iter()
+            .filter(|n| n.kind == NodeKind::Text)
+            .map(|n| n.id)
+            .collect()
+    });
+    for id in ids {
+        let (text, size, font) = text_fields_in(store, id);
+        let (w, h) = text_extent(&text, size, &font);
+        let e = store.elem(id);
+        if (e.w().peek() - w).abs() > f64::EPSILON || (e.h().peek() - h).abs() > f64::EPSILON {
+            e.w().write(w);
+            e.h().write(h);
+        }
+    }
 }
 
 /// `(x, y)` turned `degrees` about `(cx, cy)`.
@@ -951,7 +1088,7 @@ pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
                 write(m.w(), bx - ax);
                 write(m.h(), by - ay);
             }
-            NodeKind::Rect | NodeKind::Oval | NodeKind::Group => {
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text => {
                 let (x, y, w, h) = (m.x().peek(), m.y().peek(), m.w().peek(), m.h().peek());
                 let (mx, my) = turn_about(x + w / 2.0, y + h / 2.0, cx, cy, delta);
                 write(m.x(), mx - w / 2.0);
@@ -999,7 +1136,7 @@ fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64, f64) {
     let (x, y, w, h) = shape_frame(id);
     let e = store.elem(id);
     let r = match e.kind().peek() {
-        NodeKind::Rect | NodeKind::Oval => e.rotation().peek().rem_euclid(360.0),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Text => e.rotation().peek().rem_euclid(360.0),
         // A line's direction IS its endpoints; a group never reaches here
         // (`shape_descendants` yields shapes).
         NodeKind::Line | NodeKind::Group => 0.0,
@@ -1051,6 +1188,12 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             defaults.stroke_opacity,
         ),
         NodeKind::Line => ("add-line", DEFAULT_LINE, 0.0, 2.0, 1.0),
+        // Type is its fill; a text node never strokes, and its frame is what its default line
+        // measures to on this platform.
+        NodeKind::Text => {
+            let (w, h) = default_extent(NodeKind::Text);
+            ("add-text", w, h, 0.0, 0.0)
+        }
         // A group is made by grouping a selection, never placed — but the arm is written out
         // rather than defaulted, so a new kind cannot slip through this table unnoticed.
         NodeKind::Group => (
@@ -1074,6 +1217,11 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             fill,
             stroke_width,
             stroke_opacity,
+            text: if kind == NodeKind::Text {
+                crate::res::str::text_default().format()
+            } else {
+                String::new()
+            },
             ..Node::default()
         });
     });
@@ -1203,6 +1351,41 @@ pub(crate) fn selection_to_svg() -> Option<String> {
     fn write_node(out: &mut String, store: Store<Keyed<Node>>, id: u64) {
         let e = store.elem(id);
         match e.kind().peek() {
+            NodeKind::Text => {
+                // SVG's own text: `y` is the BASELINE, so the frame's top plus the measured
+                // ascent; the family only when one is set (the default face has no name).
+                let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+                let (text, size, font) = text_fields(id);
+                let ascent = day::measure_text(&text, size, &font).ascent;
+                let family = e.font_family().with(|f| f.cloned().unwrap_or_default());
+                let family_attr = if family.is_empty() {
+                    String::new()
+                } else {
+                    format!(" font-family=\"{}\"", xml_escape(&family))
+                };
+                let italic_attr = if e.font_italic().peek() {
+                    " font-style=\"italic\""
+                } else {
+                    ""
+                };
+                let _ = std::fmt::Write::write_fmt(
+                    out,
+                    format_args!(
+                        "<text x=\"{}\" y=\"{}\" font-size=\"{}\" font-weight=\"{}\"{}{} \
+                         fill=\"{}\" fill-opacity=\"{}\"{}>{}</text>",
+                        x,
+                        y + ascent,
+                        size,
+                        e.font_weight().peek(),
+                        italic_attr,
+                        family_attr,
+                        e.fill().with(|f| f.cloned().unwrap_or_default()),
+                        e.fill_opacity().peek(),
+                        rotate_attr(e.rotation().peek(), x, y, w, h),
+                        xml_escape(&text),
+                    ),
+                );
+            }
             NodeKind::Group => {
                 out.push_str("<g>");
                 for child in children_of(Some(id)) {
@@ -1289,6 +1472,76 @@ pub(crate) fn selection_to_svg() -> Option<String> {
     ))
 }
 
+/// The five XML character references, so a `<`, `&` or quote in a text node's content or
+/// family name survives the clipboard.
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// The five named references plus the numeric forms (`&#NN;`, `&#xHH;`) back to characters;
+/// anything else is kept verbatim.
+fn xml_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(end) = rest.find(';') else {
+            out.push_str(rest);
+            return out;
+        };
+        let entity = &rest[1..end];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix('#')
+                .and_then(|n| match n.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                    None => n.parse::<u32>().ok(),
+                })
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A `<text>` element's own attributes — everything a text node has beyond its frame.
+#[derive(Debug, PartialEq)]
+struct SvgText {
+    content: String,
+    /// Empty = the default face (a generic CSS family name pastes as the default, too).
+    family: String,
+    weight: Option<i64>,
+    italic: Option<bool>,
+    size: Option<f64>,
+}
+
 /// A shape or group parsed out of pasted SVG. Style attributes are optional — a foreign
 /// fragment without them pastes with the document defaults.
 #[derive(Debug, PartialEq)]
@@ -1296,6 +1549,7 @@ enum SvgNode {
     Shape {
         kind: NodeKind,
         x: f64,
+        /// For a text node, the BASELINE (SVG's `y`); the frame's top is derived at insert.
         y: f64,
         w: f64,
         h: f64,
@@ -1306,6 +1560,7 @@ enum SvgNode {
         stroke_opacity: Option<f64>,
         rotation: Option<f64>,
         corner_radius: Option<f64>,
+        text: Option<SvgText>,
     },
     Group(Vec<SvgNode>),
 }
@@ -1457,6 +1712,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     // SVG allows rx and ry to differ; this editor has one radius, so the
                     // horizontal one wins and a foreign ellipse-cornered rect pastes close.
                     corner_radius: num(&a, "rx").or_else(|| num(&a, "ry")).map(|v| v.max(0.0)),
+                    text: None,
                 })
             }
             "line" => {
@@ -1477,6 +1733,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     stroke_opacity,
                     rotation: None,
                     corner_radius: None,
+                    text: None,
                 })
             }
             "ellipse" => {
@@ -1496,6 +1753,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     stroke_opacity,
                     rotation: rotation_of(&a),
                     corner_radius: None,
+                    text: None,
                 })
             }
             "circle" => {
@@ -1515,6 +1773,83 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     stroke_opacity,
                     rotation: rotation_of(&a),
                     corner_radius: None,
+                    text: None,
+                })
+            }
+            // Text is the one element whose CONTENT matters: the scan otherwise reads only
+            // tags, so this arm takes everything up to `</text>`, strips any inner tags
+            // (`<tspan>`), unescapes, and collapses runs of whitespace to a space.
+            "text" if !self_closing => {
+                let lower = rest.to_ascii_lowercase();
+                let end = lower.find("</text>").unwrap_or(rest.len());
+                let raw = &rest[..end];
+                rest = &rest[(end + "</text>".len()).min(rest.len())..];
+                let mut plain = String::new();
+                let mut in_tag = false;
+                for c in raw.chars() {
+                    match c {
+                        '<' => in_tag = true,
+                        '>' => in_tag = false,
+                        c if !in_tag => plain.push(c),
+                        _ => {}
+                    }
+                }
+                let content = xml_unescape(&plain)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let weight = a
+                    .iter()
+                    .find(|(n, _)| n == "font-weight")
+                    .and_then(|(_, v)| match v.trim().to_ascii_lowercase().as_str() {
+                        "normal" => Some(400),
+                        "bold" | "bolder" => Some(700),
+                        "lighter" => Some(300),
+                        n => n.parse::<i64>().ok(),
+                    })
+                    .map(|w| w.clamp(100, 900));
+                let italic = a.iter().find(|(n, _)| n == "font-style").map(|(_, v)| {
+                    matches!(v.trim().to_ascii_lowercase().as_str(), "italic" | "oblique")
+                });
+                let family = a
+                    .iter()
+                    .find(|(n, _)| n == "font-family")
+                    .and_then(|(_, v)| v.split(',').next())
+                    .map(|f| xml_unescape(f.trim().trim_matches(['"', '\'']).trim()))
+                    .filter(|f| {
+                        !matches!(
+                            f.to_ascii_lowercase().as_str(),
+                            "" | "sans-serif"
+                                | "serif"
+                                | "monospace"
+                                | "system-ui"
+                                | "cursive"
+                                | "fantasy"
+                                | "inherit"
+                        )
+                    })
+                    .unwrap_or_default();
+                let (fill_opacity, _, _, _) = style_of(&a);
+                Some(SvgNode::Shape {
+                    kind: NodeKind::Text,
+                    x: num(&a, "x").unwrap_or(0.0),
+                    y: num(&a, "y").unwrap_or(0.0),
+                    w: 0.0,
+                    h: 0.0,
+                    fill: color_attr(&a, "fill"),
+                    fill_opacity,
+                    stroke: None,
+                    stroke_width: Some(0.0),
+                    stroke_opacity: Some(0.0),
+                    rotation: rotation_of(&a),
+                    corner_radius: None,
+                    text: Some(SvgText {
+                        content,
+                        family,
+                        weight,
+                        italic,
+                        size: num(&a, "font-size").map(|v| v.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)),
+                    }),
                 })
             }
             _ => None, // unknown element: skipped, children (if any) still scan
@@ -1530,6 +1865,12 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     h,
                     ..
                 } => *w != 0.0 || *h != 0.0,
+                // A text node's frame is measured at insert; what it needs is words.
+                SvgNode::Shape {
+                    kind: NodeKind::Text,
+                    text,
+                    ..
+                } => text.as_ref().is_some_and(|t| !t.content.is_empty()),
                 SvgNode::Shape { w, h, .. } => *w > 0.0 && *h > 0.0,
                 SvgNode::Group(_) => true,
             };
@@ -1622,8 +1963,31 @@ fn paste_text(text: &str, label: &'static str) {
                 stroke_opacity,
                 rotation,
                 corner_radius,
+                text,
             } => {
                 let defaults = Node::default();
+                // A text node's frame is what its type measures to HERE, and SVG's `y` is
+                // the baseline, so the frame's top sits one ascent above it.
+                let font_size = text
+                    .as_ref()
+                    .and_then(|t| t.size)
+                    .unwrap_or(defaults.font_size);
+                let font_weight = text
+                    .as_ref()
+                    .and_then(|t| t.weight)
+                    .unwrap_or(defaults.font_weight);
+                let font_italic = text
+                    .as_ref()
+                    .and_then(|t| t.italic)
+                    .unwrap_or(defaults.font_italic);
+                let font_family = text.as_ref().map(|t| t.family.clone()).unwrap_or_default();
+                let content = text.as_ref().map(|t| t.content.clone()).unwrap_or_default();
+                let fit = (*kind == NodeKind::Text).then(|| {
+                    let font = canvas_font(&font_family, font_weight, font_italic);
+                    let m = day::measure_text(&content, font_size, &font);
+                    let (w, h) = text_extent(&content, font_size, &font);
+                    (w, h, m.ascent)
+                });
                 let node = Node {
                     id,
                     parent,
@@ -1631,20 +1995,18 @@ fn paste_text(text: &str, label: &'static str) {
                     z,
                     kind: *kind,
                     x: x + offset,
-                    y: y + offset,
+                    y: y + offset - fit.map(|f| f.2).unwrap_or(0.0),
                     // A line's deltas are signed and may be zero on one axis; every other
                     // shape gets the size floor.
-                    w: match kind {
-                        NodeKind::Line => *w,
-                        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => {
-                            w.max(crate::model::MIN_SIZE)
-                        }
+                    w: match (kind, fit) {
+                        (NodeKind::Line, _) => *w,
+                        (NodeKind::Text, Some((w, _, _))) => w,
+                        _ => w.max(crate::model::MIN_SIZE),
                     },
-                    h: match kind {
-                        NodeKind::Line => *h,
-                        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => {
-                            h.max(crate::model::MIN_SIZE)
-                        }
+                    h: match (kind, fit) {
+                        (NodeKind::Line, _) => *h,
+                        (NodeKind::Text, Some((_, h, _))) => h,
+                        _ => h.max(crate::model::MIN_SIZE),
                     },
                     fill: fill.clone().unwrap_or_else(|| fallback_fill(id)),
                     fill_opacity: fill_opacity.unwrap_or(defaults.fill_opacity),
@@ -1653,6 +2015,11 @@ fn paste_text(text: &str, label: &'static str) {
                     stroke_opacity: stroke_opacity.unwrap_or(defaults.stroke_opacity),
                     rotation: rotation.unwrap_or(defaults.rotation),
                     corner_radius: corner_radius.unwrap_or(defaults.corner_radius),
+                    text: content,
+                    font_family,
+                    font_weight,
+                    font_italic,
+                    font_size,
                 };
                 store.restructure("paste", Op::Insert, id, move |v| v.push(node.clone()));
             }
@@ -1763,6 +2130,12 @@ pub(crate) fn arrange_named(op: Arrange) {
 /// installed as current — the fixture the model and inspector tests share.
 #[cfg(test)]
 pub(crate) fn install_test_doc() -> Rc<Doc> {
+    // No window opens in a test, so the Scene every accessor reaches through `scene()` is
+    // provided on the root scope — once per thread — the way a window's own scope provides
+    // it in the app.
+    if crate::Scene::try_ambient().is_none() {
+        day::reactive::Scope::root().provide(crate::Scene::create());
+    }
     let container = day::persistence::ModelContainer::open(
         day::persistence::Sqlite::memory(),
         day::persistence::schema![Node, DocMeta],
@@ -2818,5 +3191,165 @@ mod tests {
         assert!(doc.stack.undo());
         assert_eq!(store.elem(a).x().peek(), 0.0);
         assert_eq!(store.elem(b).x().peek(), 100.0);
+    }
+
+    #[test]
+    fn a_text_node_starts_with_its_defaults_and_a_measured_frame() {
+        let _doc = install_test_doc();
+        let d = Node::default();
+        // These are the values lightweight migration backfills into a pre-Text file.
+        assert_eq!(d.text, "");
+        assert_eq!(d.font_family, "");
+        assert_eq!(d.font_weight, 400);
+        assert!(!d.font_italic);
+        assert_eq!(d.font_size, DEFAULT_FONT_SIZE);
+
+        let id = place_shape(NodeKind::Text, 10.0, 20.0);
+        day::reactive::flush_sync();
+        let store = nodes();
+        let e = store.elem(id);
+        assert_eq!(e.text().peek(), crate::res::str::text_default().format());
+        assert_eq!(e.stroke_width().peek(), 0.0, "type never strokes");
+        let (w0, h0) = (e.w().peek(), e.h().peek());
+        let (ew, eh) = text_extent(
+            &crate::res::str::text_default().format(),
+            DEFAULT_FONT_SIZE,
+            &CanvasFont::default(),
+        );
+        assert_eq!((w0, h0), (ew, eh), "the frame is the measured extent");
+        assert_eq!(shape_frame(id), (10.0, 20.0, w0, h0));
+
+        // Twice the size measures to twice the frame; a refit follows the font.
+        e.font_size().write_commit(DEFAULT_FONT_SIZE * 2.0);
+        refit_text(id, true);
+        assert!((e.w().peek() - 2.0 * w0).abs() < 1e-6);
+        assert!((e.h().peek() - 2.0 * h0).abs() < 1e-6);
+
+        // An empty string keeps a grabbable frame: the width floors, the line height stays.
+        e.text().write_commit(String::new());
+        refit_text(id, true);
+        assert_eq!(e.w().peek(), MIN_SIZE);
+        assert!((e.h().peek() - 2.0 * h0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_text_node_round_trips_as_svg_with_escaping() {
+        let _doc = install_test_doc();
+        let id = place_shape(NodeKind::Text, 30.0, 40.0);
+        day::reactive::flush_sync();
+        let store = nodes();
+        let e = store.elem(id);
+        e.text().write_commit("a < b & \"c\"".to_string());
+        e.font_family().write_commit("Foo \"Bar\"".to_string());
+        e.font_weight().write_commit(700);
+        e.font_italic().write_commit(true);
+        e.font_size().write_commit(36.0);
+        e.rotation().write_commit(15.0);
+        refit_text(id, true);
+        selection().set(vec![id]);
+        let svg = selection_to_svg().expect("a selection");
+        assert!(svg.contains("<text "), "{svg}");
+        assert!(
+            svg.contains(">a &lt; b &amp; &quot;c&quot;</text>"),
+            "{svg}"
+        );
+        assert!(svg.contains("font-family=\"Foo &quot;Bar&quot;\""), "{svg}");
+        assert!(svg.contains("font-weight=\"700\""), "{svg}");
+        assert!(svg.contains("font-style=\"italic\""), "{svg}");
+        assert!(svg.contains("font-size=\"36\""), "{svg}");
+        assert!(svg.contains("rotate(15 "), "{svg}");
+
+        // Pasting it back lands the same node, one paste step away, with the same frame:
+        // both sides measure with this platform's metrics.
+        let before = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+        paste_clipboard(&svg);
+        day::reactive::flush_sync();
+        let pasted = selection().get_untracked();
+        assert_eq!(pasted.len(), 1);
+        let p = store.elem(pasted[0]);
+        assert_eq!(p.kind().peek(), NodeKind::Text);
+        assert_eq!(p.text().peek(), "a < b & \"c\"");
+        assert_eq!(p.font_family().peek(), "Foo \"Bar\"");
+        assert_eq!(p.font_weight().peek(), 700);
+        assert!(p.font_italic().peek());
+        assert_eq!(p.font_size().peek(), 36.0);
+        assert_eq!(p.rotation().peek(), 15.0);
+        let after = (p.x().peek(), p.y().peek(), p.w().peek(), p.h().peek());
+        assert!(
+            (after.0 - before.0 - 16.0).abs() < 1e-6,
+            "{after:?} vs {before:?}"
+        );
+        assert!(
+            (after.1 - before.1 - 16.0).abs() < 1e-6,
+            "{after:?} vs {before:?}"
+        );
+        assert!((after.2 - before.2).abs() < 1e-6 && (after.3 - before.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn foreign_svg_text_pastes_with_its_words_and_style() {
+        let _doc = install_test_doc();
+        paste_clipboard(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"10\" y=\"40\" \
+             font-weight=\"bold\" font-style=\"oblique\" font-family=\"Georgia, serif\" \
+             fill=\"#123456\">Hi <tspan>there</tspan>\n  world</text>\
+             <text x=\"0\" y=\"0\"></text></svg>",
+        );
+        day::reactive::flush_sync();
+        let pasted = selection().get_untracked();
+        assert_eq!(pasted.len(), 1, "the empty <text> is not worth pasting");
+        let p = nodes().elem(pasted[0]);
+        assert_eq!(p.text().peek(), "Hi there world");
+        assert_eq!(p.font_weight().peek(), 700);
+        assert!(p.font_italic().peek());
+        assert_eq!(p.font_family().peek(), "Georgia");
+        assert_eq!(p.fill().peek(), "#123456");
+        assert_eq!(
+            p.font_size().peek(),
+            DEFAULT_FONT_SIZE,
+            "no size attribute: the default"
+        );
+        // SVG's y is the baseline; the frame's top sits one ascent above it (plus the paste
+        // step).
+        let font = canvas_font("Georgia", 700, true);
+        let ascent = day::measure_text("Hi there world", DEFAULT_FONT_SIZE, &font).ascent;
+        assert!((p.y().peek() - (40.0 - ascent + 16.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_file_holding_text_reopens_and_refits_before_the_undo_stack_watches() {
+        let _doc = install_test_doc();
+        // A container whose text row carries a stale frame, the way a file made on another
+        // platform (or by hand) does.
+        let container = day::persistence::ModelContainer::open(
+            day::persistence::Sqlite::memory(),
+            day::persistence::schema![Node, DocMeta],
+        )
+        .expect("open");
+        container.set_cache_limit(usize::MAX);
+        let store = container.cache::<Node>();
+        store.restructure("add-text", Op::Insert, 1, |v| {
+            v.push(Node {
+                id: 1,
+                kind: NodeKind::Text,
+                x: 5.0,
+                y: 5.0,
+                w: 1.0,
+                h: 1.0,
+                text: "Stale".into(),
+                ..Node::default()
+            })
+        });
+        refit_all_text(store);
+        let (w, h) = text_extent("Stale", DEFAULT_FONT_SIZE, &CanvasFont::default());
+        let e = store.elem(1);
+        assert_eq!((e.w().peek(), e.h().peek()), (w, h));
+    }
+
+    #[test]
+    fn xml_escaping_round_trips_and_tolerates_a_bare_ampersand() {
+        let s = "a < b & \"c\" 'd' >";
+        assert_eq!(xml_unescape(&xml_escape(s)), s);
+        assert_eq!(xml_unescape("&#65;&#x42;&bogus;& c"), "AB&bogus;& c");
     }
 }

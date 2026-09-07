@@ -45,6 +45,7 @@ fn kind_glyph(kind: NodeKind) -> &'static str {
         NodeKind::Oval => "○",
         NodeKind::Line => "∕",
         NodeKind::Group => "⊞",
+        NodeKind::Text => "T",
     }
 }
 
@@ -194,6 +195,17 @@ fn set_extent(id: u64, v: f64, horizontal: bool) {
         NodeKind::Group => {}
         NodeKind::Line => field.write_commit(v.max(0.0).copysign(field.peek())),
         NodeKind::Rect | NodeKind::Oval => field.write_commit(v.max(model::MIN_SIZE)),
+        // A text node's frame is measured, so "make it 150 wide" means "scale the type until
+        // it is": the point size takes the ratio, and the frame follows the type.
+        NodeKind::Text => {
+            let current = field.peek();
+            if current > 0.0 {
+                let size = (e.font_size().peek() * v.max(model::MIN_SIZE) / current)
+                    .clamp(model::MIN_FONT_SIZE, model::MAX_FONT_SIZE);
+                e.font_size().write_commit(size);
+                model::refit_text(id, true);
+            }
+        }
     }
 }
 
@@ -644,7 +656,25 @@ fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
 fn selection_is_rects() -> bool {
     every_target(|k| match k {
         NodeKind::Rect => true,
-        NodeKind::Oval | NodeKind::Line | NodeKind::Group => false,
+        NodeKind::Oval | NodeKind::Line | NodeKind::Group | NodeKind::Text => false,
+    })
+}
+
+/// Every target is a text node — the condition for the Text section (content, font, style,
+/// size). A mixed selection shows none of it rather than a field that edits only some.
+fn selection_is_text() -> bool {
+    every_target(|k| match k {
+        NodeKind::Text => true,
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Line | NodeKind::Group => false,
+    })
+}
+
+/// A stroke outlines a shape or IS a line; type has neither, so a text node's inspector has
+/// no stroke rows at all.
+fn selection_has_stroke() -> bool {
+    every_target(|k| match k {
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Line => true,
+        NodeKind::Group | NodeKind::Text => false,
     })
 }
 
@@ -660,10 +690,11 @@ fn every_target(applies: impl Fn(NodeKind) -> bool) -> bool {
             .all(|t| applies(model::nodes().elem(*t).kind().read()))
 }
 
-/// A fill needs an interior. A line has none — it IS its stroke.
+/// A fill needs an interior. A line has none — it IS its stroke. Type is filled: its fill is
+/// the color it is set in.
 fn selection_has_fill() -> bool {
     every_target(|k| match k {
-        NodeKind::Rect | NodeKind::Oval => true,
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Text => true,
         NodeKind::Line | NodeKind::Group => false,
     })
 }
@@ -682,9 +713,333 @@ fn selection_can_rotate() -> bool {
         && sel.iter().all(|t| {
             matches!(
                 model::nodes().elem(*t).kind().read(),
-                NodeKind::Rect | NodeKind::Oval | NodeKind::Group
+                NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text
             )
         })
+}
+
+// ---------------------------------------------------------------------------
+// The Text section: a text node's content, family, style and point size. Every edit
+// re-measures the frame (`model::refit_text`) inside the same undo unit, so the outline
+// always hugs the type.
+// ---------------------------------------------------------------------------
+
+/// The text nodes among the style targets.
+fn text_targets(tracked: bool) -> Vec<u64> {
+    style_targets(tracked)
+        .into_iter()
+        .filter(|t| model::nodes().elem(*t).kind().peek() == NodeKind::Text)
+        .collect()
+}
+
+/// The content field's seam: the common text when every target agrees, else empty; a
+/// commit writes every target and refits it as ONE undo unit. Keystrokes are previews the
+/// model does not follow (the geometry fields' rule).
+#[derive(Clone, Copy)]
+struct TextContent;
+
+impl TextContent {
+    fn common(tracked: bool) -> String {
+        let targets = text_targets(tracked);
+        refresh().track();
+        let mut texts = targets.iter().map(|t| {
+            model::nodes()
+                .elem(*t)
+                .text()
+                .with(|s| s.cloned().unwrap_or_default())
+        });
+        let Some(first) = texts.next() else {
+            return String::new();
+        };
+        if texts.all(|t| t == first) {
+            first
+        } else {
+            String::new()
+        }
+    }
+}
+
+impl Binding<String> for TextContent {
+    fn read(&self) -> String {
+        Self::common(true)
+    }
+    fn peek(&self) -> String {
+        Self::common(false)
+    }
+    fn write(&self, s: String) {
+        self.write_commit(s);
+    }
+    fn write_preview(&self, _s: String) {}
+    fn write_commit(&self, s: String) {
+        let targets = text_targets(false);
+        // Nothing to say (no target, or the words every target already has): no unit.
+        if targets.is_empty() || s == Self::common(false) {
+            refresh_fields();
+            return;
+        }
+        model::undo_stack().grouped("edit-text", || {
+            for t in targets {
+                model::nodes().elem(t).text().write_commit(s.clone());
+                model::refit_text(t, true);
+            }
+        });
+        refresh_fields();
+    }
+}
+
+/// The point size, a fan-out number like the style rows — with a refit on every write, so a
+/// stepper drag previews the frame growing with the type.
+const FONT_SIZE: StyleNum = StyleNum {
+    read: |t| model::nodes().elem(t).font_size().read(),
+    preview: |t, v| {
+        model::nodes()
+            .elem(t)
+            .font_size()
+            .write_preview(v.clamp(model::MIN_FONT_SIZE, model::MAX_FONT_SIZE));
+        model::refit_text(t, false);
+    },
+    commit: |t, v| {
+        model::nodes()
+            .elem(t)
+            .font_size()
+            .write_commit(v.clamp(model::MIN_FONT_SIZE, model::MAX_FONT_SIZE));
+        model::refit_text(t, true);
+    },
+    targets: text_targets,
+};
+
+/// The platform's families, by name — the font menu's options after "System".
+fn family_names() -> Vec<String> {
+    day::font_families()
+        .iter()
+        .map(|f| f.family.clone())
+        .collect()
+}
+
+/// The font menu's options: the default face first, then every family the platform lists.
+fn family_labels() -> Vec<String> {
+    let mut labels = vec![crate::res::str::font_system().format()];
+    labels.extend(family_names());
+    labels
+}
+
+/// The first text target's family, tracked or not (empty = the default face).
+fn current_family(tracked: bool) -> String {
+    text_targets(tracked)
+        .first()
+        .map(|t| {
+            model::nodes()
+                .elem(*t)
+                .font_family()
+                .with(|f| f.cloned().unwrap_or_default())
+        })
+        .unwrap_or_default()
+}
+
+/// The font menu's seam: index 0 is the default face, the rest the platform's families.
+#[derive(Clone, Copy)]
+struct FamilyChoice;
+
+impl FamilyChoice {
+    fn index(tracked: bool) -> usize {
+        let family = current_family(tracked);
+        if family.is_empty() {
+            return 0;
+        }
+        family_names()
+            .iter()
+            .position(|f| f.eq_ignore_ascii_case(&family))
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    }
+}
+
+impl Binding<usize> for FamilyChoice {
+    fn read(&self) -> usize {
+        Self::index(true)
+    }
+    fn peek(&self) -> usize {
+        Self::index(false)
+    }
+    fn write(&self, i: usize) {
+        let targets = text_targets(false);
+        // A re-selection of the current entry (a native control echoing the mark Day just
+        // moved) is not an edit, so it records no unit.
+        if targets.is_empty() || i == Self::index(false) {
+            return;
+        }
+        let family = if i == 0 {
+            String::new()
+        } else {
+            family_names().get(i - 1).cloned().unwrap_or_default()
+        };
+        model::undo_stack().grouped("style", || {
+            for t in targets {
+                model::nodes()
+                    .elem(t)
+                    .font_family()
+                    .write_commit(family.clone());
+                model::refit_text(t, true);
+            }
+        });
+    }
+}
+
+/// The faces a family offers, as (weight, italic) pairs sorted light→heavy, upright before
+/// slanted. A family the platform did not describe — the default face, or one it lists
+/// without faces — offers the four synthesized styles every platform can draw, so the style
+/// menu always has Regular / Bold / Italic / Bold Italic in that order for the System face.
+fn styles_for(family: &str) -> Vec<(FontWeight, bool)> {
+    let listed = (!family.is_empty())
+        .then(|| {
+            day::font_families()
+                .iter()
+                .find(|f| f.family.eq_ignore_ascii_case(family))
+                .map(|f| {
+                    let mut faces: Vec<(FontWeight, bool)> = f
+                        .faces
+                        .iter()
+                        .map(|face| (face.weight, face.italic))
+                        .collect();
+                    faces.sort_by_key(|(w, i)| (*i, *w));
+                    faces.dedup();
+                    faces
+                })
+        })
+        .flatten()
+        .unwrap_or_default();
+    if listed.len() > 1 {
+        listed
+    } else {
+        vec![
+            (FontWeight::Regular, false),
+            (FontWeight::Bold, false),
+            (FontWeight::Regular, true),
+            (FontWeight::Bold, true),
+        ]
+    }
+}
+
+/// A style's menu label from its weight and slant — localized, never the platform's own face
+/// name, so a walkthrough can assert it by key on every target.
+fn style_label(weight: FontWeight, italic: bool) -> String {
+    use crate::res::str as s;
+    match (weight, italic) {
+        (FontWeight::Regular, false) => s::style_regular().format(),
+        (FontWeight::Bold, false) => s::style_bold().format(),
+        (FontWeight::Regular, true) => s::style_italic().format(),
+        (FontWeight::Bold, true) => s::style_bold_italic().format(),
+        (w, italic) => {
+            let name = match w {
+                FontWeight::UltraLight => s::style_ultralight().format(),
+                FontWeight::Thin => s::style_thin().format(),
+                FontWeight::Light => s::style_light().format(),
+                FontWeight::Medium => s::style_medium().format(),
+                FontWeight::Semibold => s::style_semibold().format(),
+                FontWeight::Heavy => s::style_heavy().format(),
+                FontWeight::Black => s::style_black().format(),
+                FontWeight::Regular | FontWeight::Bold => s::style_regular().format(),
+            };
+            if italic {
+                s::style_weight_italic(name).format()
+            } else {
+                name
+            }
+        }
+    }
+}
+
+/// The style menu's options for the first target's family — reactive, so choosing another
+/// family re-lists them.
+fn style_labels() -> Vec<String> {
+    styles_for(&current_family(true))
+        .into_iter()
+        .map(|(w, i)| style_label(w, i))
+        .collect()
+}
+
+/// The style menu's seam over [`styles_for`].
+#[derive(Clone, Copy)]
+struct StyleChoice;
+
+impl StyleChoice {
+    fn index(tracked: bool) -> usize {
+        let targets = text_targets(tracked);
+        let Some(first) = targets.first() else {
+            return 0;
+        };
+        let e = model::nodes().elem(*first);
+        let want = (
+            model::weight_of(e.font_weight().peek()),
+            e.font_italic().peek(),
+        );
+        styles_for(&current_family(tracked))
+            .iter()
+            .position(|s| *s == want)
+            .unwrap_or(0)
+    }
+}
+
+impl Binding<usize> for StyleChoice {
+    fn read(&self) -> usize {
+        Self::index(true)
+    }
+    fn peek(&self) -> usize {
+        Self::index(false)
+    }
+    fn write(&self, i: usize) {
+        let targets = text_targets(false);
+        if targets.is_empty() || i == Self::index(false) {
+            return;
+        }
+        let Some((weight, italic)) = styles_for(&current_family(false)).get(i).copied() else {
+            return;
+        };
+        model::undo_stack().grouped("style", || {
+            for t in targets {
+                let e = model::nodes().elem(t);
+                e.font_weight().write_commit(model::weight_value(weight));
+                e.font_italic().write_commit(italic);
+                model::refit_text(t, true);
+            }
+        });
+    }
+}
+
+/// The Text section, mounted only while every target is a text node (`when` disposes it
+/// otherwise, so its fields are never dead dayscript targets on a shape).
+fn text_section() -> AnyPiece {
+    when(selection_is_text, || {
+        section((
+            labeled(
+                crate::res::str::insp_content(),
+                text_field(TextContent).id("insp-text"),
+            ),
+            labeled(
+                crate::res::str::insp_font(),
+                picker(family_labels(), FamilyChoice)
+                    .options_reactive(family_labels)
+                    .id("insp-font"),
+            ),
+            labeled(
+                crate::res::str::insp_style(),
+                picker(style_labels(), StyleChoice)
+                    .options_reactive(style_labels)
+                    .id("insp-style"),
+            ),
+            labeled(
+                crate::res::str::insp_size(),
+                day_piece_stepper::stepper(FONT_SIZE)
+                    .range(model::MIN_FONT_SIZE..=model::MAX_FONT_SIZE)
+                    .step(1.0)
+                    .decimals(0)
+                    .key("insp-size")
+                    .grow(),
+            ),
+        ))
+        .title(crate::res::str::insp_text())
+    })
+    .any()
 }
 
 fn style_section() -> impl Piece {
@@ -703,24 +1058,31 @@ fn style_section() -> impl Piece {
                 opacity_row(FILL_OPACITY, "insp-fill-op"),
             )
         }),
-        labeled(
-            crate::res::str::insp_stroke(),
-            day_piece_colorpicker::color_picker(STROKE_COLOR).key("insp-stroke"),
-        ),
-        labeled(
-            crate::res::str::insp_stroke_width(),
-            day_piece_stepper::stepper(STROKE_WIDTH)
-                .range(0.0..=64.0)
-                .step(1.0)
-                .decimals(0)
-                .key("insp-stroke-w")
-                // Same right edge as the opacity rows below it.
-                .grow(),
-        ),
-        labeled(
-            crate::res::str::insp_stroke_opacity(),
-            opacity_row(STROKE_OPACITY, "insp-stroke-op"),
-        ),
+        // The stroke trio mounts for what strokes: shapes and lines, never type.
+        when(selection_has_stroke, || {
+            labeled(
+                crate::res::str::insp_stroke(),
+                day_piece_colorpicker::color_picker(STROKE_COLOR).key("insp-stroke"),
+            )
+        }),
+        when(selection_has_stroke, || {
+            labeled(
+                crate::res::str::insp_stroke_width(),
+                day_piece_stepper::stepper(STROKE_WIDTH)
+                    .range(0.0..=64.0)
+                    .step(1.0)
+                    .decimals(0)
+                    .key("insp-stroke-w")
+                    // Same right edge as the opacity rows below it.
+                    .grow(),
+            )
+        }),
+        when(selection_has_stroke, || {
+            labeled(
+                crate::res::str::insp_stroke_opacity(),
+                opacity_row(STROKE_OPACITY, "insp-stroke-op"),
+            )
+        }),
     ))
     .title(crate::res::str::insp_style())
 }
@@ -788,6 +1150,7 @@ fn selected_panel() -> impl Piece {
     rows.push(corner_row());
     form((
         section(PieceVec(rows)).title(crate::res::str::insp_geometry()),
+        text_section(),
         style_section(),
     ))
 }
@@ -1142,5 +1505,91 @@ mod tests {
             Some(196.0),
             "a group's size stays derived from its shapes"
         );
+    }
+
+    #[test]
+    fn a_text_node_offers_text_rows_and_no_stroke_rows() {
+        let _doc = install_test_doc();
+        let t = model::place_shape(NodeKind::Text, 10.0, 10.0);
+        let r = model::place_shape(NodeKind::Rect, 200.0, 10.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![t]);
+        assert!(selection_is_text());
+        assert!(selection_has_fill(), "the fill is the text's color");
+        assert!(selection_can_rotate());
+        assert!(!selection_has_stroke());
+        assert!(!selection_is_rects());
+        model::selection().set(vec![r]);
+        assert!(!selection_is_text() && selection_has_stroke());
+        model::selection().set(vec![t, r]);
+        assert!(
+            !selection_is_text(),
+            "a mixed selection shows neither section"
+        );
+        assert!(!selection_has_stroke());
+    }
+
+    #[test]
+    fn typed_text_refits_the_frame_as_one_undo_unit() {
+        let doc = install_test_doc();
+        let t = model::place_shape(NodeKind::Text, 10.0, 10.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![t]);
+        let store = model::nodes();
+        let w0 = store.elem(t).w().peek();
+        TextContent.write_commit("A much longer line of type".to_string());
+        assert_eq!(TextContent.peek(), "A much longer line of type");
+        assert!(
+            store.elem(t).w().peek() > w0,
+            "the frame grew with the words"
+        );
+        // ONE undo takes back both the words and the refit: they were one unit.
+        assert!(doc.stack.undo());
+        assert_eq!(store.elem(t).w().peek(), w0);
+        assert_eq!(
+            store.elem(t).text().peek(),
+            crate::res::str::text_default().format()
+        );
+    }
+
+    #[test]
+    fn the_style_menu_lists_four_synthesized_faces_for_the_system_family() {
+        let _doc = install_test_doc();
+        let t = model::place_shape(NodeKind::Text, 10.0, 10.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![t]);
+        let styles = styles_for("");
+        assert_eq!(styles.len(), 4);
+        assert_eq!(styles[1], (FontWeight::Bold, false));
+        assert_eq!(StyleChoice.peek(), 0);
+        StyleChoice.write(1);
+        let e = model::nodes().elem(t);
+        assert_eq!(e.font_weight().peek(), 700);
+        assert!(!e.font_italic().peek());
+        assert_eq!(StyleChoice.peek(), 1);
+        StyleChoice.write(3);
+        assert!(e.font_italic().peek() && e.font_weight().peek() == 700);
+        assert_eq!(
+            FamilyChoice.peek(),
+            0,
+            "the default face is the first entry"
+        );
+    }
+
+    #[test]
+    fn a_typed_width_scales_a_text_nodes_type() {
+        let _doc = install_test_doc();
+        let t = model::place_shape(NodeKind::Text, 10.0, 10.0);
+        day::reactive::flush_sync();
+        model::selection().set(vec![t]);
+        let e = model::nodes().elem(t);
+        let w0 = e.w().peek();
+        W.write_commit(format!("{}", w0 * 2.0));
+        assert!(
+            (e.font_size().peek() - 48.0).abs() < 1e-6,
+            "{}",
+            e.font_size().peek()
+        );
+        assert!((e.w().peek() - w0 * 2.0).abs() < 1e-6);
     }
 }
