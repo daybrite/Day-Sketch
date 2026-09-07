@@ -33,7 +33,7 @@ jobs:
       # Android. The first profile stays primary: it packs, and keeps the plain
       # screenshots-<target> artifact; the second uploads screenshots-<target>-<slug>.
       ios-devices: |
-        device=iPhone,           orientation=portrait
+        device=iPhone * Pro Max, orientation=portrait,  slug=iphone
         device=iPad Pro 13-inch, orientation=landscape, slug=ipad
       android-devices: |
         device=pixel_5,      os=36, orientation=portrait
