@@ -1076,7 +1076,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
                                 TextStyle {
                                     size: node.font_size,
                                     color: fill_color(&node.fill).with_alpha(node.fill_opacity),
-                                    anchor: TextAnchor::Leading,
+                                    anchor: TextAnchor::LEADING,
                                     font: model::canvas_font(
                                         &node.font_family,
                                         node.font_weight,
