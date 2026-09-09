@@ -1142,7 +1142,7 @@ fn corner_row() -> AnyPiece {
 }
 
 /// The two tab labels. The second counts the selection, pluralized by the catalog — Fluent's
-/// plural selector, so a language with more forms than English adds them there, not here.
+/// plural nav, so a language with more forms than English adds them there, not here.
 fn tab_labels() -> Vec<String> {
     let n = model::selection().get().len() as i64;
     vec![
