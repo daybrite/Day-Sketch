@@ -33,6 +33,10 @@ host = "https://daybrite.github.io/Day-Sketch"
 # harmony, web) — defaults to the first one the app builds.
 # default-platform = "web"
 
+# Four rings around a centre. Bloom pushes each one out along the radius it
+# already sits on.
+icon-effect = "bloom"
+
 # Locale tags the site is kept in sync with — maintained by `day localize add/remove`, not by hand.
 # locales = ["en"]
 
