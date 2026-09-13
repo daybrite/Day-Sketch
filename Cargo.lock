@@ -249,9 +249,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "day-async"
+version = "0.4.3"
+
+[[package]]
 name = "day-bridge"
 version = "0.4.3"
 dependencies = [
+ "day-async",
  "day-spec",
 ]
 
@@ -495,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "day-sketch"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "day",
  "day-build",
