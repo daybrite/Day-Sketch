@@ -1,12 +1,12 @@
 //! The editor canvas: rendering, hit testing, and the drag machine behind moving, resizing and
 //! rubber-band selection.
 //!
-//! The draw closure walks the scene bottom→top; every field it touches is a TRACKED read, so a
-//! moved shape repaints with no wiring at all. Interaction comes in through the canvas's own
-//! gesture decorators — `on_tap_at` for selection and tool placement, `on_drag` for move,
-//! resize and the band — and every live gesture that EDITS writes the model through PREVIEWS:
+//! The draw closure walks the scene bottom→top; every field it touches is a tracked read, so a
+//! moved shape repaints with no wiring at all. Interaction comes in through the canvas's
+//! gesture decorators (`on_tap_at` for selection and tool placement, `on_drag` for move,
+//! resize and the band), and every live gesture that edits writes the model through previews:
 //! the store (and therefore the canvas and the status readouts) follows the pointer, while
-//! nothing durable fires until the pointer lifts, when committing all touched fields in ONE
+//! nothing durable fires until the pointer lifts, when committing all touched fields in one
 //! turn makes the whole drag one undo step and one statement per table
 //! (https://daybrite.dev/docs/model). A band edits nothing at all: it writes the selection,
 //! which lives outside the store, so sweeping the canvas is neither a row nor an undo step.
@@ -16,8 +16,8 @@ use day::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-/// Hit tolerance around a corner handle — deliberately larger than the DRAWN handle, so the
-/// grab target stays comfortable while the visuals stay small.
+/// Hit tolerance around a corner handle, larger than the drawn handle so the grab target
+/// stays comfortable while the visuals stay small.
 const HANDLE: f64 = 12.0;
 /// The drawn handle's edge length: small and slightly translucent, so handles read as
 /// affordances over the artwork rather than as artwork.
@@ -31,21 +31,21 @@ const HANDLE_STROKE: Color = Color::rgba(0.145, 0.388, 0.922, 0.9);
 // ---------------------------------------------------------------------------
 
 /// The zoom range: far enough out to see a whole drawing, close enough in for pixel work.
-/// How close, in SCREEN pixels, a dragged edge or center must come to another shape's for the
-/// drag to snap onto it — the guide's magnetic reach, constant at every zoom.
+/// How close, in screen pixels, a dragged edge or center must come to another shape's for the
+/// drag to snap onto it: the guide's magnetic reach, constant at every zoom.
 const SNAP_TOLERANCE: f64 = 6.0;
 const GUIDE: Color = Color::hex(0xF2A900);
 const ZOOM_MIN: f64 = 0.25;
 const ZOOM_MAX: f64 = 4.0;
 
-/// The canvas magnification: screen = model × zoom + pan. Transient view state — never
+/// The canvas magnification: screen = model × zoom + pan. Transient view state, never
 /// persisted and never undoable; unlike the selection it is not even restored by undo.
 pub(crate) fn zoom() -> Signal<f64> {
     crate::scene().zoom
 }
 
-/// The canvas translation, in screen pixels — where the model's origin sits in the viewport.
-/// The alignment guides of the drag in flight, in MODEL coordinates: a vertical guide is an
+/// The canvas translation, in screen pixels: where the model's origin sits in the viewport.
+/// The alignment guides of the drag in flight, in model coordinates: a vertical guide is an
 /// x, a horizontal one a y. Empty between drags.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Guide {
@@ -66,8 +66,8 @@ fn viewport_center() -> Point {
     Point::new(w / 2.0, h / 2.0)
 }
 
-/// Set the zoom, keeping the model point under `anchor` (screen coords) fixed on screen —
-/// the pinch stays under the fingers, the menu zoom stays centered.
+/// Set the zoom, keeping the model point under `anchor` (screen coords) fixed on screen, so
+/// the pinch stays under the fingers and the menu zoom stays centered.
 fn zoom_to(target: f64, anchor: Point) {
     let z0 = zoom().get_untracked();
     let z1 = target.clamp(ZOOM_MIN, ZOOM_MAX);
@@ -90,12 +90,12 @@ pub(crate) fn zoom_reset() {
     zoom_to(1.0, viewport_center());
 }
 
-/// Place a shape centered in the VIEWPORT — the visible middle of the scrolled canvas, in
-/// model coordinates, so a zoomed or panned view still puts the new shape where the user is
+/// Place a shape centered in the viewport (the visible middle of the scrolled canvas, in
+/// model coordinates), so a zoomed or panned view still puts the new shape where the user is
 /// looking. Selects it, the way every placement does.
 pub(crate) fn place_centered(kind: NodeKind) {
     let c = to_model(viewport_center());
-    // Offset by half the kind's own starting extent, so what lands is CENTERED rather than
+    // Offset by half the kind's starting extent, so what lands is centered rather than
     // hung off the middle by a rectangle's proportions.
     let (w, h) = model::default_extent(kind);
     let id = model::place_shape(kind, c.x - w / 2.0, c.y - h / 2.0);
@@ -108,7 +108,7 @@ fn to_model(p: Point) -> Point {
     Point::new((p.x - pn.x) / z, (p.y - pn.y) / z)
 }
 
-/// A model point's place on screen — the inverse of [`to_model`], for the selection overlay,
+/// A model point's place on screen, the inverse of [`to_model`], for the selection overlay,
 /// which is drawn in screen space so its weight and handle size stay constant at every zoom.
 fn to_screen(p: Point) -> Point {
     let z = zoom().get_untracked();
@@ -120,10 +120,10 @@ fn to_screen(p: Point) -> Point {
 // Drag machine
 // ---------------------------------------------------------------------------
 
-/// The rubber band the pointer is currently sweeping, in SCREEN space as `(x, y, w, h)`, or
+/// The rubber band the pointer is currently sweeping, in screen space as `(x, y, w, h)`, or
 /// `None` between sweeps. Editor state like the selection, and for the same reason: a band is
 /// a way of pointing at shapes, not a thing the document contains, so it is never a row and
-/// never an undo step. Written on every pointer move; the draw closure reads it TRACKED, which
+/// never an undo step. Written on every pointer move; the draw closure reads it tracked, which
 /// is the whole of the repaint wiring.
 fn band() -> Signal<Option<(f64, f64, f64, f64)>> {
     crate::scene().band
@@ -146,7 +146,7 @@ enum LineEnd {
 }
 
 /// What the pointer grabbed: a rectangle's corner, or one end of a line. The two shapes of
-/// handle a selection can wear — a line has no corners to resize, only two points to move.
+/// handle a selection can wear: a line has no corners to resize, only two points to move.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Handle {
     Corner(Corner),
@@ -155,8 +155,8 @@ enum Handle {
 
 enum DragOp {
     Idle,
-    /// Every affected SHAPE with its starting origin (a group drags its descendants), and the
-    /// box they all start in — what the alignment guides measure against as it moves.
+    /// Every affected shape with its starting origin (a group drags its descendants), and the
+    /// box they all start in, which the alignment guides measure against as it moves.
     Move {
         starts: Vec<(u64, f64, f64)>,
         frame: Option<(f64, f64, f64, f64)>,
@@ -168,14 +168,14 @@ enum DragOp {
         start: (f64, f64, f64, f64),
         rotation: f64,
     },
-    /// One END of a line, with the line's starting fields. Moving a point, not resizing a
+    /// One end of a line, with the line's starting fields. Moving a point, not resizing a
     /// frame: the other end stays exactly where it is.
     Endpoint {
         id: u64,
         end: LineEnd,
         start: (f64, f64, f64, f64),
     },
-    /// A text node's corner: its frame is measured, never dragged, so the drag SCALES the
+    /// A text node's corner: its frame is measured, never dragged, so the drag scales the
     /// point size by how far the corner moves from the one opposite, and the frame follows.
     Scale {
         id: u64,
@@ -184,10 +184,10 @@ enum DragOp {
         size: f64,
         rotation: f64,
     },
-    /// A rubber band sweeping the blank canvas. `anchor` is where the press landed, in SCREEN
-    /// space — the corner the band grows from. `base` is the selection the press started with,
+    /// A rubber band sweeping the blank canvas. `anchor` is where the press landed, in screen
+    /// space (the corner the band grows from). `base` is the selection the press started with,
     /// kept whole: a plain sweep starts from nothing and replaces, while a shift- or
-    /// command-sweep starts from what was already selected and ADDS to it, which is one rule
+    /// command-sweep starts from what was already selected and adds to it, which is one rule
     /// rather than two because an empty base makes "add" and "replace" the same thing.
     Band {
         anchor: Point,
@@ -196,8 +196,8 @@ enum DragOp {
 }
 
 /// A line's fields after one of its ends has moved by (dx, dy) in model space. Moving the
-/// START also moves the origin, and the deltas absorb the difference so the far end holds
-/// still; moving the END is the deltas alone.
+/// start also moves the origin, and the deltas absorb the difference so the far end holds
+/// still; moving the end is the deltas alone.
 fn line_dragged(
     start: (f64, f64, f64, f64),
     end: LineEnd,
@@ -216,9 +216,9 @@ fn line_dragged(
 // comes within SNAP_TOLERANCE screen pixels of lining up, and a guide shows what it snapped to.
 // ---------------------------------------------------------------------------
 
-/// The alignment lines every shape NOT being dragged offers: the x of its left edge, center
+/// The alignment lines every shape not being dragged offers: the x of its left edge, center
 /// and right edge, and the y of its top, middle and bottom. A turned shape offers the box it
-/// visually occupies. Groups offer nothing of their own — their members do.
+/// visually occupies. Groups offer nothing of their own; their members do.
 fn alignment_targets(exclude: &[u64]) -> (Vec<f64>, Vec<f64>) {
     let store = model::nodes();
     let (mut xs, mut ys) = (Vec::new(), Vec::new());
@@ -283,7 +283,7 @@ fn snap(moving_xs: &[f64], moving_ys: &[f64], exclude: &[u64]) -> (f64, f64, Vec
     (dx, dy, guides)
 }
 
-/// The union of the moving shapes' frames at the start of a drag — the box a move snaps by.
+/// The union of the moving shapes' frames at the start of a drag: the box a move snaps by.
 fn union_frame(ids: &[u64]) -> Option<(f64, f64, f64, f64)> {
     let mut acc: Option<(f64, f64, f64, f64)> = None;
     for id in ids {
@@ -320,7 +320,7 @@ fn snapped_move(
 }
 
 /// A resize's travel after snapping: only the edges the corner moves take part, and only for
-/// an upright shape — a turned frame's edges are not lines other shapes align to.
+/// an upright shape, since a turned frame's edges are not lines other shapes align to.
 fn snapped_resize(
     start: (f64, f64, f64, f64),
     corner: Corner,
@@ -367,9 +367,9 @@ fn field_previews_move(dx: f64, dy: f64, starts: &[(u64, f64, f64)]) {
 /// turn's `UPDATE` carries only the columns that have something to say and a gesture ending
 /// where it began is not an undo step at all.
 ///
-/// An unmoved field is CANCELLED, not merely skipped. Every frame of the drag previewed it,
+/// An unmoved field is cancelled, not merely skipped. Every frame of the drag previewed it,
 /// so the store holds the last previewed value, and a session that is neither committed nor
-/// cancelled leaves it there — the shape would stay where the pointer passed rather than
+/// cancelled leaves it there: the shape would stay where the pointer passed rather than
 /// where it belongs, and the open session would still be sitting in the preview map. Cancel
 /// puts the pre-session value back, which for an unmoved field is the value it should have,
 /// and closes the session. Cancelling a field that never opened one is a no-op.
@@ -398,7 +398,7 @@ fn resized(start: (f64, f64, f64, f64), corner: Corner, dx: f64, dy: f64) -> (f6
         Corner::BottomLeft => (sx + dx, sy, sw - dx, sh + dy),
         Corner::BottomRight => (sx, sy, sw + dx, sh + dy),
     };
-    // Clamp at the minimum by pinning the OPPOSITE edge, so the shape never flips.
+    // Clamp at the minimum by pinning the opposite edge, so the shape never flips.
     if w < model::MIN_SIZE {
         if matches!(corner, Corner::TopLeft | Corner::BottomLeft) {
             x = sx + sw - model::MIN_SIZE;
@@ -414,8 +414,8 @@ fn resized(start: (f64, f64, f64, f64), corner: Corner, dx: f64, dy: f64) -> (f6
     (x, y, w, h)
 }
 
-/// The corner OPPOSITE `corner`, in the frame's own (unrotated) coordinates — the point a
-/// resize holds still.
+/// The corner opposite `corner`, in the frame's (unrotated) coordinates, which a resize
+/// holds still.
 fn opposite_point(b: (f64, f64, f64, f64), corner: Corner) -> Point {
     let (x, y, w, h) = b;
     match corner {
@@ -426,13 +426,13 @@ fn opposite_point(b: (f64, f64, f64, f64), corner: Corner) -> Point {
     }
 }
 
-/// [`resized`] for a shape that is drawn TURNED.
+/// [`resized`] for a shape that is drawn turned.
 ///
 /// Two corrections, both required for the handles to track the pointer once the frame no
-/// longer lies along the screen axes. First the drag is read in the shape's OWN frame — a pull
+/// longer lies along the screen axes. First the drag is read in the shape's frame, so a pull
 /// along the shape's long edge lengthens it whatever angle that edge is at on screen. Then the
 /// result is re-anchored: `resized` holds the opposite corner still in the frame's coordinates,
-/// but the rotation is about the frame's CENTER, and the center moves as the frame grows — so
+/// but the rotation is about the frame's center, and the center moves as the frame grows, so
 /// the shape would creep out from under the pointer. Shifting the new origin by the difference
 /// between where that corner was and where it would land puts it back.
 fn resized_under_rotation(
@@ -451,7 +451,7 @@ fn resized_under_rotation(
     reanchor(start, f, corner, rotation)
 }
 
-/// Where the corner OPPOSITE `corner` of frame `b` lands on the canvas once the frame is
+/// Where the corner opposite `corner` of frame `b` lands on the canvas once the frame is
 /// turned about its center.
 fn held_corner(b: (f64, f64, f64, f64), corner: Corner, rotation: f64) -> Point {
     let (sin, cos) = rotation.to_radians().sin_cos();
@@ -461,7 +461,7 @@ fn held_corner(b: (f64, f64, f64, f64), corner: Corner, rotation: f64) -> Point 
     Point::new(c.x + ox * cos - oy * sin, c.y + ox * sin + oy * cos)
 }
 
-/// Shift `new` so its held corner lands where `start`'s did on the canvas — the correction
+/// Shift `new` so its held corner lands where `start`'s did on the canvas: the correction
 /// every turned resize needs, since the rotation is about a center that moved.
 fn reanchor(
     start: (f64, f64, f64, f64),
@@ -478,7 +478,7 @@ fn reanchor(
 
 /// A text node's frame and point size after its `corner` moved by (dx, dy): the size scales
 /// by the ratio of the corner's distance from the held (opposite) corner, the frame is what
-/// the text measures to at that size, placed so the held corner stays put — and, under a
+/// the text measures to at that size, placed so the held corner stays put and, under a
 /// rotation, re-anchored like any other turned resize.
 fn scaled(
     start: (f64, f64, f64, f64),
@@ -519,7 +519,7 @@ fn scaled(
     }
 }
 
-/// [`apply_resize`] for a text node: the four frame fields plus the point size, previewed
+/// [`apply_resize`] for a text node: the four frame fields plus the font's point size, previewed
 /// every frame and sealed once, so a drag that ends where it began records nothing.
 fn apply_scale(
     id: u64,
@@ -543,14 +543,14 @@ fn apply_scale(
 /// corner moves w and h and leaves x and y exactly where they were, so that resize is an
 /// `UPDATE` of two columns rather than four.
 ///
-/// The PREVIEW pass always writes all four. A preview must be able to put a coordinate BACK —
-/// drag a top-left corner out and return it, and x has to follow the pointer home — so a
+/// The preview pass always writes all four. A preview must be able to put a coordinate back
+/// (drag a top-left corner out and return it, and x has to follow the pointer home), so a
 /// preview that skipped an unchanged field would strand the previous frame's value on screen.
 fn apply_resize(id: u64, frame: (f64, f64, f64, f64), start: (f64, f64, f64, f64), commit: bool) {
     let store = model::nodes();
     let e = store.elem(id);
     if commit {
-        // Sealed in ONE turn: one undo unit, one UPDATE of however many columns moved.
+        // Sealed in one turn: one undo unit, one UPDATE of however many columns moved.
         seal(e.x(), start.0, frame.0);
         seal(e.y(), start.1, frame.1);
         seal(e.w(), start.2, frame.2);
@@ -567,7 +567,7 @@ fn apply_resize(id: u64, frame: (f64, f64, f64, f64), start: (f64, f64, f64, f64
 // Hit testing
 // ---------------------------------------------------------------------------
 
-/// How near the pointer must come to a line to count as on it, in MODEL units at 1:1 — a
+/// How near the pointer must come to a line to count as on it, in model units at 1:1. A
 /// stroke is thin, so the grab is the tolerance rather than the geometry.
 const LINE_TOLERANCE: f64 = 6.0;
 
@@ -587,8 +587,8 @@ fn distance_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool {
     let e = store.elem(id);
     let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
-    // A rotated shape is drawn through a transform, so the POINT rides the inverse back into
-    // the shape's own upright space — where the frame tests below are the geometry again.
+    // A rotated shape is drawn through a transform, so `(px, py)` rides the inverse back into
+    // the shape's upright space, where the frame tests below are the geometry again.
     let rot = e.rotation().peek();
     let (px, py) = if rot.abs() > f64::EPSILON {
         let p = rotation_about_center(x, y, w, h, -rot).apply(Point::new(px, py));
@@ -597,7 +597,7 @@ fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool 
         (px, py)
     };
     match e.kind().peek() {
-        // A line has no interior: near the segment IS on it, and the tolerance shrinks as the
+        // A line has no interior: near the segment is on it, and the tolerance shrinks as the
         // view zooms in so the grab stays the same size under the pointer.
         NodeKind::Line => {
             let ((ax, ay), (bx, by)) = model::line_ends(id);
@@ -612,7 +612,7 @@ fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool 
             let (nx, ny) = ((px - cx) / (w / 2.0), (py - cy) / (h / 2.0));
             nx * nx + ny * ny <= 1.0
         }
-        // A group is never tested directly — `hit_top_level` walks its shape descendants —
+        // A group is never tested directly (`hit_top_level` walks its shape descendants),
         // but the arm is written out so a new kind must decide its own hit shape. Text is
         // its measured frame.
         NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
@@ -621,7 +621,7 @@ fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool 
     }
 }
 
-/// The topmost top-level node under the point — z order honored, groups hit through any of
+/// The topmost top-level node under `(px, py)`, z order honored, groups hit through any of
 /// their shape descendants.
 fn hit_top_level(px: f64, py: f64) -> Option<u64> {
     let store = model::nodes();
@@ -636,10 +636,10 @@ fn hit_top_level(px: f64, py: f64) -> Option<u64> {
     None
 }
 
-/// Do two convex polygons overlap? The separating-axis test over both outlines' edge normals:
-/// if any axis has them projecting to disjoint intervals they are apart, and if none does they
-/// touch. Exact for the rectangles and quads below, and it holds for a two-point "polygon" — a
-/// line segment — whose single edge still yields the axis that would separate it.
+/// Whether two convex polygons overlap: the separating-axis test over both outlines' edge
+/// normals. If any axis has them projecting to disjoint intervals they are apart, and if none
+/// does they touch. Exact for the rectangles and quads below, and it holds for a two-point
+/// "polygon" (a line segment), whose single edge still yields the axis that would separate it.
 fn convex_overlap(a: &[Point], b: &[Point]) -> bool {
     let project = |poly: &[Point], ax: Point| {
         poly.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
@@ -682,10 +682,10 @@ fn point_in_convex(poly: &[Point], p: Point) -> bool {
     true
 }
 
-/// Does the band touch this SHAPE as drawn? The band arrives as its four model-space corners;
-/// a rotated shape rides them back through the inverse rotation into its own upright space —
-/// exactly as [`point_in_shape`] rides the pointer — so each kind's test is plain geometry
-/// again. Every kind answers for the ink it actually lays down, which matters most for a line:
+/// Whether the band touches this shape as drawn. The band arrives as its four model-space
+/// corners; a rotated shape rides them back through the inverse rotation into its upright
+/// space, exactly as [`point_in_shape`] rides the pointer, so each kind's test is plain
+/// geometry again. Every kind answers for the ink it lays down, which matters most for a line:
 /// its frame is the box its two ends span, mostly empty for a diagonal, and a band that merely
 /// entered that box has not touched the line.
 fn shape_touches(id: u64, band: &[Point; 4]) -> bool {
@@ -724,7 +724,7 @@ fn shape_touches(id: u64, band: &[Point; 4]) -> bool {
                 distance_to_segment((c.x, c.y), (a.x, a.y), (b.x, b.y)) <= r
             })
         }
-        // A group is never tested directly — the walk below descends to its shapes — but the
+        // A group is never tested directly (the walk below descends to its shapes), but the
         // arm is written out so a new kind must decide its own hit shape. Text is its frame.
         NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
             let frame = [
@@ -738,10 +738,10 @@ fn shape_touches(id: u64, band: &[Point; 4]) -> bool {
     }
 }
 
-/// Every top-level node a SCREEN-space band touches, bottom→top. Touching, not enclosing: a
+/// Every top-level node a screen-space band touches, bottom→top. Touching, not enclosing: a
 /// shape joins the selection as soon as the band reaches any part of it, which is what a
 /// marquee means everywhere else and what makes a small sweep across a crowded drawing useful.
-/// A group answers for its members — touch any one of them and the group is selected, the same
+/// A group answers for its members: touch any one of them and the group is selected, the same
 /// rule a click on a member follows. The band converts to model space once here rather than
 /// once per shape.
 fn touched_by(band: (f64, f64, f64, f64)) -> Vec<u64> {
@@ -800,20 +800,20 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
     ]
 }
 
-/// A node's own rotation in degrees — 0 for a group, whose frame is the axis-aligned union of
+/// A node's rotation in degrees: 0 for a group, whose frame is the axis-aligned union of
 /// its members and turns with none of them.
 fn rotation_of(id: u64) -> f64 {
     let e = model::nodes().elem(id);
     match e.kind().peek() {
         NodeKind::Rect | NodeKind::Oval | NodeKind::Text => e.rotation().peek(),
         // A group's frame is the axis-aligned union of its members and turns with none of
-        // them; a line's direction IS its two endpoints, so it carries no separate angle
+        // them; a line's direction is its two endpoints, so it carries no separate angle
         // (and the inspector offers it none).
         NodeKind::Group | NodeKind::Line => 0.0,
     }
 }
 
-/// A line's two ends in SCREEN space — where its handles are drawn and grabbed.
+/// A line's two ends in screen space, where its handles are drawn and grabbed.
 fn screen_ends(id: u64) -> [(LineEnd, f64, f64); 2] {
     let ((ax, ay), (bx, by)) = model::line_ends(id);
     let a = to_screen(Point::new(ax, ay));
@@ -821,9 +821,9 @@ fn screen_ends(id: u64) -> [(LineEnd, f64, f64); 2] {
     [(LineEnd::Start, a.x, a.y), (LineEnd::End, b.x, b.y)]
 }
 
-/// A selected node's four corners in SCREEN space, turned by the shape's own rotation about
+/// A selected node's four corners in screen space, turned by the shape's rotation about
 /// its center: the selection outline connects these, the handles sit on them, and
-/// [`hit_handle`] grabs them — so all three follow the shape as it turns.
+/// [`hit_handle`] grabs them, so all three follow the shape as it turns.
 fn screen_corners(b: (f64, f64, f64, f64), rotation: f64) -> [(Corner, f64, f64); 4] {
     let mut pts = corner_points(b);
     let turn = (rotation.abs() > f64::EPSILON)
@@ -840,12 +840,12 @@ fn screen_corners(b: (f64, f64, f64, f64), rotation: f64) -> [(Corner, f64, f64)
     pts
 }
 
-/// A corner handle of ANY selected shape under the SCREEN point: every selected shape
-/// carries its own handles, and dragging one resizes THAT shape alone (a multi-select drag
-/// anywhere else moves the whole selection). Groups have no handles — groups move; only
+/// A corner handle of any selected shape under the screen point: every selected shape
+/// carries its own handles, and dragging one resizes that shape alone (a multi-select drag
+/// anywhere else moves the whole selection). Groups have no handles: groups move; only
 /// shapes resize. Later selections are checked first, matching the draw order (last drawn
-/// sits on top). Handles live in screen space — their size and grab target stay constant at
-/// every zoom, so the test transforms the corners, not the pointer.
+/// sits on top). Handles live in screen space, so their size and grab target stay constant at
+/// every zoom, and the test transforms the corners, not the pointer.
 fn hit_handle(px: f64, py: f64) -> Option<(u64, Handle)> {
     let sel = model::selection().get_untracked();
     let store = model::nodes();
@@ -889,7 +889,7 @@ fn shape_of(node: &Node) -> Shape {
         }
         // Signed deltas: origin to far point, whichever way it runs.
         NodeKind::Line => segment_shape((node.x, node.y), (node.x + node.w, node.y + node.h)),
-        // A group draws nothing of its own — its members draw themselves — but the arm is
+        // A group draws nothing of its own (its members draw themselves), but the arm is
         // written out so a new kind must say what it looks like. Text draws through
         // `Draw::text`, never through a shape; its frame is what it would be here.
         NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
@@ -898,7 +898,7 @@ fn shape_of(node: &Node) -> Shape {
     }
 }
 
-/// An open path from `a` to `b` — a line's whole geometry.
+/// An open path from `a` to `b`: a line's whole geometry.
 fn segment_shape(a: (f64, f64), b: (f64, f64)) -> Shape {
     PathBuilder::new()
         .move_to(Point::new(a.0, a.1))
@@ -906,7 +906,7 @@ fn segment_shape(a: (f64, f64), b: (f64, f64)) -> Shape {
         .build()
 }
 
-/// A rectangle with rounded corners — plain when the radius is 0, and the radius clamped to
+/// A rectangle with rounded corners: plain when the radius is 0, and the radius clamped to
 /// half the shorter side so the corners can never cross.
 fn round_rect_shape(x: f64, y: f64, w: f64, h: f64, r: f64) -> Shape {
     let r = r.min(w / 2.0).min(h / 2.0);
@@ -947,7 +947,7 @@ fn round_rect_shape(x: f64, y: f64, w: f64, h: f64, r: f64) -> Shape {
         .build()
 }
 
-/// A shape's rotation as an affine about its own center — the transform the draw concats and
+/// A shape's rotation as an affine about its center: the transform the draw concats and
 /// the hit test inverts.
 fn rotation_about_center(x: f64, y: f64, w: f64, h: f64, degrees: f64) -> Affine {
     let (cx, cy) = (x + w / 2.0, y + h / 2.0);
@@ -1005,7 +1005,7 @@ fn rect_shape(x: f64, y: f64, w: f64, h: f64) -> Shape {
 
 /// One drag handle: a small square centered on a corner, turned by the shape's rotation so
 /// the four read as the corners of one turned frame rather than as loose pins. Screen space,
-/// so its SIZE is the same at every zoom.
+/// so its size is the same at every zoom.
 fn handle_shape(cx: f64, cy: f64, rotation: f64) -> Shape {
     let half = HANDLE_DRAW / 2.0;
     let (sin, cos) = rotation.to_radians().sin_cos();
@@ -1021,22 +1021,22 @@ fn handle_shape(cx: f64, cy: f64, rotation: f64) -> Shape {
 
 fn draw_scene(d: &mut Draw, size: Size) {
     // Everything clips to the viewport: panned/zoomed content otherwise escapes the canvas
-    // in OFFSCREEN captures (the live window clips it; cacheDisplayInRect does not).
+    // in offscreen captures (the live window clips it; cacheDisplayInRect does not).
     d.clip(rect_shape(0.0, 0.0, size.width, size.height));
-    // The document's background, under everything and across the whole viewport — the canvas
-    // is an unbounded plane, so the background is not part of the zoomable content. TRACKED:
-    // the Canvas tab's well repaints it live.
+    // The document's background, under everything and across the whole viewport: the canvas
+    // is an unbounded plane, so the background is not part of the zoomable content. Read
+    // tracked, so the Canvas tab's well repaints it live.
     d.fill(
         rect_shape(0.0, 0.0, size.width, size.height),
         fill_color(&model::background()),
     );
 
     let store = model::nodes();
-    // TRACKED walk: shape + z reads through the collection, field reads per shape.
+    // A tracked walk: shape + z reads through the collection, field reads per shape.
     let _shape_of_collection = store.keys();
     fn draw_children(d: &mut Draw, store: Store<Keyed<Node>>, parent: Option<u64>) {
-        // TRACKED order: an arrange writes the child's z, the relation index reorders, and
-        // this read wakes — one dependency per parent, not one per node in the document.
+        // Tracked order: an arrange writes the child's z, the relation index reorders, and
+        // this read wakes; one dependency per parent, not one per node in the document.
         for id in crate::model::children_of(parent) {
             let e = store.elem(id);
             let kind = e.kind().with(|k| k.copied().unwrap_or_default());
@@ -1086,7 +1086,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
                             );
                             return;
                         }
-                        // A line has no interior to fill — it IS its stroke. Everything else
+                        // A line has no interior to fill; it is its stroke. Everything else
                         // fills, then strokes its outline.
                         let fills = match node.kind {
                             NodeKind::Rect | NodeKind::Oval | NodeKind::Group => true,
@@ -1106,9 +1106,9 @@ fn draw_scene(d: &mut Draw, size: Size) {
                             );
                         }
                     };
-                    // A rotation is a transform about the shape's own center, so the stored
-                    // frame stays axis-aligned — what the inspector edits and the selection
-                    // outline draws.
+                    // A rotation is a transform about the shape's center, so the stored
+                    // frame stays axis-aligned, which is what the inspector edits and the
+                    // selection outline draws.
                     if node.rotation.abs() > f64::EPSILON {
                         d.transformed(
                             rotation_about_center(node.x, node.y, node.w, node.h, node.rotation),
@@ -1121,7 +1121,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
             }
         }
     }
-    // The scene under the view transform; TRACKED zoom/pan reads, so a gesture repaints.
+    // The scene under the view transform; tracked zoom/pan reads, so a gesture repaints.
     let z = zoom().get();
     let pn = pan().get();
     d.transformed(
@@ -1129,32 +1129,32 @@ fn draw_scene(d: &mut Draw, size: Size) {
         |d| draw_children(d, store, None),
     );
 
-    // Selection outlines + handles, above everything, drawn in SCREEN space at the
-    // transformed corners — constant weight and size at every zoom, and TURNED with the shape
+    // Selection outlines + handles, above everything, drawn in screen space at the
+    // transformed corners (constant weight and size at every zoom), and turned with the shape
     // so a rotated rectangle wears a rotated outline rather than its bounding box. Every
-    // selected SHAPE carries its own handles — multi-selections included; a group shows only
+    // selected shape carries its own handles, multi-selections included; a group shows only
     // its union outline, which turns with nothing (its members rotate, it does not).
     let sel = model::selection().get();
     for id in &sel {
         let Some(b) = model::node_bounds(*id) else {
             continue;
         };
-        // TRACKED, like every other field the scene draws from: turning a shape (or dragging
+        // Tracked, like every other field the scene draws from: turning a shape (or dragging
         // an end of a line) must repaint its outline in the same frame.
         let rotation = store.elem(*id).rotation().read();
         let kind = store
             .elem(*id)
             .kind()
             .with(|k| k.copied().unwrap_or_default());
-        // What a selection LOOKS like is per kind, so a new one has to say for itself. The
-        // OUTLINE turns for every kind that carries an angle, groups included — a turned
+        // What a selection looks like is per kind, so a new one has to say for itself. The
+        // outline turns for every kind that carries an angle, groups included: a turned
         // arrangement wearing an upright box would look like the box had come loose from it.
         let handles = match kind {
             // A line wears its own selection: the segment itself, marked at both ends. A
             // frame around it would say "resize me" about a shape that has no frame to
             // resize.
             NodeKind::Line => {
-                // TRACKED reads of the raw fields — a dragged endpoint previews through
+                // Tracked reads of the raw fields: a dragged endpoint previews through
                 // them, so the overlay must follow the same frame the segment does.
                 let e = store.elem(*id);
                 let (x, y, w, h) = (e.x().read(), e.y().read(), e.w().read(), e.h().read());
@@ -1169,7 +1169,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
                 }
                 continue;
             }
-            // A frame, with corner handles to resize by — or, for text, to scale by.
+            // A frame, with corner handles to resize by (or, for text, to scale by).
             NodeKind::Rect | NodeKind::Oval | NodeKind::Text => true,
             // A group shows the frame it occupies and no handles: groups move, their members
             // resize.
@@ -1199,8 +1199,8 @@ fn draw_scene(d: &mut Draw, size: Size) {
     }
 
     // The alignment guides of the drag in flight: a hairline across the whole viewport at each
-    // snapped line, in screen space so it is one pixel at any zoom. TRACKED: the drag sets
-    // them every frame, and this read is what paints them.
+    // snapped line, in screen space so it is one pixel at any zoom. Read tracked: the drag
+    // sets them every frame, and this read is what paints them.
     for guide in guides().get() {
         let shape = match guide {
             Guide::Vertical(x) => {
@@ -1217,8 +1217,8 @@ fn draw_scene(d: &mut Draw, size: Size) {
 
     // The rubber band, over everything including the outlines it is drawing: a faint wash
     // under a dashed edge, the marquee every drawing program wears. Screen space, like the
-    // outlines and for the same reason — one pixel of dash means one pixel at any zoom.
-    // TRACKED: this read is what repaints the canvas as the band grows.
+    // outlines and for the same reason: one pixel of dash means one pixel at any zoom. A
+    // tracked read, which is what repaints the canvas as the band grows.
     if let Some((x, y, w, h)) = band().get() {
         let r = rect_shape(x, y, w, h);
         d.fill(r.clone(), SELECTION.with_alpha(0.10));
@@ -1226,7 +1226,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
     }
 }
 
-/// Which recognizer reported a click — the dedup key in [`handle_click`].
+/// Which recognizer reported a click: the dedup key in [`handle_click`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClickSource {
     Tap,
@@ -1234,11 +1234,11 @@ pub(crate) enum ClickSource {
 }
 
 /// One physical click, from whichever recognizer reported it. On desktop a click that
-/// wiggles a pixel arrives as a DRAG, not a tap — the pan recognizer claims it and the click
-/// recognizer fails — so [`on_drag`] routes a drag that never really moved here too. Some
-/// backends (qt) deliver BOTH events for one stationary click; the guard drops the second
-/// report of the same press. It only ever pairs ACROSS sources — two taps are two clicks
-/// however close together (a double-click, a fast scripted run) — and a dropped report is
+/// wiggles a pixel arrives as a drag, not a tap (the pan recognizer claims it and the click
+/// recognizer fails), so [`on_drag`] routes a drag that never really moved here too. Some
+/// backends (qt) deliver both events for one stationary click; the guard drops the second
+/// report of the same press. It only ever pairs across sources (two taps are two clicks
+/// however close together: a double-click, a fast scripted run), and a dropped report is
 /// not recorded, so it cannot chain into dropping the next press's.
 fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
     // On wasm the guard compiles out: std::time is unavailable there, and the dom shim's 4px
@@ -1259,10 +1259,10 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
             .last_click
             .set(Some((now, p_screen.x, p_screen.y, source)));
     }
-    // Is this tap the SECOND arrival of a double-click? Same spot, within the window —
-    // that pair's second click drills into a selected group (see [`drill_at`]). A drag's
-    // stationary-click report never pairs, and clears the memory so the next tap starts
-    // a fresh pair.
+    // Whether this tap is the second arrival of a double-click: same spot, within the
+    // window. That pair's second click drills into a selected group (see [`drill_at`]). A
+    // drag's stationary-click report never pairs, and clears the memory so the next tap
+    // starts a fresh pair.
     #[cfg(not(target_arch = "wasm32"))]
     let repeat = match source {
         ClickSource::Tap => {
@@ -1288,17 +1288,17 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
         }
     };
     // No clock on wasm (std::time is unavailable): every tap may drill. The drill only fires
-    // when the hit already sits inside the SOLE selected node, so a first click never drills
-    // — the cost is that a slow second click on a selected group drills where desktop would
+    // when the hit already sits inside the sole selected node, so a first click never drills;
+    // the cost is that a slow second click on a selected group drills where desktop would
     // require a true double-click.
     #[cfg(target_arch = "wasm32")]
     let repeat = matches!(source, ClickSource::Tap);
     on_tap(to_model(p_screen), mods, repeat);
 }
 
-/// `p` is in MODEL space — callers convert from screen coordinates first. A canvas tap always
-/// SELECTS: shapes are placed from the toolbar's shape menu (centered in the viewport), so
-/// there is no armed-tool mode to be in. A REPEAT plain tap (a double-click's second arrival)
+/// `p` is in model space; callers convert from screen coordinates first. A canvas tap always
+/// selects: shapes are placed from the toolbar's shape menu (centered in the viewport), so
+/// there is no armed-tool mode to be in. A repeat plain tap (a double-click's second arrival)
 /// drills into a selected group instead.
 fn on_tap(p: Point, mods: day::Modifiers, repeat: bool) {
     if repeat && !(mods.shift || mods.primary) && drill_at(p) {
@@ -1307,9 +1307,9 @@ fn on_tap(p: Point, mods: day::Modifiers, repeat: bool) {
     select_at(p, mods);
 }
 
-/// The double-click drill: with the shape under `p` inside the SOLE selected node, select one
-/// level deeper toward it — group, sub-group, then shape, one level per double-click. Once
-/// the shape itself is the sole selection a repeat click HOLDS it (consuming the click)
+/// The double-click drill: with the shape under `p` inside the sole selected node, select one
+/// level deeper toward it (group, sub-group, then shape, one level per double-click). Once
+/// the shape itself is the sole selection a repeat click holds it (consuming the click)
 /// rather than letting the plain rule bounce the selection back to the top level. Returns
 /// whether the click was consumed.
 pub(crate) fn drill_at(p: Point) -> bool {
@@ -1330,7 +1330,7 @@ pub(crate) fn drill_at(p: Point) -> bool {
     }
 }
 
-/// The deepest SHAPE under the point — the drill's target: the same top-down z walk as
+/// The deepest shape under `(px, py)`, the drill's target: the same top-down z walk as
 /// [`hit_top_level`], descended into groups.
 fn hit_leaf(px: f64, py: f64) -> Option<u64> {
     fn descend(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> Option<u64> {
@@ -1408,11 +1408,11 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                     Handle::End(end) => DragOp::Endpoint { id, end, start },
                 }
             } else if let Some(top) = hit_top_level(m.x, m.y) {
-                // Dragging an unselected shape selects it first, then moves the WHOLE
-                // selection if the hit is part of it. Shift or command ADDS it rather than
-                // replacing — the rule a click already follows, so a modified press can never
+                // Dragging an unselected shape selects it first, then moves the whole
+                // selection if the hit is part of it. Shift or command adds it rather than
+                // replacing, the rule a click already follows, so a modified press can never
                 // throw away what was selected before it. "Part of it" is subtree-deep: a
-                // double-click-drilled member drags ALONE rather than snapping back to its
+                // double-click-drilled member drags alone rather than snapping back to its
                 // group.
                 let mut sel = model::selection().get_untracked();
                 let covered = hit_leaf(m.x, m.y)
@@ -1427,7 +1427,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 }
                 let mut starts = Vec::new();
                 for t in &sel {
-                    // The shapes only: a group's bounds are DERIVED from its members
+                    // The shapes only: a group's bounds are derived from its members
                     // (`node_bounds`), so moving them is what moves its outline.
                     for s in model::shape_descendants(*t) {
                         let e = store.elem(s);
@@ -1439,17 +1439,17 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 DragOp::Move { starts, frame }
             } else {
                 // Blank canvas: sweep a band. Shift or the platform's command key keeps what
-                // was already selected and adds to it — the same modifier rule a click follows.
+                // was already selected and adds to it, the same modifier rule a click follows.
                 let base = if mods.shift || mods.primary {
                     model::selection().get_untracked()
                 } else {
                     Vec::new()
                 };
-                // Anchor at the PRESS, which is not always where `Began` is reported: appkit
+                // Anchor at the press, which is not always where `Began` is reported: appkit
                 // raises it on the first drag event, already carrying the translation from
-                // the press. Subtracting that back out lands on the point the pointer went
-                // down at on every backend — anchoring on `location` alone would count the
-                // opening move twice and leave the band trailing the pointer.
+                // the press. Subtracting that back out lands where the pointer went down on
+                // every backend; anchoring on `location` alone would count the opening move
+                // twice and leave the band trailing the pointer.
                 let anchor = Point::new(p.x - drag.translation.x, p.y - drag.translation.y);
                 DragOp::Band { anchor, base }
             };
@@ -1581,8 +1581,8 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                         .grouped("resize", || apply_scale(id, f, s, start, size, true));
                 }
                 // The band goes away on release whatever it caught; the selection it made is
-                // already in place. A press that never really moved is a CLICK the tap
-                // recognizer lost to the pan recognizer — act on it, or deselection silently
+                // already in place. A press that never really moved is a click the tap
+                // recognizer lost to the pan recognizer; act on it, or deselection silently
                 // fails on about half of real desktop clicks. A hair of travel may already
                 // have swept a band, so the click starts from the selection the press did.
                 DragOp::Band { anchor, base } => {
@@ -1602,7 +1602,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
     }
 }
 
-/// Where a line's dragged END starts, in model space, from its raw fields.
+/// Where a line's dragged end starts, in model space, from its raw fields.
 fn moving_end(start: (f64, f64, f64, f64), end: LineEnd) -> (f64, f64) {
     let (x, y, w, h) = start;
     match end {
@@ -1611,7 +1611,7 @@ fn moving_end(start: (f64, f64, f64, f64), end: LineEnd) -> (f64, f64) {
     }
 }
 
-/// A text node's content and font, untracked — what a scaling drag measures with.
+/// A text node's content and font, untracked: what a scaling drag measures with.
 fn text_of(id: u64) -> (String, CanvasFont) {
     let e = model::nodes().elem(id);
     let text = e.text().with(|t| t.cloned().unwrap_or_default());
@@ -1624,20 +1624,20 @@ fn text_of(id: u64) -> (String, CanvasFont) {
 
 /// Whether the canvas holds the keyboard (docs/focus.md). Bound two-way: it takes focus when
 /// the editor mounts and on every press, and gives it up the moment a text field or the
-/// inspector takes it — which is exactly when the arrows have to stop nudging shapes and go
+/// inspector takes it, which is exactly when the arrows have to stop nudging shapes and go
 /// back to moving a caret.
 pub(crate) fn canvas_focused() -> Signal<bool> {
     crate::scene().canvas_focused
 }
 
 /// The canvas's keyboard: arrows nudge, Delete removes. Hung on the canvas rather than the
-/// window, so it can only fire while the canvas is the focused piece — a text field taking
+/// window, so it can only fire while the canvas is the focused piece: a text field taking
 /// focus takes the keys with it, which is what stops Delete from eating a shape while someone
 /// edits a hex value (docs/focus.md).
 /// `owns_delete` says whether Delete is this handler's to act on: true only where the platform
 /// draws no menu bar. On the four that do, Edit ▸ Delete carries the same accelerator and the
-/// platform fires it BEFORE the key reaches a focused view, so acting here as well would run
-/// the command twice. Backends without a menu bar — web-dom above all — never see that
+/// platform fires it before the key reaches a focused view, so acting here as well would run
+/// the command twice. Backends without a menu bar (web-dom above all) never see that
 /// accelerator, and this is the only route the key has. Read at the piece and passed in as
 /// data, like the gesture modifiers, so the decision is testable without a toolkit under it.
 pub(crate) fn canvas_key(ev: &day::KeyEvent, owns_delete: bool) {
@@ -1667,20 +1667,20 @@ pub(crate) fn editor_canvas() -> impl Piece {
     let op: Rc<RefCell<DragOp>> = Rc::new(RefCell::new(DragOp::Idle));
     let op2 = op.clone();
     // The pinch scales against the zoom captured at Began (Pinch.scale is cumulative), and
-    // anchors at the gesture's START point — a moving anchor would feed the transform back
+    // anchors at the gesture's start point; a moving anchor would feed the transform back
     // into itself.
     let pinch_base: Rc<Cell<(f64, Point)>> = Rc::new(Cell::new((1.0, Point::ZERO)));
     canvas(move |d, size| {
         crate::scene().cells.viewport.set((size.width, size.height));
         draw_scene(d, size)
     })
-    // The live modifiers are read HERE, at the edge, and travel into the machine as data:
+    // The live modifiers are read here, at the edge, and travel into the machine as data:
     // shift-drag and shift-click both change meaning, and a handler that reads them itself
     // could only ever run with a toolkit under it.
     .on_tap_at(|p| handle_click(p, day::modifiers(), ClickSource::Tap))
-    // The selection's context menu, built at SUMMON time: a right-click that lands outside
-    // the current selection selects what is under it first (subtree-deep, the drag rule),
-    // one on empty canvas clears — the menu then describes exactly what it acts on.
+    // The selection's context menu, built when it is summoned: a right-click that lands
+    // outside the current selection selects what is under it first (subtree-deep, the drag
+    // rule), one on empty canvas clears, and the menu then describes exactly what it acts on.
     .context_menu_fn(|p| {
         let m = to_model(p);
         match hit_top_level(m.x, m.y) {
@@ -1762,7 +1762,7 @@ mod tests {
         model::selection().set(Vec::new());
     }
 
-    /// A rectangle of a given size at a given place — the shapes a band has to tell apart.
+    /// A rectangle of a given size at a given place: the shapes a band has to tell apart.
     fn rect_at(x: f64, y: f64, w: f64, h: f64) -> u64 {
         let id = model::place_shape(NodeKind::Rect, x, y);
         day::reactive::flush_sync();
@@ -1893,13 +1893,13 @@ mod tests {
         day::reactive::flush_sync();
         let group = model::selection().get_untracked()[0];
 
-        // Reaching one member selects the GROUP, not that member — the rule a click on a
+        // Reaching one member selects the group, not that member: the rule a click on a
         // member already follows.
         model::selection().set(Vec::new());
         sweep_gesture((0.0, 0.0), (20.0, 20.0), plain());
         assert_eq!(model::selection().get_untracked(), vec![group]);
 
-        // The gap BETWEEN the two members belongs to neither, so a band inside it takes
+        // The gap between the two members belongs to neither, so a band inside it takes
         // nothing: a group answers for its shapes, not for the box around them.
         model::selection().set(Vec::new());
         sweep_gesture((60.0, 15.0), (190.0, 35.0), plain());
@@ -1915,12 +1915,12 @@ mod tests {
         let _doc = install_test_doc();
         unzoomed();
         // 96×64 at the origin, turned a quarter about its center (48, 32): it now covers
-        // (16, -16)–(80, 80) — taller than the frame the inspector shows, and narrower.
+        // (16, -16)–(80, 80): taller than the frame the inspector shows, and narrower.
         let id = turned(90.0);
         model::selection().set(Vec::new());
 
         // Inside the stored frame but in a corner the turn vacated: not touched. (Every band
-        // here starts on blank canvas — a press ON the shape would be a move, which selects
+        // here starts on blank canvas; a press on the shape would be a move, which selects
         // too and would pass these assertions for the wrong reason.)
         sweep_gesture((88.0, 4.0), (94.0, 10.0), plain());
         assert!(
@@ -2051,12 +2051,12 @@ mod tests {
         unzoomed();
         let id = rect_at(100.0, 100.0, 40.0, 40.0);
         // Zoomed 2× with no pan, the shape is drawn at (200, 200)–(280, 280) on screen. A
-        // band in MODEL coordinates would miss it entirely.
+        // band in model coordinates would miss it entirely.
         zoom().set(2.0);
         sweep_gesture((190.0, 190.0), (290.0, 290.0), plain());
         assert_eq!(model::selection().get_untracked(), vec![id]);
 
-        // The same numbers read as MODEL coordinates would land on the shape; as screen
+        // The same numbers read as model coordinates would land on the shape; as screen
         // coordinates at 2x they fall short of it, and nothing is caught.
         model::selection().set(Vec::new());
         sweep_gesture((90.0, 90.0), (150.0, 150.0), plain());
@@ -2085,7 +2085,7 @@ mod tests {
         let other = rect_at(200.0, 200.0, 30.0, 30.0);
         model::selection().set(Vec::new());
 
-        // A drag from inside the shape is a MOVE — the band must not steal it, and the shape
+        // A drag from inside the shape is a move: the band must not steal it, and the shape
         // must not select the far one it sweeps past on the way.
         sweep_gesture((20.0, 20.0), (240.0, 240.0), plain());
         assert_eq!(band().get_untracked(), None);
@@ -2144,8 +2144,8 @@ mod tests {
 
     #[test]
     fn a_band_anchors_at_the_press_even_when_began_arrives_late() {
-        // appkit reports Began on the FIRST drag event, at that point, with the translation
-        // from the press already applied — so the press is `location - translation`, and a
+        // appkit reports Began on the first drag event, at that point, with the translation
+        // from the press already applied, so the press is `location - translation`, and a
         // band that anchored on `location` would sit a whole opening move to one side.
         let _doc = install_test_doc();
         unzoomed();
@@ -2196,7 +2196,7 @@ mod tests {
         );
         assert!(model::selection().get_untracked().is_empty());
 
-        // ⌫ is the same command — a laptop keyboard has no Del.
+        // ⌫ is the same command; a laptop keyboard has no Del.
         model::selection().set(vec![b]);
         canvas_key(&key("Backspace"), true);
         day::reactive::flush_sync();
@@ -2276,7 +2276,7 @@ mod tests {
     // Only the columns a gesture actually moved
     // -----------------------------------------------------------------------
 
-    /// Run a whole drag — press, several moves, release — and return the SQL one flush issues.
+    /// Run a whole drag (press, several moves, release) and return the SQL one flush issues.
     fn drag_sql(doc: &Rc<crate::model::Doc>, from: (f64, f64), to: (f64, f64)) -> Vec<String> {
         let container = doc
             .container
@@ -2367,7 +2367,7 @@ mod tests {
     #[test]
     fn the_next_drag_undoes_to_its_own_starting_point() {
         // A field that sat out one gesture still records the next one correctly: the sideways
-        // drag leaves y alone, and the drag after it must still undo y to where THAT drag
+        // drag leaves y alone, and the drag after it must still undo y to where that drag
         // found it.
         let doc = install_test_doc();
         unzoomed();
@@ -2481,7 +2481,7 @@ mod tests {
         let (g, a, b) = pair_group();
         assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 40.0)));
 
-        // A quarter turn about the group's centre (100, 20): the members ORBIT it. `a`'s
+        // A quarter turn about the group's centre (100, 20): the members orbit it. `a`'s
         // centre (20, 20) swings to (100, -60); `b`'s (180, 20) to (100, 100).
         model::set_rotation(g, 90.0, true);
         day::reactive::flush_sync();
@@ -2494,8 +2494,8 @@ mod tests {
         assert_eq!(model::nodes().elem(b).rotation().peek(), 90.0);
         assert_eq!(model::nodes().elem(g).rotation().peek(), 90.0);
 
-        // The outline follows the turned body: the bounds are ALWAYS the box around what is
-        // actually on the canvas — a 200-wide pair turned upright reads 40 wide, 200 tall.
+        // The outline follows the turned body: the bounds are always the box around what is
+        // on the canvas; a 200-wide pair turned upright reads 40 wide, 200 tall.
         assert_eq!(model::node_bounds(g), Some((80.0, -80.0, 40.0, 200.0)));
     }
 
@@ -2526,7 +2526,7 @@ mod tests {
         day::reactive::flush_sync();
         let before = centre(a);
 
-        // Drag the group by (50, 30) — from a point that is on a member, wherever it has
+        // Drag the group by (50, 30), from a point that is on a member, wherever it has
         // swung to.
         let (mx, my) = centre(a);
         model::selection().set(vec![g]);
@@ -2541,7 +2541,7 @@ mod tests {
             "the outline travelled with the members"
         );
         // And the next turn pivots on the members' collective centre, which moved with them
-        // to (150, 50). The angle is ABSOLUTE, so going to 180 from 90 turns by 90: `a`'s
+        // to (150, 50). The angle is absolute, so going to 180 from 90 turns by 90: `a`'s
         // centre (150, -30) swings a quarter about (150, 50) and lands at (230, 50).
         model::set_rotation(g, 180.0, true);
         day::reactive::flush_sync();
@@ -2550,8 +2550,8 @@ mod tests {
 
     #[test]
     fn group_bounds_always_rederive_from_the_members() {
-        // The reported bug: move a member OUT of the grouped arrangement and re-select the
-        // group — the outline used to be the group's stored frame, frozen at grouping time.
+        // The reported bug: move a member out of the grouped arrangement and re-select the
+        // group; the outline used to be the group's stored frame, frozen at grouping time.
         let _doc = install_test_doc();
         unzoomed();
         let (g, a, _b) = pair_group();
@@ -2567,8 +2567,8 @@ mod tests {
         model::selection().set(vec![g]);
         assert_eq!(model::node_bounds(g), Some((0.0, 0.0, 200.0, 340.0)));
 
-        // A member's TURN widens the box too: the outline covers what the member visually
-        // occupies, not just its unrotated frame. `b` is 40×40 at (160, 0); at 45° its
+        // A member's turn widens the box too: the outline covers what the member visually
+        // occupies rather than its unrotated frame. `b` is 40×40 at (160, 0); at 45° its
         // corners reach √2·20 ≈ 28.28 from its centre (180, 20).
         model::set_rotation(_b, 45.0, true);
         day::reactive::flush_sync();
@@ -2588,7 +2588,7 @@ mod tests {
             "bottom still a's edge: {bh}"
         );
 
-        // And an EMPTY group has no bounds at all rather than a stale box.
+        // And an empty group has no bounds at all rather than a stale box.
         model::reparent(a, None, None);
         model::reparent(_b, None, None);
         day::reactive::flush_sync();
@@ -2603,14 +2603,14 @@ mod tests {
         model::set_rotation(id, 90.0, true);
         day::reactive::flush_sync();
         assert_eq!(model::nodes().elem(id).rotation().peek(), 90.0);
-        // Its stored frame is untouched — a shape turns where it stands.
+        // Its stored frame is untouched: a shape turns where it stands.
         assert_eq!(model::node_bounds(id), Some((100.0, 100.0, 40.0, 20.0)));
     }
 
     #[test]
     fn a_group_of_lines_turns_by_moving_their_ends() {
         // A line carries no angle of its own, so a group containing one turns it by moving
-        // both ends — the only thing that means anything for a line.
+        // both ends, the only thing that means anything for a line.
         let _doc = install_test_doc();
         unzoomed();
         let l = model::place_shape(NodeKind::Line, 0.0, 0.0);
@@ -2675,7 +2675,7 @@ mod tests {
         day::reactive::flush_sync();
         model::selection().set(vec![id]);
 
-        // Its handles are the two ENDS…
+        // Its handles are the two ends…
         assert_eq!(
             hit_handle(10.0, 20.0),
             Some((id, Handle::End(LineEnd::Start)))
@@ -2692,17 +2692,17 @@ mod tests {
     fn dragging_one_end_of_a_line_leaves_the_other_alone() {
         let start = (10.0, 20.0, 60.0, 40.0); // (10,20) → (70,60)
 
-        // The END follows the pointer; the start is untouched.
+        // The end follows the pointer; the start is untouched.
         let f = line_dragged(start, LineEnd::End, 5.0, -10.0);
         assert_eq!(f, (10.0, 20.0, 65.0, 30.0));
 
-        // Moving the START moves the origin, and the deltas absorb it so the far end holds
+        // Moving the start moves the origin, and the deltas absorb it so the far end holds
         // exactly still.
         let f = line_dragged(start, LineEnd::Start, 5.0, -10.0);
         assert_eq!(f, (15.0, 10.0, 55.0, 50.0));
         assert_eq!((f.0 + f.2, f.1 + f.3), (70.0, 60.0), "the far end is fixed");
 
-        // A drag past the far end simply flips the direction — the fields go negative and the
+        // A drag past the far end flips the direction: the fields go negative and the
         // frame normalizes, rather than the line refusing to cross itself.
         let f = line_dragged(start, LineEnd::Start, 100.0, 0.0);
         assert!(f.2 < 0.0, "{f:?}");
@@ -2732,8 +2732,8 @@ mod tests {
         let _id = turned(90.0);
         let start = (0.0, 0.0, 96.0, 64.0);
 
-        // Under a quarter turn the shape's own +x axis points DOWN the screen, so a downward
-        // pull is the one that lengthens it — the same gesture that widened it upright.
+        // Under a quarter turn the shape's +x axis points down the screen, so a downward
+        // pull is the one that lengthens it, the same gesture that widened it upright.
         let f = resized_under_rotation(start, Corner::BottomRight, 0.0, 20.0, 90.0);
         assert!(
             (f.2 - 116.0).abs() < 0.001,
@@ -2777,7 +2777,7 @@ mod tests {
         assert!((size - 48.0).abs() < 1e-6);
         assert!((f.0 + f.2 - (100.0 + w0)).abs() < 1e-6);
         assert!((f.1 + f.3 - (100.0 + h0)).abs() < 1e-6);
-        // Pushing the corner INTO the held one shrinks the type down to the floor.
+        // Pushing the corner into the held one shrinks the type down to the floor.
         let (_, size) = scaled(
             start,
             Corner::BottomRight,
@@ -2826,7 +2826,7 @@ mod tests {
         unzoomed();
         crate::snap_enabled().set(true);
         let a = rect_at(10.0, 10.0, 40.0, 40.0);
-        // Shorter than A, so only its TOP lines up with A's (equal boxes align at the top,
+        // Shorter than A, so only its top lines up with A's (equal boxes align at the top,
         // the middle and the bottom at once, and show all three guides).
         let b = rect_at(100.0, 13.0, 40.0, 24.0);
         let store = model::nodes();
@@ -2886,7 +2886,7 @@ mod tests {
         model::selection().set(vec![b]);
         let store = model::nodes();
         // Pull B's bottom-right corner up by 16: its bottom sits at 54, within reach of A's
-        // bottom at 50, and snaps onto it — the width follows the pointer.
+        // bottom at 50, and snaps onto it; the width follows the pointer.
         let (cx, cy) = corner(b, Corner::BottomRight);
         let op = Rc::new(RefCell::new(DragOp::Idle));
         let at = |phase, (x, y): (f64, f64)| Drag {

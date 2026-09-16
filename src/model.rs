@@ -1,17 +1,17 @@
 //! The scene, the document, and every undoable operation.
 //!
-//! A drawing IS a SQLite file: each document opens as its own `ModelContainer` with its own
-//! change log and its own undo stack, autosaved at every turn's end — Open is open, Save is
+//! A drawing is a SQLite file: each document opens as its own `ModelContainer`, with its own
+//! change log and undo stack, autosaved at every turn's end. Open is open, Save is
 //! autosave, and Export a Copy is a consistent `backup_to` snapshot delivered through the
-//! platform's save dialog. The whole scene is ONE table (https://daybrite.dev/docs/persistence):
-//! a heterogeneous tree of rows whose `kind` says what the geometry columns mean — a `Group`
-//! row is just a node whose children point at it and whose own frame is derived, never stored.
+//! platform's save dialog. The whole scene is one table (https://daybrite.dev/docs/persistence):
+//! a heterogeneous tree of rows whose `kind` says what the geometry columns mean; a `Group`
+//! row is just a node whose children point at it and whose frame is derived, never stored.
 //!
-//! Every operation in this file lands inside one event turn, and a TURN is the unit of undo —
+//! Every operation in this file lands inside one event turn, and a turn is the unit of undo,
 //! so "group five shapes" or "drag a corner" is one step backward, with no bookkeeping here.
 //! The web build opens the same container through the day-sql worker (docs/persistence.md):
 //! SQLite holds the file on real OPFS, every statement crosses a synchronous channel, and a
-//! commit that returned has been fsynced — the same open/flush/undo shape as the desktop,
+//! commit that returned has been fsynced: the same open/flush/undo shape as the desktop,
 //! with the "path" serving as the document's name in the origin's pool.
 
 use day::model::{Op, UndoStack};
@@ -23,7 +23,7 @@ use std::rc::Rc;
 pub(crate) const MIN_SIZE: f64 = 8.0;
 pub(crate) const DEFAULT_W: f64 = 96.0;
 pub(crate) const DEFAULT_H: f64 = 64.0;
-/// A new line's length — longer than a rectangle is wide, since a line has only the one
+/// A new line's length: longer than a rectangle is wide, since a line has only the one
 /// dimension to read.
 pub(crate) const DEFAULT_LINE: f64 = 144.0;
 /// A new text node's point size, and the range a corner drag, a typed size, or a typed
@@ -39,28 +39,28 @@ const PALETTE: [&str; 6] = [
 // The scene model
 // ---------------------------------------------------------------------------
 
-/// What a node IS. Every `match` on this in the app is exhaustive on purpose — no `_` arm —
-/// so adding a kind here makes the compiler walk you through drawing it, hitting it, writing
+/// What a node is. Every `match` on this in the app is exhaustive, with no `_` arm, so
+/// adding a kind here makes the compiler walk you through drawing it, hitting it, writing
 /// it out, and inspecting it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum NodeKind {
     #[default]
     Rect,
     Oval,
-    /// A segment from the frame's ORIGIN to its far point: `(x, y)` is the start and
-    /// `(x + w, y + h)` the end, so `w`/`h` are SIGNED and a line can run in any direction.
+    /// A segment from the frame's origin to its far point: `(x, y)` is the start and
+    /// `(x + w, y + h)` the end, so `w`/`h` are signed and a line can run in any direction.
     /// [`node_bounds`] normalizes that into the rectangle everything else (selection, group
     /// unions, the inspector's fields) works in.
     Line,
     Group,
-    /// One line of type. Its frame is the MEASURED extent of `text` at `font_size` in its
+    /// One line of type. Its frame is the measured extent of `text` at `font_size` in its
     /// font, never typed or dragged directly: a corner drag scales the point size, and
     /// [`refit_text`] re-derives `w`/`h` after every edit (and once at open, since another
     /// platform's fonts measure differently). The fill is the text's color; it never strokes.
     Text,
 }
 
-/// TEXT in the file (`rect`/`oval`/`group`) — readable by any SQLite tool, stable for SVG later.
+/// `TEXT` in the file (`rect`/`oval`/`group`): readable by any SQLite tool, stable for SVG later.
 impl day::persistence::ColumnValue for NodeKind {
     const SQL_TYPE: day::persistence::SqlType = day::persistence::SqlType::Text;
     fn to_sqlite_value(&self) -> day::persistence::Value {
@@ -96,13 +96,13 @@ pub(crate) struct Node {
     #[model(id)]
     pub id: u64,
     /// The tree: a top-level node's parent is NULL; a group's children point at it. The
-    /// reference is the single source of truth — `children` below is an index over it.
+    /// reference is where the tree is stored; `children` below is an index over it.
     pub parent: Option<One<Node>>,
-    /// Sibling order, bottom to top. Fractional: moving a layer writes ONE row. Maintained
+    /// Sibling order, bottom to top. Fractional: moving a layer writes one row. Maintained
     /// by the ordered relation, so an arrange is `move_to` rather than hand-rolled halving.
     pub z: f64,
-    /// A group's contents, in z order — the framework's index over `parent`, so reading them
-    /// is O(1) and TRACKED at one path instead of a scan that subscribes to every node.
+    /// A group's contents, in z order: the framework's index over `parent`, so reading them
+    /// is O(1) and tracked at one path instead of a scan that subscribes to every node.
     /// `cascade`: deleting a group takes its subtree, through the normal pipeline, as one
     /// undo unit.
     #[model(relation(target = Node, inverse = "parent", delete = "cascade", ordered = "z"))]
@@ -112,47 +112,47 @@ pub(crate) struct Node {
     pub y: f64,
     pub w: f64,
     pub h: f64,
-    /// `#RRGGBB` — the color well's currency, and SVG's `fill`.
+    /// `#RRGGBB`: the color well's currency, and SVG's `fill`.
     pub fill: String,
-    /// 0..=1 — SVG's `fill-opacity`.
+    /// 0..=1: SVG's `fill-opacity`.
     pub fill_opacity: f64,
-    /// `#RRGGBB` — SVG's `stroke`.
+    /// `#RRGGBB`: SVG's `stroke`.
     pub stroke: String,
-    /// Points — SVG's `stroke-width`; 0 draws no outline.
+    /// Points: SVG's `stroke-width`; 0 draws no outline.
     pub stroke_width: f64,
-    /// 0..=1 — SVG's `stroke-opacity`.
+    /// 0..=1: SVG's `stroke-opacity`.
     pub stroke_opacity: f64,
-    /// Degrees clockwise about the shape's own center, 0..360 — SVG's `transform="rotate(…)"`.
+    /// Degrees clockwise about the shape's center, 0..360: SVG's `transform="rotate(…)"`.
     pub rotation: f64,
-    /// Corner rounding in points — SVG's `rx`/`ry` on a `<rect>`. Rectangles only: an oval has
+    /// Corner rounding in points: SVG's `rx`/`ry` on a `<rect>`. Rectangles only: an oval has
     /// no corners, and the inspector hides the row rather than showing a dead field.
     pub corner_radius: f64,
-    /// A text node's one line — SVG's `<text>` content. Empty for every other kind.
+    /// A text node's one line: SVG's `<text>` content. Empty for every other kind.
     pub text: String,
-    /// A text node's family, as `day::font_families` names it; empty = the platform's own
-    /// face — SVG's `font-family`.
+    /// A text node's family (SVG's `font-family`), as `day::font_families` names it; empty =
+    /// the platform's face.
     pub font_family: String,
-    /// A text node's weight as the CSS number (100 … 900) — SVG's `font-weight`.
+    /// A text node's weight as the CSS number (100 … 900): SVG's `font-weight`.
     pub font_weight: i64,
-    /// A text node's slant — SVG's `font-style="italic"`.
+    /// A text node's slant: SVG's `font-style="italic"`.
     pub font_italic: bool,
-    /// A text node's point size — SVG's `font-size`.
+    /// A text node's point size: SVG's `font-size`.
     pub font_size: f64,
 }
 
-/// Document-level settings: ONE row (id 1), seeded at open. A second model in the same
-/// container, so its writes ride the same change log, autosave, and undo stack as the scene —
+/// Document-level settings: One row (id 1), seeded at open. A second model in the same
+/// container, so its writes ride the same change log, autosave, and undo stack as the scene;
 /// a background change is one UPDATE and one undo unit with zero extra wiring.
 #[derive(Clone, PartialEq, Model)]
 #[model(table = "doc")]
 pub(crate) struct DocMeta {
     #[model(id)]
     pub id: u64,
-    /// `#RRGGBB` — the canvas background.
+    /// `#RRGGBB`: the canvas background.
     pub background: String,
 }
 
-/// White: a drawing is paper, in both themes — and the value migration seeds into files from
+/// White: a drawing is paper, in both themes, and the value migration seeds into files from
 /// before the `doc` table existed.
 impl Default for DocMeta {
     fn default() -> Self {
@@ -166,8 +166,8 @@ impl Default for DocMeta {
 /// The settings row's fixed id.
 const META_ROW: u64 = 1;
 
-/// Hand-written because these ARE the values lightweight migration backfills into a file from
-/// before the style columns existed (docs/persistence.md) — and the stroke trio reproduces the
+/// Hand-written because these are the values lightweight migration backfills into a file from
+/// before the style columns existed (docs/persistence.md), and the stroke trio reproduces the
 /// hairline every drawing had then: black at 35%, one point wide.
 impl Default for Node {
     fn default() -> Self {
@@ -205,19 +205,19 @@ pub(crate) struct Doc {
     pub store: Store<Keyed<Node>>,
     pub meta: Store<Keyed<DocMeta>>,
     pub container: Option<day::persistence::ModelContainer>,
-    /// The top-level nodes, in z order — see [`doc_from_driver_inner`].
+    /// The top-level nodes, in z order; see [`doc_from_driver_inner`].
     pub roots: day::persistence::Query<Node>,
     pub stack: UndoStack,
     pub path: Option<PathBuf>,
 }
 
-/// The open DRAWING — app-wide (docs/state.md), not per-window. Two windows edit the same
+/// The open drawing: app-wide (docs/state.md), not per-window. Two windows edit the same
 /// document, the way two windows on one Illustrator file do; what differs between them is the
 /// view, which lives on `crate::Scene`.
 #[derive(Clone)]
 struct Document {
     doc: Rc<RefCell<Option<Rc<Doc>>>>,
-    /// Bumped whenever a DIFFERENT document becomes current; the editor rebuilds off it.
+    /// Bumped whenever a different document becomes current; the editor rebuilds off it.
     rev: Signal<u64>,
 }
 
@@ -247,10 +247,10 @@ pub(crate) fn doc() -> Rc<Doc> {
             }
         }
     };
-    // The BOOT document must reach the platform exactly like a New/Open one: without this,
+    // The boot document must reach the platform exactly like a New/Open one: without this,
     // the undo bridge stays uninstalled until the first File ▸ New and the stock Edit ▸
     // Undo/Redo sit dead on a fresh launch (the borrow is released above, so the wiring's
-    // own doc() reads cannot re-enter it).
+    // doc() reads cannot re-enter it).
     if fresh {
         wire_undo(&doc);
     }
@@ -258,10 +258,10 @@ pub(crate) fn doc() -> Rc<Doc> {
 }
 
 /// Selection rides the history transiently (docs/model.md "Transient UI state"): every
-/// undo/redo lands on the selection as it stood when that unit SEALED — so "select A, move
+/// undo/redo lands on the selection as it stood when that unit sealed, so "select A, move
 /// it, select B, move it, undo" lands on A, and the switch to B (a between-units change) is
 /// nowhere. In-memory only; the base snapshot, restored when the whole history unwinds, is
-/// taken here — callers wire a document whose selection is already the fresh one.
+/// taken here; callers wire a document whose selection is already the fresh one.
 fn wire_selection_context(stack: &UndoStack) {
     stack.set_transient_context(
         || Rc::new(selection().get_untracked()),
@@ -274,7 +274,7 @@ fn wire_selection_context(stack: &UndoStack) {
 }
 
 /// Wire a document's undo stack to the platform: the bridge (stock menu items, ⌘Z, shake)
-/// plus the app's undo-unit labels. Every path a document becomes CURRENT through runs this —
+/// plus the app's undo-unit labels. Every path a document becomes current through runs this:
 /// the boot default above, and [`install_doc`] for New/Open.
 fn wire_undo(doc: &Doc) {
     day::install_undo(&doc.stack);
@@ -314,7 +314,7 @@ pub(crate) fn meta() -> Store<Keyed<DocMeta>> {
     doc().meta
 }
 
-/// The canvas background, tracked — the draw and the color well both follow a change live.
+/// The canvas background, tracked: the draw and the color well both follow a change live.
 pub(crate) fn background() -> String {
     meta()
         .elem(META_ROW)
@@ -322,7 +322,7 @@ pub(crate) fn background() -> String {
         .with(|b| b.cloned().unwrap_or_else(|| DocMeta::default().background))
 }
 
-/// Set the background as ONE labeled undo unit — the Canvas tab's color well.
+/// Set the background as one labeled undo unit (the Canvas tab's color well).
 pub(crate) fn set_background(hex: &str) {
     let hex = hex.to_string();
     undo_stack().grouped("background", || {
@@ -330,8 +330,8 @@ pub(crate) fn set_background(hex: &str) {
     });
 }
 
-/// Seed the settings row into a store that lacks it. Runs BEFORE the undo stack watches the
-/// store, so a fresh (or pre-`doc`-table) file opens without an undoable unit — the seed is
+/// Seed the settings row into a store that lacks it. Runs before the undo stack watches the
+/// store, so a fresh (or pre-`doc`-table) file opens without an undoable unit; the seed is
 /// backfill, like a migration.
 fn ensure_meta(meta: Store<Keyed<DocMeta>>) {
     if meta.with_untracked(|k| k.get(META_ROW).is_none()) {
@@ -348,7 +348,7 @@ pub(crate) fn undo_stack() -> UndoStack {
     doc().stack.clone()
 }
 
-/// The document's display name — the file stem, or "Untitled" in memory (web).
+/// The document's display name: the file stem, or "Untitled" in memory (web).
 pub(crate) fn doc_name() -> String {
     doc()
         .path
@@ -360,7 +360,7 @@ pub(crate) fn doc_name() -> String {
 
 fn install_doc(doc: Doc) {
     let doc = Rc::new(doc);
-    // Clear the selection BEFORE wiring: the context hook's base snapshot must be the fresh
+    // Clear the selection before wiring: the context hook's base snapshot must be the fresh
     // document's empty selection, not whatever the outgoing document had selected.
     selection().set(Vec::new());
     wire_undo(&doc);
@@ -383,7 +383,7 @@ fn open_default() -> Doc {
 }
 
 /// The web default: the remembered (or default) drawing out of the origin's OPFS pool,
-/// opened synchronously — the day-sql worker is up before app code runs. No channel (a host
+/// opened synchronously (the day-sql worker is up before app code runs). No channel (a host
 /// without cross-origin isolation) falls back to an in-memory scene: a working editor, just
 /// not persistent.
 #[cfg(target_arch = "wasm32")]
@@ -408,10 +408,10 @@ fn default_path() -> Option<PathBuf> {
         .map(|d| d.join(DEFAULT_FILE))
 }
 
-/// Statement logging in debug builds: every SQL the engine executes for this document —
-/// migrations, autosave flushes, undo replays, live queries — through the engine's own trace
+/// Statement logging in debug builds: every SQL the engine executes for this document
+/// (migrations, autosave flushes, undo replays, live queries) through the engine's trace
 /// (docs/persistence.md), at `trace!` because it is a per-statement firehose (docs/logging.md).
-/// `DAY_LOG=trace` shows it; anything less hides it, which is the point of a level. The
+/// `DAY_LOG=trace` shows it; anything less hides it, which is what a level is for. The
 /// `cfg!(debug_assertions)` guard stays: a release build should not pay to format SQL it will
 /// then discard.
 fn traced(driver: day::persistence::Sqlite) -> day::persistence::Sqlite {
@@ -431,7 +431,7 @@ fn doc_from_driver(driver: day::persistence::Sqlite, path: Option<PathBuf>) -> D
     }
 }
 
-/// The open itself, fallible — so [`memory_doc`] can call it without the fallback recursing
+/// The open itself, fallible, so [`memory_doc`] can call it without the fallback recursing
 /// into itself.
 fn doc_from_driver_inner(
     driver: day::persistence::Sqlite,
@@ -439,8 +439,8 @@ fn doc_from_driver_inner(
 ) -> Result<Doc, day::persistence::DbError> {
     let container =
         day::persistence::ModelContainer::open(driver, day::persistence::schema![Node, DocMeta])?;
-    // A sketch is a DOCUMENT: the canvas draws the whole scene, so the whole scene is the
-    // working set — lift the cache bound and warm every table (the lazy engine loads nothing
+    // A sketch is a document: the canvas draws the whole scene, so the whole scene is the
+    // working set. Lift the cache bound and warm every table (the lazy engine loads nothing
     // at open).
     container.set_cache_limit(usize::MAX);
     container.warm::<Node>()?;
@@ -449,11 +449,11 @@ fn doc_from_driver_inner(
     let meta = container.cache::<DocMeta>();
     ensure_meta(meta);
     // Text frames are this platform's measurement of their type, so a file made elsewhere
-    // re-measures here — BEFORE the undo stack watches, so the refit is backfill, not history.
+    // re-measures here, before the undo stack watches, so the refit is backfill, not history.
     refit_all_text(store);
     let stack = container.undo(1000);
-    // The top level of the scene, kept live. A relation hangs off a parent ROW, and the top
-    // level has no such row — so the roots are a query over "no parent", maintained
+    // The top level of the scene, kept live. A relation hangs off a parent row, and the top
+    // level has no such row, so the roots are a query over "no parent", maintained
     // incrementally and read as a tracked list exactly like a group's children.
     let roots = container
         .query::<Node>()
@@ -477,7 +477,7 @@ fn open_file_doc(path: PathBuf) -> Doc {
     doc_from_driver(traced(day::persistence::Sqlite::at(&path)), Some(path))
 }
 
-/// The fallback document: in memory, but still a CONTAINER — relations are wired by the
+/// The fallback document: in memory, but still a container. Relations are wired by the
 /// container, so a bare store would leave the scene graph with no `children` index at all.
 /// An in-memory SQLite costs nothing and keeps every document shape identical.
 fn memory_doc() -> Doc {
@@ -525,9 +525,9 @@ pub(crate) fn new_doc() {
     install_doc(open_file_doc(PathBuf::from(name)));
 }
 
-/// File ▸ Open…: the platform picker. A file with a local path opens IN PLACE; a provider
-/// document (mobile content URI) is imported — copied into the app's documents and opened
-/// there, which is the honest cross-platform reading of "open".
+/// File ▸ Open…: the platform picker. A file with a local path opens in place; a provider
+/// document (mobile content URI) is imported, copied into the app's documents and opened
+/// there, which is the cross-platform reading of "open".
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn open_doc_dialog() {
     day::task(async {
@@ -559,7 +559,7 @@ pub(crate) fn open_doc_dialog() {
 
 /// File ▸ Open… on the web: the browser picker. The picked bytes import into the OPFS pool
 /// under the file's own name (replacing a same-named drawing), then open as the current
-/// document — every open is an import, since a picked browser file has no in-place identity.
+/// document; every open is an import, since a picked browser file has no in-place identity.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn open_doc_dialog() {
     day::task(async {
@@ -582,8 +582,8 @@ pub(crate) fn open_doc_dialog() {
     });
 }
 
-/// File ▸ Export a Copy…: flush, snapshot (`backup_to` — consistent mid-write), and hand the
-/// bytes to the platform's save dialog. Editing continues on the CURRENT file.
+/// File ▸ Export a Copy…: flush, snapshot (`backup_to`, consistent mid-write), and hand the
+/// bytes to the platform's save dialog. Editing continues on the current file.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn export_copy_dialog() {
     let d = doc();
@@ -610,8 +610,8 @@ pub(crate) fn export_copy_dialog() {
 }
 
 /// File ▸ Export a Copy… on the web: flush, export the database image from the in-memory
-/// pool, and hand the bytes to the browser's download. The OPFS mirror is not consulted —
-/// the pool IS the current state.
+/// pool, and hand the bytes to the browser's download. The OPFS mirror is not consulted;
+/// the pool is the current state.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn export_copy_dialog() {
     let d = doc();
@@ -641,11 +641,11 @@ pub(crate) fn export_copy_dialog() {
 }
 
 // ---------------------------------------------------------------------------
-// Editor state (per app, not per document — deliberately outside the store, so selecting is
-// never an undo step and never a row)
+// Editor state (per app, not per document, and outside the store, so selecting is never an
+// undo step and never a row)
 // ---------------------------------------------------------------------------
 
-/// The selected TOP-LEVEL node ids, in selection order.
+/// The selected top-level node ids, in selection order.
 pub(crate) fn selection() -> Signal<Vec<u64>> {
     crate::scene().selection
 }
@@ -658,12 +658,12 @@ fn next_id(store: Store<Keyed<Node>>) -> u64 {
     store.with_untracked(|k| k.items().iter().map(|n| n.id).max().unwrap_or(0)) + 1
 }
 
-/// Children of `parent`, bottom→top — O(1) from the relation index, already in z order.
+/// Children of `parent`, bottom→top: O(1) from the relation index, already in z order.
 /// `None` asks for the top level, which is the document's live root query.
 ///
-/// TRACKED: reading a group's children subscribes to that group's relation path, and reading
-/// the roots subscribes to the root query. Either way it is ONE dependency, not one per node
-/// — which is what lets the canvas repaint on an arrange without waking on every unrelated
+/// Tracked: reading a group's children subscribes to that group's relation path, and reading
+/// the roots subscribes to the root query. Either way it is one dependency, not one per node,
+/// which is what lets the canvas repaint on an arrange without waking on every unrelated
 /// field in the document.
 pub(crate) fn children_of(parent: Option<u64>) -> Vec<u64> {
     match parent {
@@ -683,24 +683,24 @@ pub(crate) fn children_of(parent: Option<u64>) -> Vec<u64> {
     }
 }
 
-/// Select every top-level node, in z order — Edit ▸ Select All through the edit bridge.
+/// Select every top-level node, in z order: Edit ▸ Select All through the edit bridge.
 pub(crate) fn select_all() {
     selection().set(children_of(None));
 }
 
-/// Which groups the layers tree shows open. Session state, not document state — per-run like
+/// Which groups the layers tree shows open. Session state, not document state: per-run like
 /// the inspector's visibility, and shared as a signal so grouping can disclose the new group.
 pub(crate) fn open_groups() -> Signal<std::collections::HashSet<u64>> {
     crate::scene().open_groups
 }
 
-/// A node's kind, untracked — the layers tree's branch/leaf rule and its labels read it
+/// A node's kind, untracked: the layers tree's branch/leaf rule and its labels read it
 /// outside any reactive scope (guards, type-ahead).
 pub(crate) fn node_kind(id: u64) -> Option<NodeKind> {
     nodes().with_untracked(|k| k.get(id).map(|n| n.kind))
 }
 
-/// A layer row's display name — the node's kind plus its id ("Rectangle 3"), which is also
+/// A layer row's display name: the node's kind plus its id ("Rectangle 3"), which is also
 /// the tree's type-ahead text.
 pub(crate) fn layer_label(kind: NodeKind, id: u64) -> String {
     let n = id as i64;
@@ -723,7 +723,7 @@ pub(crate) fn parent_of(id: u64) -> Option<u64> {
         .map(|p| p.handle())
 }
 
-/// The child of `ancestor` that lies on the path down to `descendant` — the double-click
+/// The child of `ancestor` that lies on the path down to `descendant`, the double-click
 /// drill's next selection (docs/tree.md's canvas counterpart). `None` when `ancestor` is not
 /// a proper ancestor of `descendant`.
 pub(crate) fn child_toward(ancestor: u64, descendant: u64) -> Option<u64> {
@@ -737,7 +737,7 @@ pub(crate) fn child_toward(ancestor: u64, descendant: u64) -> Option<u64> {
     }
 }
 
-/// Is `node` inside `ancestor`'s subtree — or the node itself?
+/// Is `node` inside `ancestor`'s subtree, or the node itself?
 pub(crate) fn is_within(node: u64, ancestor: u64) -> bool {
     let mut cur = Some(node);
     while let Some(c) = cur {
@@ -750,15 +750,15 @@ pub(crate) fn is_within(node: u64, ancestor: u64) -> bool {
 }
 
 /// Move `id` under `new_parent` (`None` = the top level) at `index` among the target's
-/// children, bottom→top (`None` = on top of them) — the layers tree's drop commit, as ONE
-/// undo unit. `index` counts the target's children BEFORE the move (the drop vocabulary
+/// children, bottom→top (`None` = on top of them): the layers tree's drop commit, as one
+/// undo unit. `index` counts the target's children before the move (the drop vocabulary
 /// native trees speak, docs/tree.md), so a same-parent move past its own old slot lands
 /// where the user aimed rather than one row short.
 pub(crate) fn reparent(id: u64, new_parent: Option<u64>, index: Option<usize>) {
     undo_stack().grouped("reparent", || reparent_now(id, new_parent, index));
 }
 
-/// [`reparent`]'s body, WITHOUT the undo grouping — so a multi-node operation (Remove from
+/// [`reparent`]'s body, without the undo grouping, so a multi-node operation (Remove from
 /// Group) can wrap several moves in one unit.
 fn reparent_now(id: u64, new_parent: Option<u64>, index: Option<usize>) {
     let store = nodes();
@@ -781,7 +781,7 @@ fn reparent_now(id: u64, new_parent: Option<u64>, index: Option<usize>) {
     }
     let old_parent = parent_of(id);
     let before = children_of(new_parent);
-    // The final resting position among the target's OTHER children.
+    // The final resting position among the target's other children.
     let old_pos = (old_parent == new_parent)
         .then(|| before.iter().position(|s| *s == id))
         .flatten();
@@ -803,12 +803,12 @@ fn reparent_now(id: u64, new_parent: Option<u64>, index: Option<usize>) {
     }
     match new_parent {
         // The ordered relation places it: `target` is the final index among the
-        // siblings (self included — it is one of them by now).
+        // siblings (self included; it is one of them by now).
         Some(p) => {
             store.elem(p).children().move_to(id, target);
         }
-        // The top level hangs off no parent row — the same fractional-z scheme
-        // `arrange_selection` uses, against the OTHER roots.
+        // The top level hangs off no parent row: the same fractional-z scheme
+        // `arrange_selection` uses, against the other roots.
         None => {
             let others: Vec<u64> = children_of(None).into_iter().filter(|s| *s != id).collect();
             let z_of = |i: usize| store.elem(others[i]).z().peek();
@@ -826,8 +826,8 @@ fn reparent_now(id: u64, new_parent: Option<u64>, index: Option<usize>) {
     }
 }
 
-/// Move every selected node that sits inside a group out to the TOP LEVEL (on top, in
-/// selection order) — the context menu's "Remove from Group", one undo unit.
+/// Move every selected node that sits inside a group out to the top level (on top, in
+/// selection order): the context menu's "Remove from Group", one undo unit.
 pub(crate) fn remove_selection_from_group() {
     let sel: Vec<u64> = selection()
         .get_untracked()
@@ -844,8 +844,8 @@ pub(crate) fn remove_selection_from_group() {
     });
 }
 
-/// Duplicate the selection in place (offset, on top, selected) — the same insert path a
-/// paste takes, WITHOUT touching the system clipboard.
+/// Duplicate the selection in place (offset, on top, selected): the same insert path a
+/// paste takes, without touching the system clipboard.
 pub(crate) fn duplicate_selection() {
     let Some(svg) = copy_selection_svg() else {
         return;
@@ -853,7 +853,7 @@ pub(crate) fn duplicate_selection() {
     paste_text(&svg, "duplicate");
 }
 
-/// Move the selection by (dx, dy) as ONE undo unit — the arrow keys' work (1px, or 10 with
+/// Move the selection by (dx, dy) as one undo unit: the arrow keys' work (1px, or 10 with
 /// shift). A no-op with nothing selected.
 pub(crate) fn nudge_selection(dx: f64, dy: f64) {
     let sel = selection().get_untracked();
@@ -867,7 +867,7 @@ pub(crate) fn nudge_selection(dx: f64, dy: f64) {
                 let e = store.elem(s);
                 // Only the axis the key moves. An arrow changes exactly one coordinate, and
                 // writing the other back unchanged would put a column in the `UPDATE` with
-                // nothing to say. Nothing to cancel here the way a drag has (`canvas::seal`) —
+                // nothing to say. Nothing to cancel here the way a drag has (`canvas::seal`):
                 // a nudge is one keystroke, so no preview session was ever opened.
                 if dx != 0.0 {
                     e.x().write_commit(e.x().peek() + dx);
@@ -894,7 +894,7 @@ pub(crate) fn shape_descendants(id: u64) -> Vec<u64> {
     }
 }
 
-/// The top-level ancestor of `id` — what a tap on a grouped shape selects.
+/// The top-level ancestor of `id`: what a tap on a grouped shape selects.
 #[allow(dead_code)] // the layers panel milestone selects through it
 pub(crate) fn top_level_ancestor(id: u64) -> u64 {
     let store = nodes();
@@ -905,8 +905,8 @@ pub(crate) fn top_level_ancestor(id: u64) -> u64 {
     cur
 }
 
-/// One SHAPE's rectangle, always normalized. A line stores signed deltas (its start is the
-/// origin, its end is `origin + (w, h)`), so the rectangle it occupies is the absolute one —
+/// One shape's rectangle, always normalized. A line stores signed deltas (its start is the
+/// origin, its end is `origin + (w, h)`), so the rectangle it occupies is the absolute one,
 /// which is what selection, group unions and the inspector's fields all mean by "the frame".
 pub(crate) fn shape_frame(id: u64) -> (f64, f64, f64, f64) {
     let e = nodes().elem(id);
@@ -917,7 +917,7 @@ pub(crate) fn shape_frame(id: u64) -> (f64, f64, f64, f64) {
     }
 }
 
-/// A line's two ends, in model space — the RAW fields, before normalization.
+/// A line's two ends, in model space: the raw fields, before normalization.
 pub(crate) fn line_ends(id: u64) -> ((f64, f64), (f64, f64)) {
     let e = nodes().elem(id);
     let (x, y) = (e.x().peek(), e.y().peek());
@@ -947,19 +947,19 @@ pub(crate) fn canvas_font(family: &str, weight: i64, italic: bool) -> CanvasFont
     }
 }
 
-/// The frame one line of text occupies at `size` in `font` — the measured line box, each side
+/// The frame one line of text occupies at `size` in `font`: the measured line box, each side
 /// floored at [`MIN_SIZE`] so an empty string still has something to grab.
 pub(crate) fn text_extent(text: &str, size: f64, font: &CanvasFont) -> (f64, f64) {
     let m = day::measure_text(text, size, font);
     (m.width.max(MIN_SIZE), m.height.max(MIN_SIZE))
 }
 
-/// A node's text fields, read UNTRACKED.
+/// A node's text fields, read untracked.
 fn text_fields(id: u64) -> (String, f64, CanvasFont) {
     text_fields_in(nodes(), id)
 }
 
-/// [`text_fields`] against an explicit store — the open-time pass runs before the document
+/// [`text_fields`] against an explicit store: the open-time pass runs before the document
 /// is installed, when `nodes()` would re-enter the slot being filled.
 fn text_fields_in(store: Store<Keyed<Node>>, id: u64) -> (String, f64, CanvasFont) {
     let e = store.elem(id);
@@ -983,7 +983,7 @@ pub(crate) fn default_extent(kind: NodeKind) -> (f64, f64) {
     }
 }
 
-/// Re-derive a text node's frame from its text, size and font — after any of them changed.
+/// Re-derive a text node's frame from its text, size and font, after any of them changed.
 /// `commit` = a sealed write (one field of the enclosing undo unit); else a preview, the way a
 /// drag flows. A non-text node is left alone.
 pub(crate) fn refit_text(id: u64, commit: bool) {
@@ -1007,7 +1007,7 @@ pub(crate) fn refit_text(id: u64, commit: bool) {
     }
 }
 
-/// Every text node's frame re-measured — the open-time pass, before the undo stack watches.
+/// Every text node's frame re-measured: the open-time pass, before the undo stack watches.
 fn refit_all_text(store: Store<Keyed<Node>>) {
     let ids: Vec<u64> = store.with_untracked(|k| {
         k.items()
@@ -1036,14 +1036,14 @@ fn turn_about(x: f64, y: f64, cx: f64, cy: f64, degrees: f64) -> (f64, f64) {
 
 /// Turn `id` to `angle` degrees.
 ///
-/// A shape turns about its own center. A GROUP turns as one body: every shape inside it orbits
-/// the group's center AND turns by the same amount, so the arrangement holds its shape instead
-/// of each piece spinning where it stands. The members keep world-space frames — this app has
-/// no transform hierarchy, and a group is a parent, not a coordinate space — so the turn is
-/// applied to them rather than stored above them. What the GROUP stores is the angle it is
+/// A shape turns about its own center. A group turns as one body: every shape inside it orbits
+/// the group's center and turns by the same amount, so the arrangement holds its shape instead
+/// of each piece spinning where it stands. The members keep world-space frames (this app has
+/// no transform hierarchy, and a group is a parent, not a coordinate space), so the turn is
+/// applied to them rather than stored above them. What the group stores is the angle it is
 /// currently at, which is what the inspector reads back and what turns its selection outline.
 ///
-/// A line has no orientation of its own; its direction IS its two ends, so it turns by moving
+/// A line has no orientation of its own; its direction is its two ends, so it turns by moving
 /// them rather than by taking an angle.
 pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
     let store = nodes();
@@ -1060,9 +1060,9 @@ pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
         return;
     }
     let delta = angle - e.rotation().peek();
-    // The pivot is the members' COLLECTIVE centre — the mean of their centres — because the
+    // The pivot is the members' collective center (the mean of their centers), because the
     // turn itself fixes that point: any sequence of turns pivots on the same spot and a full
-    // circle comes home exactly. (The derived union's centre would reshape with every turn
+    // circle comes home exactly. (The derived union's center would reshape with every turn
     // and walk the pivot; the group's bounds are always derived now, so there is no stored
     // frame to anchor on.)
     let shapes = shape_descendants(id);
@@ -1103,11 +1103,11 @@ pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
     write(e.rotation(), angle);
 }
 
-/// A node's frame: its own for shapes, the union of its members for groups — ALWAYS derived,
+/// A node's frame: its own for shapes, the union of its members for groups. Always derived,
 /// so the outline can never go stale as members move, resize, turn, or leave through the
 /// layers tree. (Groups carried a frame of their own until 2026-08; it stopped tracking the
 /// members the moment one was edited individually, which deep selection made easy to do.)
-/// A rotated member contributes the box it VISUALLY occupies. `None` for an empty group.
+/// A rotated member contributes the box it visually occupies. `None` for an empty group.
 pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
     let store = nodes();
     if store.elem(id).kind().peek() != NodeKind::Group {
@@ -1128,16 +1128,16 @@ pub(crate) fn node_bounds(id: u64) -> Option<(f64, f64, f64, f64)> {
     acc
 }
 
-/// The box a shape VISUALLY occupies: its frame, widened to its corners' reach when it is
-/// turned — a rotated rectangle pokes outside its own x/y/w/h, and a group outline that
+/// The box a shape visually occupies: its frame, widened to its corners' reach when it is
+/// turned. A rotated rectangle pokes outside its x/y/w/h, and a group outline that
 /// "encompasses its members" has to cover what is actually on the canvas. (An oval's turned
-/// box is the rectangle's — a slight over-cover, never an under-cover.)
+/// box is the rectangle's: a slight over-cover, never an under-cover.)
 pub(crate) fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64, f64) {
     let (x, y, w, h) = shape_frame(id);
     let e = store.elem(id);
     let r = match e.kind().peek() {
         NodeKind::Rect | NodeKind::Oval | NodeKind::Text => e.rotation().peek().rem_euclid(360.0),
-        // A line's direction IS its endpoints; a group never reaches here
+        // A line's direction is its endpoints; a group never reaches here
         // (`shape_descendants` yields shapes).
         NodeKind::Line | NodeKind::Group => 0.0,
     };
@@ -1155,7 +1155,7 @@ pub(crate) fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64
 }
 
 // ---------------------------------------------------------------------------
-// Operations — each runs inside one event turn, so each is ONE undo unit
+// Operations: each runs inside one event turn, so each is one undo unit
 // ---------------------------------------------------------------------------
 
 /// Place a new shape with its top-left at (x, y); returns its id.
@@ -1163,14 +1163,14 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
     let store = nodes();
     let id = next_id(store);
     // Above whatever is already at the top level. The root query is in z order, so its last
-    // row is the highest — no scan over the document.
+    // row is the highest, with no scan over the document.
     let z = children_of(None)
         .last()
         .map(|top| store.elem(*top).z().peek() + 1.0)
         .unwrap_or(1.0);
     let fill = PALETTE[(id as usize) % PALETTE.len()].to_string();
     let defaults = Node::default();
-    // Per kind: the undo label, the starting geometry, and the stroke. A line IS its stroke,
+    // Per kind: the undo label, the starting geometry, and the stroke. A line is its stroke,
     // so it starts visible and solid where a filled shape starts with the hairline outline.
     let (label, w, h, stroke_width, stroke_opacity) = match kind {
         NodeKind::Rect => (
@@ -1194,7 +1194,7 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             let (w, h) = default_extent(NodeKind::Text);
             ("add-text", w, h, 0.0, 0.0)
         }
-        // A group is made by grouping a selection, never placed — but the arm is written out
+        // A group is made by grouping a selection, never placed, but the arm is written out
         // rather than defaulted, so a new kind cannot slip through this table unnoticed.
         NodeKind::Group => (
             "group",
@@ -1240,7 +1240,7 @@ pub(crate) fn group_selection() {
         .iter()
         .filter_map(|id| store.with_untracked(|k| k.get(*id).map(|n| n.z)))
         .fold(0.0, f64::max);
-    // The group carries NO frame of its own: its bounds are always derived from its members
+    // The group carries no frame of its own: its bounds are always derived from its members
     // (`node_bounds`), so the outline can never go stale as they change.
     store.restructure("group", Op::Insert, gid, move |v| {
         v.push(Node {
@@ -1295,7 +1295,7 @@ pub(crate) fn delete_selection() {
     let sel = selection().get_untracked();
     let store = nodes();
     for id in sel {
-        // A group takes its subtree with it — the relation's `cascade` rule walks it, through
+        // A group takes its subtree with it: the relation's `cascade` rule walks it, through
         // the same pipeline, so it stays one undo unit and the canvas animates the rows out.
         store.restructure("delete", Op::Delete, id, move |v| {
             v.remove(id);
@@ -1305,7 +1305,7 @@ pub(crate) fn delete_selection() {
 }
 
 // ---------------------------------------------------------------------------
-// Clipboard: SVG out, SVG in (docs/menus.md — the edit bridge). The transport is a
+// Clipboard: SVG out, SVG in (docs/menus.md, the edit bridge). The transport is a
 // self-contained SVG document, so a copied selection pastes into anything that reads SVG,
 // and an SVG fragment from another editor pastes back as shapes.
 // ---------------------------------------------------------------------------
@@ -1352,7 +1352,7 @@ pub(crate) fn selection_to_svg() -> Option<String> {
         let e = store.elem(id);
         match e.kind().peek() {
             NodeKind::Text => {
-                // SVG's own text: `y` is the BASELINE, so the frame's top plus the measured
+                // SVG's own text: `y` is the baseline, so the frame's top plus the measured
                 // ascent; the family only when one is set (the default face has no name).
                 let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
                 let (text, size, font) = text_fields(id);
@@ -1422,7 +1422,7 @@ pub(crate) fn selection_to_svg() -> Option<String> {
                 );
             }
             NodeKind::Line => {
-                // SVG's own line: two endpoints, no fill — the raw (signed) fields, so the
+                // SVG's own line: two endpoints, no fill, the raw (signed) fields, so the
                 // direction survives the round trip.
                 let ((x1, y1), (x2, y2)) = line_ends(id);
                 let _ = std::fmt::Write::write_fmt(
@@ -1531,7 +1531,7 @@ fn xml_unescape(s: &str) -> String {
     out
 }
 
-/// A `<text>` element's own attributes — everything a text node has beyond its frame.
+/// A `<text>` element's attributes: everything a text node has beyond its frame.
 #[derive(Debug, PartialEq)]
 struct SvgText {
     content: String,
@@ -1542,14 +1542,14 @@ struct SvgText {
     size: Option<f64>,
 }
 
-/// A shape or group parsed out of pasted SVG. Style attributes are optional — a foreign
+/// A shape or group parsed out of pasted SVG. Style attributes are optional; a foreign
 /// fragment without them pastes with the document defaults.
 #[derive(Debug, PartialEq)]
 enum SvgNode {
     Shape {
         kind: NodeKind,
         x: f64,
-        /// For a text node, the BASELINE (SVG's `y`); the frame's top is derived at insert.
+        /// For a text node, the baseline (SVG's `y`); the frame's top is derived at insert.
         y: f64,
         w: f64,
         h: f64,
@@ -1565,9 +1565,9 @@ enum SvgNode {
     Group(Vec<SvgNode>),
 }
 
-/// A deliberately small SVG reader: `rect`, `ellipse`, `circle`, and `g` (nested), with
-/// `fill="#rgb"`/`"#rrggbb"` honored and everything else skipped — enough to round-trip our
-/// own documents and to accept simple fragments from other editors. No XML library: the
+/// A small SVG reader: `rect`, `ellipse`, `circle`, and `g` (nested), with
+/// `fill="#rgb"`/`"#rrggbb"` honored and everything else skipped: enough to round-trip this
+/// app's documents and to accept simple fragments from other editors. No XML library: the
 /// grammar this reads is attributes-in-a-tag, which a scan handles.
 fn svg_parse(text: &str) -> Vec<SvgNode> {
     fn attrs(tag: &str) -> Vec<(String, String)> {
@@ -1642,7 +1642,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
     }
 
     /// The angle out of `transform="rotate(a …)"`, normalized to 0..360. Only the rotate form
-    /// is read — a general matrix would need a decomposition this editor has no field for, so
+    /// is read; a general matrix would need a decomposition this editor has no field for, so
     /// such a shape pastes upright rather than wrong.
     fn rotation_of(a: &[(String, String)]) -> Option<f64> {
         let t = a
@@ -1723,7 +1723,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     kind: NodeKind::Line,
                     x: x1,
                     y: y1,
-                    // SIGNED: the deltas to the far end, which is how a line is stored.
+                    // Signed: the deltas to the far end, which is how a line is stored.
                     w: x2 - x1,
                     h: y2 - y1,
                     fill: None,
@@ -1776,7 +1776,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     text: None,
                 })
             }
-            // Text is the one element whose CONTENT matters: the scan otherwise reads only
+            // Text is the one element whose content matters: the scan otherwise reads only
             // tags, so this arm takes everything up to `</text>`, strips any inner tags
             // (`<tspan>`), unescapes, and collapses runs of whitespace to a space.
             "text" if !self_closing => {
@@ -1855,9 +1855,9 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
             _ => None, // unknown element: skipped, children (if any) still scan
         };
         if let Some(s) = shape {
-            // Zero-sized shapes carry no geometry worth pasting — but a line is allowed one
+            // Zero-sized shapes carry no geometry worth pasting, but a line is allowed one
             // zero dimension (a horizontal or vertical one has exactly that), so it only
-            // needs SOME length.
+            // needs some length.
             let keep = match &s {
                 SvgNode::Shape {
                     kind: NodeKind::Line,
@@ -1909,7 +1909,7 @@ pub(crate) fn copy_selection_svg() -> Option<String> {
     selection_to_svg()
 }
 
-/// Cut: copy, then delete as ONE labeled undo unit.
+/// Cut: copy, then delete as one labeled undo unit.
 pub(crate) fn cut_selection_svg() -> Option<String> {
     let svg = selection_to_svg()?;
     undo_stack().grouped("cut", delete_selection);
@@ -1922,7 +1922,7 @@ pub(crate) fn paste_clipboard(text: &str) {
     paste_text(text, "paste");
 }
 
-/// [`paste_clipboard`]'s body with its own undo label — Duplicate shares the insert path
+/// [`paste_clipboard`]'s body with its own undo label: Duplicate shares the insert path
 /// but should read "Undo Duplicate", not "Undo Paste".
 fn paste_text(text: &str, label: &'static str) {
     let parsed = svg_parse(text);
@@ -1966,7 +1966,7 @@ fn paste_text(text: &str, label: &'static str) {
                 text,
             } => {
                 let defaults = Node::default();
-                // A text node's frame is what its type measures to HERE, and SVG's `y` is
+                // A text node's frame is what its type measures to here, and SVG's `y` is
                 // the baseline, so the frame's top sits one ascent above it.
                 let font_size = text
                     .as_ref()
@@ -2062,7 +2062,7 @@ fn paste_text(text: &str, label: &'static str) {
                 &mut fallback,
             ));
         }
-        // INSIDE the group: the unit's transient-selection snapshot is taken as the group
+        // Inside the group: the unit's transient-selection snapshot is taken as the group
         // seals, and it must already say "the pasted nodes" (docs/model.md).
         selection().set(std::mem::take(&mut pasted));
     });
@@ -2076,7 +2076,7 @@ pub(crate) enum Arrange {
     Bottom,
 }
 
-/// Reorder every selected node among ITS OWN siblings — one fractional-z write per node.
+/// Reorder every selected node among its siblings, one fractional-z write per node.
 pub(crate) fn arrange_selection(op: Arrange) {
     let store = nodes();
     for id in selection().get_untracked() {
@@ -2098,7 +2098,7 @@ pub(crate) fn arrange_selection(op: Arrange) {
             Some(p) => {
                 store.elem(p).children().move_to(id, target);
             }
-            // The top level hangs off no parent row, so there is no relation to place into —
+            // The top level hangs off no parent row, so there is no relation to place into:
             // the same halving, done here. Sibling sets are independent, so the two schemes
             // never meet.
             None => {
@@ -2126,13 +2126,13 @@ pub(crate) fn arrange_named(op: Arrange) {
     undo_stack().grouped("arrange", move || arrange_selection(op));
 }
 
-/// A container-backed memory doc WITHOUT the platform undo bridge (no tree headless),
-/// installed as current — the fixture the model and inspector tests share.
+/// A container-backed memory doc without the platform undo bridge (no tree headless),
+/// installed as current: the fixture the model and inspector tests share.
 #[cfg(test)]
 pub(crate) fn install_test_doc() -> Rc<Doc> {
     // No window opens in a test, so the Scene every accessor reaches through `scene()` is
-    // provided on the root scope — once per thread — the way a window's own scope provides
-    // it in the app.
+    // provided on the root scope (once per thread), the way a window's scope provides it in
+    // the app.
     if crate::Scene::try_ambient().is_none() {
         day::reactive::Scope::root().provide(crate::Scene::create());
     }
@@ -2164,7 +2164,7 @@ pub(crate) fn install_test_doc() -> Rc<Doc> {
     });
     *Document::app().doc.borrow_mut() = Some(doc.clone());
     selection().set(Vec::new());
-    // The selection context, but not the platform bridge — tests exercise the transient
+    // The selection context, but not the platform bridge: tests exercise the transient
     // restoration exactly as the app wires it.
     wire_selection_context(&doc.stack);
     doc
@@ -2178,7 +2178,7 @@ mod tests {
         install_test_doc()
     }
 
-    /// The parent's id, unwrapped from the reference — what the tree assertions compare.
+    /// The parent's id, unwrapped from the reference: what the tree assertions compare.
     fn parent_of(id: u64) -> Option<u64> {
         nodes()
             .elem(id)
@@ -2267,8 +2267,8 @@ mod tests {
         let b = place_shape(NodeKind::Rect, 10.0, 0.0);
         day::reactive::flush_sync();
 
-        // The same reads draw_scene makes: a bind over the TRACKED order re-fires when an
-        // arrange writes z — the repaint that used to wait for the next selection change.
+        // The same reads draw_scene makes: a bind over the tracked order re-fires when an
+        // arrange writes z, the repaint that used to wait for the next selection change.
         let seen: Rc<RefCell<Vec<Vec<u64>>>> = Rc::new(RefCell::new(Vec::new()));
         let sink = seen.clone();
         day::reactive::bind(
@@ -2280,10 +2280,10 @@ mod tests {
 
         selection().set(vec![a]);
         arrange_named(Arrange::Top);
-        // ONE drain settles it: the z write flushes at turn end, the root query re-derives
-        // there, and flush_sync keeps draining until the turn is quiescent — a stale
-        // readout after a single flush is a framework regression (day-reactive's turn
-        // rounds), not a timing quirk to paper over with a second drain.
+        // One drain settles it: the z write flushes at turn end, the root query re-derives
+        // there, and flush_sync keeps draining until the turn is quiescent. A stale readout
+        // after a single flush is a framework regression (day-reactive's turn rounds), not a
+        // timing quirk to paper over with a second drain.
         day::reactive::flush_sync();
         assert_eq!(
             seen.borrow().last(),
@@ -2300,7 +2300,7 @@ mod tests {
         let b = place_shape(NodeKind::Rect, 100.0, 0.0);
         day::reactive::flush_sync();
 
-        // Select A, move it; select B, move it — the selects themselves are no units.
+        // Select A, move it; select B, move it. The selects themselves are no units.
         selection().set(vec![a]);
         nudge_selection(10.0, 0.0);
         day::reactive::flush_sync();
@@ -2308,7 +2308,7 @@ mod tests {
         nudge_selection(10.0, 0.0);
         day::reactive::flush_sync();
 
-        // Undo B's move: history lands on A's move — A selected again, B back in place.
+        // Undo B's move: history lands on A's move, with A selected again and B back in place.
         assert!(doc.stack.undo());
         assert_eq!(selection().get_untracked(), vec![a]);
         assert_eq!(nodes().elem(b).x().peek(), 100.0);
@@ -2318,7 +2318,7 @@ mod tests {
         assert_eq!(selection().get_untracked(), vec![b]);
         assert_eq!(nodes().elem(b).x().peek(), 110.0);
 
-        // A selection made BETWEEN undos is transient: the next undo restores the sealed
+        // A selection made between undos is transient: the next undo restores the sealed
         // snapshot over it.
         selection().set(vec![a, b]);
         assert!(doc.stack.undo());
@@ -2371,7 +2371,7 @@ mod tests {
         assert_eq!(q.kind().peek(), NodeKind::Oval);
         assert_eq!((q.x().peek(), q.y().peek()), (116.0, 66.0));
 
-        // The SAME payload pastes again one step further; the whole paste is one undo unit.
+        // The same payload pastes again one step further; the whole paste is one undo unit.
         paste_clipboard(&svg);
         day::reactive::flush_sync();
         assert_eq!(store.with_untracked(|k| k.items().len()), 6);
@@ -2409,7 +2409,7 @@ mod tests {
         assert_eq!(p.stroke_width().peek(), 3.0);
         assert_eq!(p.stroke_opacity().peek(), 0.8);
 
-        // A foreign fragment carrying no style attributes pastes with the document defaults —
+        // A foreign fragment carrying no style attributes pastes with the document defaults:
         // the same values migration backfills into pre-style files.
         paste_clipboard(r##"<svg><rect x="0" y="0" width="30" height="30"/></svg>"##);
         day::reactive::flush_sync();
@@ -2604,8 +2604,8 @@ mod tests {
         day::reactive::flush_sync();
         let g2 = selection().get_untracked()[0];
 
-        // With the OUTER group solely selected, each repeat click steps one level down the
-        // path to the shape under the pointer: g2 → g1 → a — then HOLDS at the shape.
+        // With the outer group solely selected, each repeat click steps one level down the
+        // path to the shape under the pointer: g2 → g1 → a, then holds at the shape.
         selection().set(vec![g2]);
         assert!(drill_at(Point::new(10.0, 10.0)));
         assert_eq!(selection().get_untracked(), vec![g1]);
@@ -2617,7 +2617,7 @@ mod tests {
         );
         assert_eq!(selection().get_untracked(), vec![a]);
 
-        // A hit OUTSIDE the sole selection is not a drill — the plain rule handles it.
+        // A hit outside the sole selection is not a drill; the plain rule handles it.
         selection().set(vec![g1]);
         assert!(!drill_at(Point::new(410.0, 10.0)));
         // Neither is a multi-selection, whatever it covers.
@@ -2670,7 +2670,7 @@ mod tests {
             "out on top, in selection order"
         );
 
-        // ONE undo unit puts both back.
+        // One undo unit puts both back.
         assert!(doc.stack.undo());
         day::reactive::flush_sync();
         assert_eq!(children_of(Some(g)), vec![a, b, c]);
@@ -2696,7 +2696,7 @@ mod tests {
         let sel = selection().get_untracked();
         assert_eq!(sel.len(), 1, "the COPY is selected");
         assert_ne!(sel[0], a);
-        // The paste path's +16 offset — a duplicate lands beside its original, not under it.
+        // The paste path's +16 offset: a duplicate lands beside its original, not under it.
         let e = nodes().elem(sel[0]);
         assert_eq!((e.x().peek(), e.y().peek()), (56.0, 56.0));
 
@@ -2718,7 +2718,7 @@ mod tests {
         let gid = selection().get_untracked()[0];
         assert_eq!(children_of(None), vec![gid, c]);
 
-        // Into the group, on top (a drop ONTO the group row).
+        // Into the group, on top (a drop onto the group row).
         reparent(c, Some(gid), None);
         day::reactive::flush_sync();
         assert_eq!(children_of(Some(gid)), vec![a, b, c]);
@@ -2735,7 +2735,7 @@ mod tests {
         assert_eq!(children_of(None), vec![c, gid]);
         assert_eq!(children_of(Some(gid)), vec![a, b]);
 
-        // Each move is ONE undo unit, and undo restores parent AND order together.
+        // Each move is one undo unit, and undo restores parent and order together.
         assert!(doc.stack.undo());
         day::reactive::flush_sync();
         assert_eq!(children_of(Some(gid)), vec![c, a, b]);
@@ -2755,7 +2755,7 @@ mod tests {
         let a = place_shape(NodeKind::Rect, 0.0, 0.0);
         let b = place_shape(NodeKind::Rect, 10.0, 0.0);
         let c = place_shape(NodeKind::Rect, 20.0, 0.0);
-        // The drop index counts the PRE-move list [a, b, c]: dropping a at index 3 (after c)
+        // The drop index counts the pre-move list [a, b, c]: dropping a at index 3 (after c)
         // lands it on top, not one short.
         reparent(a, None, Some(3));
         day::reactive::flush_sync();
@@ -2815,7 +2815,7 @@ mod tests {
         assert!(nodes().with_untracked(|k| k.get(gid).is_none()));
         assert_eq!(children_of(None), Vec::<u64>::new());
 
-        // And the whole subtree comes back as ONE undo unit, because the cascade rode the
+        // And the whole subtree comes back as one undo unit, because the cascade rode the
         // same turn as the delete that caused it.
         assert!(doc.stack.undo());
         assert_eq!(children_of(None), vec![gid]);
@@ -2825,7 +2825,7 @@ mod tests {
     #[test]
     fn the_draw_order_is_one_dependency_not_one_per_node() {
         // The reason the relation is worth having. The canvas draw is a tracked run over the
-        // sibling order; it used to read `parent` and `z` of EVERY node to find them, so the
+        // sibling order; it used to read `parent` and `z` of every node to find them, so the
         // canvas subscribed to two paths per node and any unrelated write woke it. Reading
         // the order through the relation (or, at the top level, the root query) is one
         // dependency whatever the document holds.
@@ -2858,8 +2858,8 @@ mod tests {
     }
 
     /// The demo walkthrough's rotate-then-ungroup section, headless (dayscript/demo.yaml
-    /// ~160-177): rotate the group a half turn, ungroup, then two undos — the group must be
-    /// BACK, with both members in its relation, its bounds their union, and the rotation
+    /// ~160-177): rotate the group a half turn, ungroup, then two undos. The group must be
+    /// back, with both members in its relation, its bounds their union, and the rotation
     /// unwound. Regression: under the lazy engine the undo replay restored only one member.
     #[test]
     fn rotate_ungroup_double_undo_restores_the_group() {
@@ -3003,12 +3003,12 @@ mod tests {
         let id = place_shape(NodeKind::Line, 100.0, 100.0);
         day::reactive::flush_sync();
         let e = nodes().elem(id);
-        // It starts horizontal, and a line IS its stroke: visible and solid, not a hairline.
+        // It starts horizontal, and a line is its stroke: visible and solid, not a hairline.
         assert_eq!((e.w().peek(), e.h().peek()), (DEFAULT_LINE, 0.0));
         assert_eq!(e.stroke_width().peek(), 2.0);
         assert_eq!(e.stroke_opacity().peek(), 1.0);
 
-        // Point it up and to the LEFT: the fields go negative, and the frame everything else
+        // Point it up and to the left: the fields go negative, and the frame everything else
         // works in is still the rectangle it occupies.
         e.w().write(-40.0);
         e.h().write(-30.0);
@@ -3049,7 +3049,7 @@ mod tests {
         day::reactive::flush_sync();
         let p = nodes().elem(selection().get_untracked()[0]);
         assert_eq!(p.kind().peek(), NodeKind::Line);
-        // The signed deltas survive — and are NOT floored to MIN_SIZE the way a rect's are.
+        // The signed deltas survive, and are not floored to MIN_SIZE the way a rect's are.
         assert_eq!((p.w().peek(), p.h().peek()), (-40.0, 60.0));
         assert_eq!(p.stroke().with(|s| s.cloned()).as_deref(), Some("#112233"));
 
@@ -3170,7 +3170,7 @@ mod tests {
         day::reactive::flush_sync();
         container.save().expect("flush");
 
-        // The canvas drag's shape: previews per tick over every descendant, commits ONE turn.
+        // The canvas drag's shape: previews per tick over every descendant, commits one turn.
         let store = nodes();
         let sql = container
             .record_sql(|| {

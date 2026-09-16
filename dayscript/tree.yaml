@@ -9,21 +9,21 @@ description: >-
   top level through the Selected tab's pluralized title.
 flow:
   - wait_for: { id: canvas }
-  # iOS presents the trailing inspector as a FULLSCREEN sheet, and a fullscreen modal
-  # removes the presenting view from the window — where a detached UICollectionView will
-  # never create cells. Close it BEFORE the layers pane opens (a pane mounted behind the
+  # iOS presents the trailing inspector as a fullscreen sheet, and a fullscreen modal
+  # removes the presenting view from the window, where a detached UICollectionView will
+  # never create cells. Close it before the layers pane opens (a pane mounted behind the
   # sheet starves the same way); the `insp-tab` assert blocks below re-open it just long
-  # enough to read the count. Visibility toggles only — the undo history stays the same
+  # enough to read the count. Visibility toggles only; the undo history stays the same
   # depth on every target.
   - menu: { key: menu_inspector, only_on: [uikit] }
   - pause: { secs: 1, only_on: [uikit] }
-  # Compact windows start with the layers pane CLOSED (a phone's canvas needs the room):
+  # Compact windows start with the layers pane closed (a phone's canvas needs the room):
   # open it for the whole run on the phone targets, before anything waits on its rows.
-  # Visibility only — undo-neutral.
+  # Visibility only, undo-neutral.
   - menu: { key: menu_layers, only_on: [uikit, mdc, arkui] }
   - pause: { secs: 1, only_on: [uikit, mdc, arkui] }
   - wait_for: { id: layers }
-  # A fresh numbered document every run — node ids (and so row ids) are deterministic.
+  # A fresh numbered document every run: node ids (and so row ids) are deterministic.
   - menu: { key: menu_new }
   - assert_text: { id: sk-count, key: status_count, args: { n: 0 } }
 
@@ -38,7 +38,7 @@ flow:
   - wait_for: { id: layer-3 }
   - wait_for: { id: layer-4 }
 
-  # ---- Group: the new group's row appears already OPEN (the app discloses what it just
+  # ---- Group: the new group's row appears already open (the app discloses what it just
   # made), so the members' rows never blink out ----
   - menu: { key: day-select-all, path: [menu_edit] }
   - menu: { key: menu_group }
@@ -77,7 +77,7 @@ flow:
   - menu: { key: menu_inspector, only_on: [uikit] }
   - pause: { secs: 1, only_on: [uikit] }
 
-  # ---- And back in: a drop ONTO the group row (no index = append) ----
+  # ---- And back in: a drop onto the group row (no index = append) ----
   - tree_move: { id: layers, row: layer-3, parent: layer-5 }
   - menu: { key: day-select-all, path: [menu_edit] }
   - menu: { key: menu_inspector, only_on: [uikit] }
@@ -86,7 +86,7 @@ flow:
   - menu: { key: menu_inspector, only_on: [uikit] }
   - pause: { secs: 1, only_on: [uikit] }
 
-  # ---- Undo walks both moves back; redo replays one — panel and canvas share the units ----
+  # ---- Undo walks both moves back; redo replays one: panel and canvas share the units ----
   - undo: {}
   - menu: { key: day-select-all, path: [menu_edit] }
   - menu: { key: menu_inspector, only_on: [uikit] }
@@ -122,7 +122,7 @@ flow:
   - wait_for: { id: layer-1 }
 
   # ---- Selection is one signal: canvas taps land while the panel watches (the reverse
-  # direction — clicking a ROW — is a native gesture, checked by hand, docs/tree.md) ----
+  # direction, clicking a row, is a native gesture, checked by hand, docs/tree.md) ----
   - tap: { id: canvas, at: [8, 8] }
   - menu: { key: day-select-all, path: [menu_edit] }
   - menu: { key: menu_inspector, only_on: [uikit] }

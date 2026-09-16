@@ -1,5 +1,5 @@
-// The web persistence proof (docs/web.md): REAL browser input — mouse clicks and drags, not
-// injected dayscript events — places and moves a shape, then a real page.reload() must find
+// The web persistence proof (docs/web.md): real browser input (mouse clicks and drags, not
+// injected dayscript events) places and moves a shape, then a real page.reload() must find
 // the drawing again out of the origin's OPFS, through the day-sql worker channel.
 //
 // Run after `day build -p web-dom` (the dist this serves):
@@ -7,7 +7,7 @@
 //     node scripts/web-reload-check.mjs build/day/cargo/web-dom/debug/dist [webkit|chromium]
 //
 // Serves the dist with the same COOP/COEP headers the day server sends (the channel needs
-// cross-origin isolation) and uses a THROWAWAY persistent profile — ephemeral WebKit
+// cross-origin isolation) and uses a throwaway persistent profile, because ephemeral WebKit
 // contexts have no storage backing at all, so OPFS would be absent rather than exercised.
 
 import { createRequire } from 'node:module';
@@ -52,7 +52,7 @@ const ctx = await playwright[engine].launchPersistentContext(profile, {
   viewport: { width: 1000, height: 720 },
 });
 const page = ctx.pages()[0] ?? (await ctx.newPage());
-// Console capture — the day-sql worker logs traced statements here in debug builds.
+// Console capture: the day-sql worker logs traced statements here in debug builds.
 const consoleLines = [];
 page.on('console', (m) => consoleLines.push(m.text()));
 
@@ -77,17 +77,17 @@ const canvasBox = () => page.locator('#canvas').boundingBox();
 
 await page.goto(url);
 
-// The persistent document opened synchronously through the worker — not the memory fallback.
+// The persistent document opened synchronously through the worker, not the memory fallback.
 check('opens the OPFS document', (await waitText('sk-doc', 'sketch-default')).includes('sketch-default'));
 
-// Arm the rectangle tool and place a shape with a REAL click.
+// Arm the rectangle tool and place a shape with a real click.
 await page.locator('#tool-rect').click();
 const box = await canvasBox();
 await page.mouse.click(box.x + 60, box.y + 60);
 check('real click places a shape', (await waitText('sk-count', '1')).includes('1'));
 check('placed at the click point', (await waitText('sk-frame', '60,60 96x64')).includes('60,60 96x64'));
 
-// A real drag moves it — live previews, one undo unit.
+// A real drag moves it: live previews, one undo unit.
 await page.mouse.move(box.x + 108, box.y + 92);
 await page.mouse.down();
 await page.mouse.move(box.x + 158, box.y + 142, { steps: 12 });
@@ -100,7 +100,7 @@ check('undo restores the frame', (await waitText('sk-frame', '60,60 96x64')).inc
 await page.locator('#sk-redo').click();
 check('redo reapplies the move', (await waitText('sk-frame', '110,110 96x64')).includes('110,110 96x64'));
 
-// THE proof: a real reload finds the same drawing in OPFS.
+// The proof: a real reload finds the same drawing in OPFS.
 await page.reload();
 check('reload reopens the document', (await waitText('sk-doc', 'sketch-default')).includes('sketch-default'));
 check('the shape survived', (await waitText('sk-count', '1')).includes('1'));
@@ -108,7 +108,7 @@ const box2 = await canvasBox();
 await page.mouse.click(box2.x + 150, box2.y + 140);
 check('at its moved position', (await waitText('sk-frame', '110,110 96x64')).includes('110,110 96x64'));
 
-// And the scene is still editable after reload — the reopened container accepts writes.
+// And the scene is still editable after reload: the reopened container accepts writes.
 await page.locator('#tool-oval').click();
 await page.mouse.click(box2.x + 300, box2.y + 200);
 check('still editable after reload', (await waitText('sk-count', '2')).includes('2'));
@@ -125,9 +125,10 @@ check('still editable after reload', (await waitText('sk-count', '2')).includes(
   check('sql statements log to the console', hit, consoleLines.filter((l) => l.includes('[day-sql]')).slice(0, 3));
 }
 
-// Oval resize handles with REAL input. The corner handles sit on the bounding box, outside
-// the ellipse — the regression this guards: the shim once fired the tap on pointerdown, so
-// pressing a handle outside the shape's geometry cleared the selection before the drag began.
+// Oval resize handles with real input. The corner handles sit on the bounding box, outside
+// the ellipse, which is the regression this guards: the shim once fired the tap on
+// pointerdown, so pressing a handle outside the shape's geometry cleared the selection before
+// the drag began.
 // A real click outside deselects; a real click inside the ellipse selects; then a real drag
 // on the bottom-right handle (at the bbox corner, outside the ellipse) must resize.
 await page.mouse.click(box2.x + 550, box2.y + 60);
@@ -140,7 +141,7 @@ await page.mouse.move(box2.x + 446, box2.y + 314, { steps: 10 });
 await page.mouse.up();
 check('handle outside the ellipse resizes', (await waitText('sk-frame', '300,200 146x114')).includes('300,200 146x114'));
 
-// The browser's own edit-command route: REAL copy/cut/paste ClipboardEvents through the
+// The browser's own edit-command route: real copy/cut/paste ClipboardEvents through the
 // document listeners (the same path ⌘C/⌘V takes). The oval from the resize check is still
 // selected; copying it must yield SVG, and pasting that SVG must land a new shape.
 const copied = await page.evaluate(() => {
@@ -160,14 +161,14 @@ await page.evaluate((s) => {
 }, copied);
 check('paste event lands the copy', (await waitText('sk-count', '3')).includes('3'));
 
-// The standard undo keys as REAL keydowns — the browser has no document undo of its own, so
+// The standard undo keys as real keydowns. The browser has no document undo of its own, so
 // ⌘Z/⇧⌘Z are bound by the shim (outside editable elements).
 await page.keyboard.press('Meta+z');
 check('⌘Z undoes the paste', (await waitText('sk-count', '2')).includes('2'));
 await page.keyboard.press('Meta+Shift+z');
 check('⇧⌘Z redoes it', (await waitText('sk-count', '3')).includes('3'));
 
-// Modifier multi-select with REAL input: click the rect, shift-click the first oval.
+// Modifier multi-select with real input: click the rect, shift-click the first oval.
 await page.mouse.click(box2.x + 150, box2.y + 140);
 check('plain click selects the rect', (await waitText('sk-frame', '110,110 96x64')).includes('110,110'));
 await page.keyboard.down('Shift');

@@ -1,18 +1,18 @@
 //! The inspector panel: property rows over the current selection.
 //!
-//! Each row is a small selection-fanout [`Binding<String>`]: it reads the COMMON value of the
+//! Each row is a small selection-fanout [`Binding<String>`]: it reads the common value of the
 //! selected nodes (empty text plus a "multi" placeholder when they disagree), and a typed
-//! value fans out to every selected node in ONE undo turn. Reads are tracked through the
-//! store, so a canvas drag's preview writes re-run them live — the fields follow the pointer
+//! value fans out to every selected node in one undo turn. Reads are tracked through the
+//! store, so a canvas drag's preview writes re-run them live; the fields follow the pointer
 //! the same way the status row does. The panel is built to grow: a property is one
 //! [`NumProp`] row, and a future section (fill, stroke, …) is one more entry in [`panel`].
 
 use crate::model::{self, NodeFields, NodeKind};
 use day::prelude::*;
 
-/// Whether the inspector pane is showing. Shown by default — the panel is the app's main
-/// property surface — and deliberately per-run (not persisted): every target starts from the
-/// same state, which is what the walkthrough scripts assume.
+/// Whether the inspector pane is showing. Shown by default, since the panel is the app's main
+/// property surface, and per-run (not persisted): every target starts from the same state,
+/// which is what the walkthrough scripts assume.
 pub(crate) fn visible() -> Signal<bool> {
     crate::scene().inspector_visible
 }
@@ -21,9 +21,9 @@ pub(crate) fn toggle() {
     visible().update(|v| *v = !*v);
 }
 
-/// Whether the layers pane is showing — the leading tree over the document (docs/tree.md).
-/// Open by default where the window has room; a COMPACT window (a phone) starts with it
-/// closed, since the pane would squeeze the canvas it exists to describe — the View-menu
+/// Whether the layers pane is showing: the leading tree over the document (docs/tree.md).
+/// Open by default where the window has room; a compact window (a phone) starts with it
+/// closed, since the pane would squeeze the canvas it exists to describe. The View-menu
 /// item, the toolbar toggle and the tool row's Layers button all reopen it. Per-run, like
 /// [`visible`]; the class is already seeded when the root builds (docs/size-classes.md).
 pub(crate) fn layers_visible() -> Signal<bool> {
@@ -34,11 +34,11 @@ pub(crate) fn layers_toggle() {
     layers_visible().update(|v| *v = !*v);
 }
 
-/// A layer row's kind glyph — language-neutral symbols, like the sheet's `✕`, picked from
-/// one optical family: the geometric-shape block's x-height forms plus the division slash,
-/// whose metrics sit inside a text line (the box-drawing `╱` spans the whole line, the
-/// large circle `◯` overshoots it, and `▭` collapses to a pair of dashes at row size —
-/// what made the first cut look misaligned).
+/// A layer row's kind glyph. The symbols are language-neutral, like the sheet's `✕`, and
+/// picked from one optical family: the geometric-shape block's x-height forms plus the
+/// division slash, whose metrics sit inside a text line (the box-drawing `╱` spans the whole
+/// line, the large circle `◯` overshoots it, and `▭` collapses to a pair of dashes at row
+/// size, which is what made the first cut look misaligned).
 fn kind_glyph(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Rect => "□",
@@ -50,7 +50,7 @@ fn kind_glyph(kind: NodeKind) -> &'static str {
 }
 
 /// The layers pane, rebuilt per document exactly like the editor (`root`'s `when`): the
-/// tree's connection captures the CURRENT doc's store, and a new document is a new store —
+/// tree's connection captures the current doc's store, and a new document is a new store, so
 /// without the rebuild the panel would keep watching the old one.
 pub(crate) fn layers_panel() -> AnyPiece {
     when(
@@ -61,8 +61,8 @@ pub(crate) fn layers_panel() -> AnyPiece {
     .any()
 }
 
-/// The tree itself (docs/tree.md). Selection is the SAME signal the canvas reads, expansion
-/// is [`model::open_groups`], and a drag commits through [`model::reparent`] — one model,
+/// The tree itself (docs/tree.md). Selection is the same signal the canvas reads, expansion
+/// is [`model::open_groups`], and a drag commits through [`model::reparent`]: one model,
 /// three surfaces.
 fn layers_tree() -> AnyPiece {
     tree(
@@ -111,7 +111,7 @@ fn layers_tree() -> AnyPiece {
 
 // ---------------------------------------------------------------------------
 // Tabs: Canvas (document settings) and Selected (the selection's properties). The selection
-// drives which one shows — see [`retarget`] — and the segmented control on top of the panel
+// drives which one shows (see [`retarget`]), and the segmented control on top of the panel
 // lets the user look at the other one until the selection next changes.
 // ---------------------------------------------------------------------------
 
@@ -123,7 +123,7 @@ pub(crate) fn active_tab() -> Signal<usize> {
 }
 
 /// Follow the selection: any selection change lands the inspector on the tab that talks about
-/// it — Selected while something is selected, Canvas when nothing is. Called from the
+/// it (Selected while something is selected, Canvas when nothing is). Called from the
 /// selection bind in `root()`, so every path that selects (taps, drags, paste, undo/redo's
 /// transient restoration) retargets without knowing about tabs.
 pub(crate) fn retarget(selected: bool) {
@@ -133,7 +133,7 @@ pub(crate) fn retarget(selected: bool) {
     }
 }
 
-/// Re-runs the field bindings without a model change — bumped after a rejected or clamped
+/// Re-runs the field bindings without a model change. Bumped after a rejected or clamped
 /// edit, so the canonical text paints back over whatever was typed. A global `Signal` rather
 /// than a `Trigger`, which has no scope-free constructor.
 fn refresh() -> Signal<u64> {
@@ -144,12 +144,12 @@ fn refresh_fields() {
     refresh().update(|v| *v = v.wrapping_add(1));
 }
 
-/// One numeric property of the selection — a row in the geometry section.
+/// One numeric property of the selection: a row in the geometry section.
 struct NumProp {
-    /// The field's element id (`insp-x`) — the dayscript target.
+    /// The field's element id (`insp-x`), the dayscript target.
     id: &'static str,
     label: fn() -> day::LocalizedText,
-    /// The property's value on ONE node; `None` for a node it doesn't apply to.
+    /// The property's value on one node; `None` for a node it doesn't apply to.
     get: fn(u64) -> Option<f64>,
     /// Apply a typed value to one node. The caller wraps the whole selection in one undo
     /// group, labeled `undo` (a key of the same catalog the canvas gestures use).
@@ -157,8 +157,8 @@ struct NumProp {
     undo: &'static str,
 }
 
-/// Move a node by (dx, dy): its own frame for a shape, every shape descendant for a group —
-/// the same rule the canvas drag applies. A group's bounds are DERIVED from its members
+/// Move a node by (dx, dy): its own frame for a shape, every shape descendant for a group,
+/// the same rule the canvas drag applies. A group's bounds are derived from its members
 /// (`node_bounds`), so moving them is the whole move.
 fn move_by(id: u64, dx: f64, dy: f64) {
     let store = model::nodes();
@@ -181,12 +181,12 @@ fn set_y(id: u64, v: f64) {
     }
 }
 
-/// Width/height apply to shapes only — groups keep their derived union, the canvas's own
-/// resize rule (groups move; only shapes resize).
+/// Width/height apply to shapes only; groups keep their derived union, the canvas's resize
+/// rule (groups move; only shapes resize).
 ///
-/// A line's fields are SIGNED deltas to its far end, and the inspector shows the rectangle it
-/// occupies: a typed extent therefore sets the delta's MAGNITUDE and leaves its direction
-/// alone (a line running up-left keeps running up-left), and it may legitimately be zero — a
+/// A line's fields are signed deltas to its far end, and the inspector shows the rectangle it
+/// occupies: a typed extent therefore sets the delta's magnitude and leaves its direction
+/// alone (a line running up-left keeps running up-left), and it may legitimately be zero. A
 /// horizontal line has no height, where a rectangle floors at [`model::MIN_SIZE`].
 fn set_extent(id: u64, v: f64, horizontal: bool) {
     let e = model::nodes().elem(id);
@@ -250,8 +250,8 @@ fn geometry_props() -> [NumProp; 4] {
     ]
 }
 
-/// The display form of a value: one decimal at most, integers bare — stable strings the
-/// walkthrough can assert against.
+/// The display form of a value: one decimal at most, integers bare, so the walkthrough has
+/// stable strings to assert against.
 fn fmt(v: f64) -> String {
     let r = (v * 10.0).round() / 10.0;
     if r.fract() == 0.0 {
@@ -265,7 +265,7 @@ fn fmt(v: f64) -> String {
 /// (to a tenth), `None` when the selection is empty or disagrees.
 fn common(ix: usize, tracked: bool) -> Option<f64> {
     let sel = if tracked {
-        // Track the selection AND the store: a canvas drag writes previews the fields must
+        // Track the selection and the store: a canvas drag writes previews the fields must
         // follow live (the status row's pattern).
         model::nodes().with(|_| {});
         model::selection().get()
@@ -284,12 +284,12 @@ fn common(ix: usize, tracked: bool) -> Option<f64> {
     Some(first)
 }
 
-/// Selected nodes disagree on property `ix` — the "multi" placeholder's condition.
+/// Selected nodes disagree on property `ix`: the "multi" placeholder's condition.
 fn is_mixed(ix: usize) -> bool {
     !model::selection().get().is_empty() && common(ix, true).is_none()
 }
 
-/// The two-way seam between one property row's text field and the whole selection.
+/// The two-way binding between one property row's text field and the whole selection.
 #[derive(Clone, Copy)]
 struct PropField {
     ix: usize,
@@ -305,7 +305,7 @@ impl Binding<String> for PropField {
     fn write(&self, s: String) {
         self.write_commit(s);
     }
-    /// Keystrokes are previews the model must NOT follow — "1" on the way to "125" is not a
+    /// Keystrokes are previews the model must not follow: "1" on the way to "125" is not a
     /// position. Only the committed text (Return, focus loss) reaches the nodes.
     fn write_preview(&self, _s: String) {}
     fn write_commit(&self, s: String) {
@@ -352,8 +352,8 @@ fn prop_row(ix: usize) -> AnyPiece {
 
 // ---------------------------------------------------------------------------
 // The Style section: fill color/opacity, stroke color/width/opacity. Style edits reach the
-// SHAPES — a selected group restyles its members, the canvas's own fill rule — and every
-// commit is ONE undo unit labeled "style". Slider drags flow as previews (the canvas follows
+// shapes (a selected group restyles its members, the canvas's fill rule), and every
+// commit is one undo unit labeled "style". Slider drags flow as previews (the canvas follows
 // the thumb) and commit once on release, the same session shape a canvas drag uses.
 // ---------------------------------------------------------------------------
 
@@ -392,8 +392,8 @@ fn to_hex(c: Color) -> String {
     )
 }
 
-/// One numeric style property, fanned out over the style targets. `read` shows the FIRST
-/// target's value — a numeric control has no "multi" form — and writes reach every target.
+/// One numeric style property, fanned out over the style targets. `read` shows the first
+/// target's value (a numeric control has no "multi" form), and writes reach every target.
 #[derive(Clone, Copy)]
 struct StyleNum {
     read: fn(u64) -> f64,
@@ -569,7 +569,7 @@ const ROTATION: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).rotation().read(),
     preview: |t, v| model::set_rotation(t, v.rem_euclid(360.0), false),
     commit: |t, v| model::set_rotation(t, v.rem_euclid(360.0), true),
-    // The SELECTION, not its shapes: turning a group means turning the whole arrangement
+    // The selection, not its shapes: turning a group means turning the whole arrangement
     // about one center, which is lost the moment the value fans out to the members.
     targets: |tracked| {
         if tracked {
@@ -609,7 +609,7 @@ const FILL_COLOR: StyleColor = StyleColor {
 };
 
 /// The Canvas tab's background well: the document's single settings row, committed as one
-/// labeled undo unit — [`model::set_background`] owns the grouping.
+/// labeled undo unit; [`model::set_background`] owns the grouping.
 #[derive(Clone, Copy)]
 struct BgColor;
 
@@ -640,7 +640,7 @@ const STROKE_COLOR: StyleColor = StyleColor {
     },
 };
 
-/// A slider with its attached percentage field — the opacity rows' control.
+/// A slider with its attached percentage field, the opacity rows' control.
 fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
     row((
         slider(num).range(0.0..=1.0).step(0.01).grow(),
@@ -651,7 +651,7 @@ fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
     .align(VAlign::Center)
 }
 
-/// Whether every shape the style section would edit is a rectangle — the condition for
+/// Whether every shape the style section would edit is a rectangle, the condition for
 /// showing a corner-radius row at all. An oval has no corners, and a mixed selection has no
 /// one answer, so both hide the row rather than offering a field that does nothing.
 fn selection_is_rects() -> bool {
@@ -661,7 +661,7 @@ fn selection_is_rects() -> bool {
     })
 }
 
-/// Every target is a text node — the condition for the Text section (content, font, style,
+/// Every target is a text node, the condition for the Text section (content, font, style,
 /// size). A mixed selection shows none of it rather than a field that edits only some.
 fn selection_is_text() -> bool {
     every_target(|k| match k {
@@ -679,9 +679,9 @@ fn selection_has_stroke() -> bool {
     })
 }
 
-/// Every shape the style section would edit answers `yes` — and there is at least one. The
+/// Every shape the style section would edit answers `yes`, and there is at least one. The
 /// panel asks this before offering a property, so a row is present exactly when it applies to
-/// the WHOLE selection; a mixed selection has no one answer and shows nothing rather than a
+/// the whole selection; a mixed selection has no one answer and shows nothing rather than a
 /// field that edits only some of what is selected.
 fn every_target(applies: impl Fn(NodeKind) -> bool) -> bool {
     let targets = style_targets(true);
@@ -691,7 +691,7 @@ fn every_target(applies: impl Fn(NodeKind) -> bool) -> bool {
             .all(|t| applies(model::nodes().elem(*t).kind().read()))
 }
 
-/// A fill needs an interior. A line has none — it IS its stroke. Type is filled: its fill is
+/// A fill needs an interior. A line has none; it is its stroke. Type is filled: its fill is
 /// the color it is set in.
 fn selection_has_fill() -> bool {
     every_target(|k| match k {
@@ -700,11 +700,11 @@ fn selection_has_fill() -> bool {
     })
 }
 
-/// A rotation turns a frame about its center; a GROUP turns about its own, carrying its
-/// members around it. A line has no frame of its own — its direction is where its two ends
-/// are — so it is turned by dragging them, not by an angle field.
+/// A rotation turns a frame about its center; a group turns about its own, carrying its
+/// members around it. A line has no frame of its own (its direction is where its two ends
+/// are), so it is turned by dragging them, not by an angle field.
 ///
-/// Asked of the SELECTION rather than its shapes, matching where the field writes: a group
+/// Asked of the selection rather than its shapes, matching where the field writes: a group
 /// answers for itself, so a group of lines can still be turned as a body even though no line
 /// in it takes an angle.
 fn selection_can_rotate() -> bool {
@@ -733,8 +733,8 @@ fn text_targets(tracked: bool) -> Vec<u64> {
         .collect()
 }
 
-/// The content field's seam: the common text when every target agrees, else empty; a
-/// commit writes every target and refits it as ONE undo unit. Keystrokes are previews the
+/// The content field's binding: the common text when every target agrees, else empty; a
+/// commit writes every target and refits it as one undo unit. Keystrokes are previews the
 /// model does not follow (the geometry fields' rule).
 #[derive(Clone, Copy)]
 struct TextContent;
@@ -788,7 +788,7 @@ impl Binding<String> for TextContent {
     }
 }
 
-/// The point size, a fan-out number like the style rows — with a refit on every write, so a
+/// The point size: a fan-out number like the style rows, with a refit on every write, so a
 /// stepper drag previews the frame growing with the type.
 const FONT_SIZE: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).font_size().read(),
@@ -809,7 +809,7 @@ const FONT_SIZE: StyleNum = StyleNum {
     targets: text_targets,
 };
 
-/// The platform's families, by name — the font menu's options after "System".
+/// The platform's families, by name: the font menu's options after "System".
 fn family_names() -> Vec<String> {
     day::font_families()
         .iter()
@@ -837,7 +837,7 @@ fn current_family(tracked: bool) -> String {
         .unwrap_or_default()
 }
 
-/// The font menu's seam: index 0 is the default face, the rest the platform's families.
+/// The font menu's binding: index 0 is the default face, the rest the platform's families.
 #[derive(Clone, Copy)]
 struct FamilyChoice;
 
@@ -887,8 +887,8 @@ impl Binding<usize> for FamilyChoice {
 }
 
 /// The faces a family offers, as (weight, italic) pairs sorted light→heavy, upright before
-/// slanted. A family the platform did not describe — the default face, or one it lists
-/// without faces — offers the four synthesized styles every platform can draw, so the style
+/// slanted. A family the platform did not describe (the default face, or one it lists
+/// without faces) offers the four synthesized styles every platform can draw, so the style
 /// menu always has Regular / Bold / Italic / Bold Italic in that order for the System face.
 fn styles_for(family: &str) -> Vec<(FontWeight, bool)> {
     let listed = (!family.is_empty())
@@ -921,8 +921,8 @@ fn styles_for(family: &str) -> Vec<(FontWeight, bool)> {
     }
 }
 
-/// A style's menu label from its weight and slant — localized, never the platform's own face
-/// name, so a walkthrough can assert it by key on every target.
+/// A style's menu label from its weight and slant: localized, never the platform's face name,
+/// so a walkthrough can assert it by key on every target.
 fn style_label(weight: FontWeight, italic: bool) -> String {
     use crate::res::str as s;
     match (weight, italic) {
@@ -950,7 +950,7 @@ fn style_label(weight: FontWeight, italic: bool) -> String {
     }
 }
 
-/// The style menu's options for the first target's family — reactive, so choosing another
+/// The style menu's options for the first target's family. Reactive, so choosing another
 /// family re-lists them.
 fn style_labels() -> Vec<String> {
     styles_for(&current_family(true))
@@ -959,7 +959,7 @@ fn style_labels() -> Vec<String> {
         .collect()
 }
 
-/// The style menu's seam over [`styles_for`].
+/// The style menu's binding over [`styles_for`].
 #[derive(Clone, Copy)]
 struct StyleChoice;
 
@@ -1043,7 +1043,7 @@ fn text_section() -> AnyPiece {
     .any()
 }
 
-/// A color well with its opacity beside it — one row per paint, the Keynote arrangement, so
+/// A color well with its opacity beside it: one row per paint, the Keynote arrangement, so
 /// the label column stays as narrow as "Stroke" and a 280-point pane still fits every row.
 fn paint_row(
     well: StyleColor,
@@ -1106,7 +1106,7 @@ fn rotation_row() -> AnyPiece {
     when(selection_can_rotate, rotation_field).any()
 }
 
-/// The angle field itself — see [`rotation_row`] for when it is shown.
+/// The angle field itself; see [`rotation_row`] for when it is shown.
 fn rotation_field() -> impl Piece {
     labeled(
         crate::res::str::insp_rotation(),
@@ -1124,8 +1124,8 @@ fn rotation_field() -> impl Piece {
 }
 
 /// The corner-radius row, mounted only where the property means something. `when` mounts and
-/// disposes it with the selection's kind — a hidden field would still be a dayscript target,
-/// and a disabled one still reads as a property ovals have.
+/// disposes it with the selection's kind, because a hidden field would still be a dayscript
+/// target, and a disabled one still reads as a property ovals have.
 fn corner_row() -> AnyPiece {
     when(selection_is_rects, || {
         labeled(
@@ -1141,8 +1141,8 @@ fn corner_row() -> AnyPiece {
     .any()
 }
 
-/// The two tab labels. The second counts the selection, pluralized by the catalog — Fluent's
-/// plural nav, so a language with more forms than English adds them there, not here.
+/// The two tab labels. The second counts the selection, pluralized by the catalog (Fluent's
+/// plural nav), so a language with more forms than English adds them there, not here.
 fn tab_labels() -> Vec<String> {
     let n = model::selection().get().len() as i64;
     vec![
@@ -1154,8 +1154,8 @@ fn tab_labels() -> Vec<String> {
 /// The Selected tab: one form, one section per property group of the selection. New
 /// per-selection sections slot in here.
 fn selected_panel() -> impl Piece {
-    // The four frame fields, then the transform rows — every row a DIRECT child of the
-    // section, so the section's own row rhythm spaces all six alike. (Nesting the last two in
+    // The four frame fields, then the transform rows, every row a direct child of the
+    // section, so the section's row rhythm spaces all six alike. (Nesting the last two in
     // a column of their own gave them that column's spacing instead, and they read as a
     // cramped afterthought under Height.)
     let mut rows: Vec<AnyPiece> = (0..geometry_props().len()).map(prop_row).collect();
@@ -1177,14 +1177,14 @@ fn canvas_panel() -> impl Piece {
 }
 
 /// The panel content: the tab strip over whichever tab is active. The padding is the pane's
-/// breathing room — the inspector hosts hand the panel the full pane rect, so the inset
+/// breathing room; the inspector hosts hand the panel the full pane rect, so the inset
 /// lives here, once, for every target.
 pub(crate) fn panel() -> impl Piece {
     column((
         picker(tab_labels(), active_tab())
             .segmented()
-            // The Selected tab NAMES its selection ("No Items" / "1 Item" / "3 Items"), so
-            // its label changes with the count — a reactive option list (docs/picker.md).
+            // The Selected tab names its selection ("No Items" / "1 Item" / "3 Items"), so
+            // its label changes with the count: a reactive option list (docs/picker.md).
             .options_reactive(tab_labels)
             .id("insp-tab"),
         when(|| active_tab().get() == TAB_SELECTED, selected_panel).otherwise(canvas_panel),
@@ -1276,7 +1276,7 @@ mod tests {
         model::group_selection();
         day::reactive::flush_sync();
 
-        // A selected GROUP restyles its member shapes.
+        // A selected group restyles its member shapes.
         let (ea, eb) = (model::nodes().elem(a), model::nodes().elem(b));
         FILL_OPACITY.write_preview(0.4);
         assert_eq!(
@@ -1426,7 +1426,7 @@ mod tests {
         let rect = model::place_shape(NodeKind::Rect, 200.0, 0.0);
         day::reactive::flush_sync();
 
-        // A line is its stroke: no fill, no angle field, no corners.
+        // A line is its stroke: it has no fill, angle field or corners.
         model::selection().set(vec![line]);
         assert!(!selection_has_fill());
         assert!(!selection_can_rotate());
@@ -1556,7 +1556,7 @@ mod tests {
             store.elem(t).w().peek() > w0,
             "the frame grew with the words"
         );
-        // ONE undo takes back both the words and the refit: they were one unit.
+        // One undo takes back both the words and the refit: they were one unit.
         assert!(doc.stack.undo());
         assert_eq!(store.elem(t).w().peek(), w0);
         assert_eq!(

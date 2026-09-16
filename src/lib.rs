@@ -1,8 +1,8 @@
-//! Day Sketch — a vector drawing editor built on [Day](https://daybrite.dev), and the stress
+//! Day Sketch, a vector drawing editor built on [Day](https://daybrite.dev), and the stress
 //! test the day-model/day-persistence design was drafted against: a drawing is a SQLite file,
 //! the scene is one observable table, drags edit it live through preview sessions, and every
-//! operation — placement, move, resize, group, arrange — is one undoable turn, fronted by the
-//! platform's own undo system where it has one.
+//! operation (placement, move, resize, group, arrange) is one undoable turn, fronted by the
+//! platform's undo system where it has one.
 
 use day::prelude::*;
 
@@ -10,7 +10,7 @@ mod canvas;
 mod inspector;
 mod model;
 
-// The mobile / embedded entry point. Expands to the export each platform's shell binds against —
+// The mobile / embedded entry point. Expands to the export each platform's shell binds against,
 // and to nothing at all on a plain cargo desktop build, where src/main.rs is the entry instead.
 day::day_start!("Day Sketch", root);
 
@@ -53,9 +53,9 @@ pub(crate) fn snap_enabled() -> Signal<bool> {
     })
 }
 
-/// ⌘/Ctrl + the LOCALIZED key: the letter comes from the command's `.key` attribute in the
+/// ⌘/Ctrl + the localized key: the letter comes from the command's `.key` attribute in the
 /// catalog (docs/localization.md), so a locale may override it while every other locale
-/// inherits the default's — the modifier scheme stays semantic, here in code.
+/// inherits the default's. The modifier scheme stays semantic, here in code.
 fn cmd(key: day::LocalizedText) -> Shortcut {
     Shortcut {
         key: key.format(),
@@ -82,14 +82,14 @@ fn cmd_alt(key: day::LocalizedText) -> Shortcut {
     }
 }
 
-/// The arrange commands — one list, served three ways: the Arrange menu, the canvas context
+/// The arrange commands, one list served three ways: the Arrange menu, the canvas context
 /// menu, and (with icons) the window toolbar.
 pub(crate) fn arrange_menu_entries() -> Vec<MenuEntry> {
     arrange_entries(true)
 }
 
 /// `track` = read the selection reactively (the menu-bar builder re-runs on change). The
-/// canvas context menu is lowered ONCE at build, so it keeps every item enabled and lets the
+/// canvas context menu is lowered once at build, so it keeps every item enabled and lets the
 /// actions no-op on an empty selection instead of freezing the launch-time state.
 fn arrange_entries(track: bool) -> Vec<MenuEntry> {
     let sel = if track {
@@ -162,8 +162,8 @@ fn menus() -> Vec<MenuEntry> {
             .action(inspector::toggle)
             .shortcut(cmd_alt(res::str::menu_inspector_key())),
     ];
-    // The layers pane exists where the tree piece does (`Cap::Tree`, docs/tree.md) — native
-    // or composed — no menu item for a pane a target cannot show.
+    // The layers pane exists where the tree piece does (`Cap::Tree`, docs/tree.md), native
+    // or composed; there is no menu item for a pane a target cannot show.
     if capability(Cap::Tree) != Support::Unsupported {
         view.push(
             menu_item(res::str::menu_layers().format())
@@ -174,7 +174,7 @@ fn menus() -> Vec<MenuEntry> {
     vec![
         sub_menu(res::str::menu_file().format(), file).bar_role(MenuBarRole::File),
         // Role-only Undo/Redo: the native standard commands, which on macOS/iOS resolve
-        // through the responder chain to Day's NSUndoManager front — a focused text field
+        // through the responder chain to Day's NSUndoManager front: a focused text field
         // keeps its own typing undo, everything else reaches the document stack.
         sub_menu(
             res::str::menu_edit().format(),
@@ -182,7 +182,7 @@ fn menus() -> Vec<MenuEntry> {
                 menu_role(MenuRole::Undo),
                 menu_role(MenuRole::Redo),
                 menu_separator(),
-                // Role items: the platform's own Cut/Copy/Paste — the same menu items,
+                // Role items: the platform's Cut/Copy/Paste, the same menu items,
                 // shortcuts, and responder precedence its text editing uses; shapes travel
                 // as SVG through the edit bridge (docs/menus.md).
                 menu_role(MenuRole::Cut),
@@ -190,10 +190,10 @@ fn menus() -> Vec<MenuEntry> {
                 menu_role(MenuRole::Paste),
                 menu_role(MenuRole::SelectAll),
                 menu_separator(),
-                // Plain Delete, not a ⌘ combination: the key IS the command everywhere this
+                // Plain Delete, not a ⌘ combination: the key is the command everywhere this
                 // app runs. It is spelled in code rather than through a localized `.key`
-                // attribute like the letter shortcuts above — a locale can pick a better
-                // mnemonic letter for Group, but nobody relocates the Delete key.
+                // attribute like the letter shortcuts above, because a locale can pick a
+                // better mnemonic letter for Group, but nobody relocates the Delete key.
                 //
                 // Backspace answers to the same accelerator: appkit and gtk both fold the two
                 // names onto one key, and `canvas::canvas_key` accepts both where it handles
@@ -205,7 +205,7 @@ fn menus() -> Vec<MenuEntry> {
         )
         .bar_role(MenuBarRole::Edit),
         sub_menu(res::str::menu_view().format(), view).bar_role(MenuBarRole::View),
-        // Insert: the shape vocabulary, one item per kind — the same entries the toolbar's
+        // Insert: the shape vocabulary, one item per kind, the same entries the toolbar's
         // pull-down and the mobile sheet serve, so a new shape appears in all three at once.
         sub_menu(res::str::menu_insert().format(), shape_menu_entries()),
         sub_menu(res::str::menu_arrange().format(), arrange_menu_entries()),
@@ -238,13 +238,13 @@ fn toolbar() -> Vec<ToolbarEntry> {
             .tooltip(res::str::menu_ungroup())
             .action(model::ungroup_selection),
         // Insert: a pull-down of the shape vocabulary, each item drawn with the platform's
-        // own glyph. Placing is a command, not a mode — the shape lands in the middle of the
+        // own glyph. Placing is a command, not a mode: the shape lands in the middle of the
         // visible canvas, selected and ready to style.
         toolbar_menu("tb-shape", res::str::tool_shape(), shape_menu_entries())
             .icon(Symbol::Add)
             .tooltip(res::str::tool_shape()),
         toolbar_separator(),
-        // The zoom group: out, actual size, in — the separator sets the trio off from its
+        // The zoom group: out, actual size, in. The separator sets the trio off from its
         // neighbors.
         toolbar_button("tb-zoom-out", res::str::menu_zoom_out())
             .icon(Symbol::ZoomOut)
@@ -285,12 +285,12 @@ fn toolbar() -> Vec<ToolbarEntry> {
 }
 
 /// The shape vocabulary, served twice. Choosing one places it in the middle of the visible
-/// canvas and selects it — placing is a command, not an armed-tool mode.
+/// canvas and selects it; placing is a command, not an armed-tool mode.
 ///
 /// The window toolbar's pull-down is the desktop form, each item drawn with the platform's own
 /// glyph. Phones have no window toolbar (`Cap::Toolbar` is Unsupported there), so the tool row
-/// carries the same two choices as a native action sheet — the mobile idiom for exactly this,
-/// and docs/toolbars.md's own advice for a command that has nowhere on the chrome to live.
+/// carries the same two choices as a native action sheet, the mobile idiom for exactly this,
+/// and docs/toolbars.md's advice for a command that has nowhere on the chrome to live.
 fn shape_menu_entries() -> Vec<MenuEntry> {
     vec![
         menu_item(res::str::tool_rect().format())
@@ -308,7 +308,7 @@ fn shape_menu_entries() -> Vec<MenuEntry> {
     ]
 }
 
-/// The SELECTION's context menu — the canvas's right-click and the layers tree's rows serve
+/// The selection's context menu. The canvas's right-click and the layers tree's rows serve
 /// the same commands, built at summon time so they describe the selection as it stands:
 /// Delete; whichever grouping ops apply (Group needs two nodes, Ungroup a group, Remove
 /// from Group a grouped member); the z-order moves; Cut/Copy through the edit bridge (the
@@ -381,8 +381,8 @@ fn choose_shape() {
     });
 }
 
-/// The in-content strip exists ONLY where the window has no toolbar (`Cap::Toolbar` is
-/// Unsupported — the phones and pads): there it is the home of the shape sheet, undo/redo,
+/// The in-content strip exists only where the window has no toolbar (`Cap::Toolbar` is
+/// Unsupported on the phones and pads): there it is the home of the shape sheet, undo/redo,
 /// and the inspector toggle. Everywhere else those live in the window toolbar and the menus,
 /// and the strip would say everything twice.
 fn tool_row_if_no_toolbar() -> impl Piece {
@@ -396,7 +396,7 @@ fn tool_row() -> impl Piece {
     let stack = model::undo_stack();
     let (u1, u2, r1, r2) = (stack.clone(), stack.clone(), stack.clone(), stack);
     row((
-        // The layers pane's in-content toggle, leading like the desktop toolbar's — compact
+        // The layers pane's in-content toggle, leading like the desktop toolbar's. Compact
         // windows start with the pane closed (see `inspector::layers_visible`), and a phone
         // has no toolbar or menu bar to reopen it from.
         when(
@@ -431,7 +431,7 @@ fn tool_row() -> impl Piece {
             .id("sk-redo"),
         // The inspector's in-content toggle: the mobile targets have no window toolbar
         // (`Cap::Toolbar` is Unsupported there), so the tool row is where the affordance
-        // lives — and one id everywhere keeps the walkthrough portable.
+        // lives, and one id everywhere keeps the walkthrough portable.
         button(res::str::tool_inspector())
             .bordered()
             .action(inspector::toggle)
@@ -453,7 +453,7 @@ fn status_row() -> impl Piece {
         })
         .tabular()
         .id("sk-count"),
-        // The single selection's frame, integer-rounded — what walkthrough drags assert on.
+        // The single selection's frame, integer-rounded: what walkthrough drags assert on.
         label(move || {
             let sel = model::selection().get();
             model::nodes().with(|_| {});
@@ -494,7 +494,7 @@ fn status_row() -> impl Piece {
 }
 
 fn editor() -> impl Piece {
-    // The commands act on the CANVAS, so they are declared on it (docs/toolbars.md) — they ride
+    // The commands act on the canvas, so they are declared on it (docs/toolbars.md): they ride
     // whichever chrome the editor has, and a phone that pushes an inspector page over the canvas
     // gets that page's own commands instead of these.
     column((
@@ -505,10 +505,10 @@ fn editor() -> impl Piece {
     .toolbar(toolbar)
 }
 
-/// Everything ONE WINDOW owns (docs/state.md): what it is looking at and how, but never what
-/// the drawing IS.
+/// Everything one window owns (docs/state.md): what it is looking at and how, but never what
+/// the drawing is.
 ///
-/// The document is app-wide (`model::doc()`) — two windows edit the SAME drawing, the way two
+/// The document is app-wide (`model::doc()`): two windows edit the same drawing, the way two
 /// windows on one Illustrator file do. Everything here is that window's own view of it: its
 /// zoom and pan, its selection, its rubber band, which inspector tab is showing, which groups
 /// are disclosed. None of it is persisted and none of it is undoable.
@@ -539,12 +539,12 @@ pub(crate) struct Scene {
 
 #[derive(Default)]
 pub(crate) struct SceneCells {
-    /// The canvas's last laid-out size — the anchor for menu/toolbar zoom (its center).
+    /// The canvas's last laid-out size, the anchor for menu/toolbar zoom (its center).
     pub(crate) viewport: std::cell::Cell<(f64, f64)>,
     pub(crate) last_click:
         std::cell::Cell<Option<(std::time::Instant, f64, f64, canvas::ClickSource)>>,
     pub(crate) last_tap: std::cell::Cell<Option<(std::time::Instant, f64, f64)>>,
-    /// Repeated pastes of the SAME payload step further (+16 each), so copies never stack
+    /// Repeated pastes of the same payload step further (+16 each), so copies never stack
     /// invisibly; a new copy resets the ladder.
     pub(crate) paste_step: std::cell::RefCell<(u64, f64)>,
 }
@@ -576,7 +576,7 @@ impl Ambient for Scene {
     }
 }
 
-/// This window's `Scene` — the ambient one while a piece BUILDS, the FOCUSED window's when a
+/// This window's `Scene`: the ambient one while a piece builds, the focused window's when a
 /// command runs later from a handler that belongs to no scope (docs/state.md).
 pub(crate) fn scene() -> Scene {
     Scene::try_ambient()
@@ -589,32 +589,32 @@ pub fn root() -> impl Piece {
     day_piece_settings::apply_startup(THEME_KEY, LOCALE_KEY);
     day::prefs::install_nav_store();
     day::register_preferences(settings_body);
-    // File ▸ New Window (docs/windows.md): the SAME shell again, which is why the view state —
-    // zoom, pan, selection, the inspector — lives on a `Scene` rather than in globals. The
-    // DOCUMENT stays shared, so two windows show one drawing from two vantage points.
+    // File ▸ New Window (docs/windows.md): the same shell again, which is why the view state
+    // (zoom, pan, selection, the inspector) lives on a `Scene` rather than in globals. The
+    // document stays shared, so two windows show one drawing from two vantage points.
     day::register_new_window(window_shell);
 
     window_shell()
 }
 
-/// One window's UI — the first window's, and every File ▸ New Window's.
+/// One window's UI: the first window's, and every File ▸ New Window's.
 fn window_shell() -> impl Piece {
     Scene::scoped(|_scene| {
-        // Installed from inside the scope, because both read what THIS window is looking at —
+        // Installed from inside the scope, because both read what this window is looking at:
         // the toolbar per window (docs/toolbars.md), and the menu bar's enabled/checked states
         // through `scene()`. The menu bar is one bar for the app, so it installs once.
-        // The menu bar and the clipboard bridge are ONE per app, but both read what the front
+        // The menu bar and the clipboard bridge are one per app, but both read what the front
         // window is looking at (through `scene()`), so they install from inside a window's
-        // scope — once, in the order `root()` used to run them.
+        // scope, once, in the order `root()` used to run them.
         static APP_ONCE: std::sync::Once = std::sync::Once::new();
         APP_ONCE.call_once(|| app_menu_reactive(menus));
-        // Opening the (or a) document wires its undo stack to the platform — synchronously on
+        // Opening the (or a) document wires its undo stack to the platform, synchronously on
         // every target; the web's day-sql worker is up before app code runs. Idempotent, so each
-        // window simply finds the document already open.
+        // window finds the document already open.
         let _ = model::doc();
         // The platform's Cut/Copy/Paste reach the shape editor as SVG (docs/menus.md); a focused
         // text field keeps its own clipboard behavior ahead of these. After `doc()`, exactly as
-        // `root()` ordered it — the edit-state bind reads a selection the document owns.
+        // `root()` ordered it: the edit-state bind reads a selection the document owns.
         static EDIT_ONCE: std::sync::Once = std::sync::Once::new();
         EDIT_ONCE.call_once(|| {
             day::install_edit_commands(
@@ -626,13 +626,13 @@ fn window_shell() -> impl Piece {
             );
         });
         // The selection drives the inspector's tab, per window: any change lands it on the tab
-        // that talks about the current state. Inside the scope, so the bind reads THIS window's
+        // that talks about the current state. Inside the scope, so the bind reads this window's
         // selection.
         day::reactive::bind(
             || model::selection().get(),
             |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
         );
-        // Rebuild the whole editor when a DIFFERENT document becomes current: the rev alternates
+        // Rebuild the whole editor when a different document becomes current: the rev alternates
         // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
         // the pane (and its visibility) survives a document switch.
         let editor_with_inspector = inspector(
@@ -641,8 +641,8 @@ fn window_shell() -> impl Piece {
             inspector::panel,
         )
         .sheet_done(res::str::insp_done());
-        // The layers pane wraps the whole editor on its LEADING side wherever the tree piece
-        // exists — native (macOS/GTK/iOS) or composed (web, docs/tree.md M2); a target that
+        // The layers pane wraps the whole editor on its leading side wherever the tree piece
+        // exists, native (macOS/GTK/iOS) or composed (web, docs/tree.md M2); a target that
         // answers `Unsupported` keeps exactly the window it had until the tree lands there.
         if capability(Cap::Tree) != Support::Unsupported {
             inspector(

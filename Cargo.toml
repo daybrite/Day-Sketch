@@ -7,13 +7,13 @@ authors = ["Daybrite <hello@daybrite.dev>"]
 repository = "https://github.com/daybrite/Day-Showcase"
 homepage = "https://daybrite.dev"
 # Generates typed resource constants (`res::images::…`, `res::assets::…`, `res::fonts::…`) from the
-# files under `resource/` on every build — see build.rs and src/lib.rs (§18.5).
+# files under `resource/` on every build; see build.rs and src/lib.rs (§18.5).
 build = "build.rs"
 
 [features]
 # The default `mock` backend lets bare `cargo build` / rust-analyzer compile out of the box;
 # `day build` always passes `--no-default-features --features <backend>`, stripping it. Without a
-# default no backend is selected at all, and `day::launch` — gated behind every backend feature —
+# default no backend is selected at all, and `day::launch` (gated behind every backend feature)
 # is configured out, so `cargo clippy --all-targets` cannot compile the bin.
 default = ["mock"]
 appkit = ["day/appkit"]
@@ -30,15 +30,15 @@ mock = ["day/mock"]
 # explicitly via `cargo rustc --crate-type` (a desktop cdylib blows past the windows-gnu PE
 # export cap).
 [lib]
-# A CONSTANT name, not the package's. Every artifact Day stages is named after the LIB target —
-# `libdayapp.a` for the iOS/macOS staticlib, `libdayapp.so` for the Android cdylib, and the
-# `dayapp::` path `src/main.rs` imports — so none of them move when the package is renamed.
+# A constant name, not the package's. Every artifact Day stages is named after the lib target
+# (`libdayapp.a` for the iOS/macOS staticlib, `libdayapp.so` for the Android cdylib, and the
+# `dayapp::` path `src/main.rs` imports), so none of them move when the package is renamed.
 # Renaming this app is a one-line edit to `[package] name` above (DESIGN.md §17.5).
 name = "dayapp"
 crate-type = ["rlib"]
 
 [dependencies]
-# The drawing is a SQLite file per document on every target — the web build opens the same
+# The drawing is a SQLite file per document on every target; the web build opens the same
 # container over the OPFS-mirrored wasm driver (docs/persistence.md).
 day = { git = "https://github.com/daybrite/day.git", features = ["model", "persistence"] }
 day-piece-settings = { git = "https://github.com/daybrite/day.git" }
