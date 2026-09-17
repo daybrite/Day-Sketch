@@ -160,6 +160,7 @@ enum DragOp {
     Move {
         starts: Vec<(u64, f64, f64)>,
         frame: Option<(f64, f64, f64, f64)>,
+        duplicate: Option<day::model::UndoGroup>,
     },
     /// One shape, one corner, its starting frame, and the rotation that frame is drawn under.
     Resize {
@@ -356,7 +357,13 @@ fn snapped_point(px: f64, py: f64, dx: f64, dy: f64, id: u64) -> (f64, f64) {
 }
 
 /// A line has endpoint handles: preserving its aspect ratio means keeping its direction.
-fn endpoint_delta(start: (f64, f64, f64, f64), end: LineEnd, delta: Point, id: u64, lock_aspect: bool) -> (f64, f64) {
+fn endpoint_delta(
+    start: (f64, f64, f64, f64),
+    end: LineEnd,
+    delta: Point,
+    id: u64,
+    lock_aspect: bool,
+) -> (f64, f64) {
     if lock_aspect {
         guides().set(Vec::new());
         let (w, h) = (start.2, start.3);
@@ -484,9 +491,20 @@ fn resize_frame(
     }
     guides().set(Vec::new());
     let (sin, cos) = rotation.to_radians().sin_cos();
-    let (dx, dy) = (delta.x * cos + delta.y * sin, -delta.x * sin + delta.y * cos);
-    let x_sign = if matches!(corner, Corner::TopLeft | Corner::BottomLeft) { -1.0 } else { 1.0 };
-    let y_sign = if matches!(corner, Corner::TopLeft | Corner::TopRight) { -1.0 } else { 1.0 };
+    let (dx, dy) = (
+        delta.x * cos + delta.y * sin,
+        -delta.x * sin + delta.y * cos,
+    );
+    let x_sign = if matches!(corner, Corner::TopLeft | Corner::BottomLeft) {
+        -1.0
+    } else {
+        1.0
+    };
+    let y_sign = if matches!(corner, Corner::TopLeft | Corner::TopRight) {
+        -1.0
+    } else {
+        1.0
+    };
     let (w, h) = (start.2, start.3);
     let scale = (1.0 + (dx * x_sign * w + dy * y_sign * h) / (w * w + h * h))
         .max((model::MIN_SIZE / w).max(model::MIN_SIZE / h));
@@ -1489,6 +1507,13 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                     }
                     model::selection().set(sel.clone());
                 }
+                // Alt is Option on macOS. Latch it at Began: releasing it during the
+                // gesture must not swap back to moving the originals.
+                let duplicate = mods.alt.then(|| {
+                    let group = model::undo_stack().begin_group("duplicate");
+                    sel = model::duplicate_for_drag();
+                    group
+                });
                 let mut starts = Vec::new();
                 for t in &sel {
                     // The shapes only: a group's bounds are derived from its members
@@ -1500,7 +1525,11 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 }
                 let ids: Vec<u64> = starts.iter().map(|(id, ..)| *id).collect();
                 let frame = union_frame(&ids);
-                DragOp::Move { starts, frame }
+                DragOp::Move {
+                    starts,
+                    frame,
+                    duplicate,
+                }
             } else {
                 // Blank canvas: sweep a band. Shift or the platform's command key keeps what
                 // was already selected and adds to it, the same modifier rule a click follows.
@@ -1520,7 +1549,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
             *op.borrow_mut() = next;
         }
         DragPhase::Changed => match &*op.borrow() {
-            DragOp::Move { starts, frame } => {
+            DragOp::Move { starts, frame, .. } => {
                 let (dx, dy) = snapped_move(
                     drag.translation.x / zf,
                     drag.translation.y / zf,
@@ -1536,17 +1565,22 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 rotation,
             } => {
                 let f = resize_frame(
-                    *start, *corner,
+                    *start,
+                    *corner,
                     Point::new(drag.translation.x / zf, drag.translation.y / zf),
-                    *rotation, *id, mods.shift,
+                    *rotation,
+                    *id,
+                    mods.shift,
                 );
                 apply_resize(*id, f, *start, false);
             }
             DragOp::Endpoint { id, end, start } => {
                 let (dx, dy) = endpoint_delta(
-                    *start, *end,
+                    *start,
+                    *end,
                     Point::new(drag.translation.x / zf, drag.translation.y / zf),
-                    *id, mods.shift,
+                    *id,
+                    mods.shift,
                 );
                 let f = line_dragged(*start, *end, dx, dy);
                 apply_resize(*id, f, *start, false);
@@ -1580,7 +1614,11 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
         DragPhase::Ended => {
             let finished = std::mem::replace(&mut *op.borrow_mut(), DragOp::Idle);
             match finished {
-                DragOp::Move { starts, frame } => {
+                DragOp::Move {
+                    starts,
+                    frame,
+                    duplicate,
+                } => {
                     let (dx, dy) = snapped_move(
                         drag.translation.x / zf,
                         drag.translation.y / zf,
@@ -1588,7 +1626,8 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                         &starts,
                     );
                     guides().set(Vec::new());
-                    model::undo_stack().grouped("move", || field_commits_move(dx, dy, &starts))
+                    model::undo_stack().grouped("move", || field_commits_move(dx, dy, &starts));
+                    drop(duplicate);
                 }
                 DragOp::Resize {
                     id,
@@ -1597,18 +1636,23 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                     rotation,
                 } => {
                     let f = resize_frame(
-                        start, corner,
+                        start,
+                        corner,
                         Point::new(drag.translation.x / zf, drag.translation.y / zf),
-                        rotation, id, mods.shift,
+                        rotation,
+                        id,
+                        mods.shift,
                     );
                     guides().set(Vec::new());
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
                 DragOp::Endpoint { id, end, start } => {
                     let (dx, dy) = endpoint_delta(
-                        start, end,
+                        start,
+                        end,
                         Point::new(drag.translation.x / zf, drag.translation.y / zf),
-                        id, mods.shift,
+                        id,
+                        mods.shift,
                     );
                     guides().set(Vec::new());
                     let f = line_dragged(start, end, dx, dy);
@@ -1788,6 +1832,85 @@ mod tests {
     use crate::model::install_test_doc;
 
     #[test]
+    fn alt_drag_copies_an_image_in_place_then_moves_only_the_copy_as_one_undo() {
+        let doc = install_test_doc();
+        unzoomed();
+        crate::snap_enabled().set(false);
+        let bytes: crate::images::ImageBytes = vec![1, 2, 3].into();
+        let id = model::place_image(bytes.clone(), (100.0, 100.0, 160.0, 80.0));
+        let original = doc.store.elem(id);
+        original.rotation().write_commit(30.0);
+        original.fill_opacity().write_commit(0.5);
+        model::selection().set(vec![id]);
+        day::reactive::flush_sync();
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        let drag = |phase, dx, dy| Drag {
+            phase,
+            location: Point::new(180.0 + dx, 140.0 + dy),
+            translation: Point::new(dx, dy),
+        };
+        let alt = day::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        on_drag(drag(DragPhase::Began, 0.0, 0.0), alt, &op);
+        let copy = model::selection().get_untracked()[0];
+        assert_ne!(id, copy);
+        assert_eq!(model::node_bounds(id), model::node_bounds(copy));
+        day::reactive::flush_sync();
+        // Releasing Option during the gesture keeps dragging the already-created copy.
+        on_drag(drag(DragPhase::Changed, 70.0, 40.0), plain(), &op);
+        day::reactive::flush_sync();
+        assert_eq!((original.x().peek(), original.y().peek()), (100.0, 100.0));
+        on_drag(drag(DragPhase::Ended, 70.0, 40.0), plain(), &op);
+        day::reactive::flush_sync();
+        let e = doc.store.elem(copy);
+        assert_eq!((e.x().peek(), e.y().peek()), (170.0, 140.0));
+        assert_eq!(e.rotation().peek(), 30.0);
+        assert_eq!(e.fill_opacity().peek(), 0.5);
+        assert_eq!(e.image_bytes().peek(), bytes);
+        assert!(doc.stack.undo());
+        assert_eq!(doc.store.keys(), vec![id]);
+        assert_eq!(model::selection().get_untracked(), vec![id]);
+        assert!(doc.stack.redo());
+        assert_eq!(model::selection().get_untracked(), vec![copy]);
+        assert_eq!((e.x().peek(), e.y().peek()), (170.0, 140.0));
+    }
+
+    #[test]
+    fn alt_pressed_after_drag_start_does_not_duplicate() {
+        let doc = install_test_doc();
+        unzoomed();
+        crate::snap_enabled().set(false);
+        let id = rect_at(100.0, 100.0, 160.0, 80.0);
+        model::selection().set(vec![id]);
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        on_drag(
+            Drag {
+                phase: DragPhase::Began,
+                location: Point::new(180.0, 140.0),
+                translation: Point::new(0.0, 0.0),
+            },
+            plain(),
+            &op,
+        );
+        on_drag(
+            Drag {
+                phase: DragPhase::Ended,
+                location: Point::new(230.0, 170.0),
+                translation: Point::new(50.0, 30.0),
+            },
+            day::Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+            &op,
+        );
+        assert_eq!(doc.store.keys(), vec![id]);
+        assert_eq!(model::node_bounds(id), Some((150.0, 130.0, 160.0, 80.0)));
+    }
+
+    #[test]
     fn shift_endpoint_resize_preserves_signed_slope_and_axis_aligned_lines() {
         let _doc = install_test_doc();
         for (w, h) in [(100.0, -50.0), (0.0, 100.0), (100.0, 0.0)] {
@@ -1805,7 +1928,12 @@ mod tests {
         let _doc = install_test_doc();
         let start = (100.0, 80.0, 200.0, 50.0);
         for rotation in [0.0, 30.0, 90.0, -120.0] {
-            for corner in [Corner::TopLeft, Corner::TopRight, Corner::BottomLeft, Corner::BottomRight] {
+            for corner in [
+                Corner::TopLeft,
+                Corner::TopRight,
+                Corner::BottomLeft,
+                Corner::BottomRight,
+            ] {
                 for delta in [Point::new(70.0, -20.0), Point::new(-1000.0, 2000.0)] {
                     let f = resize_frame(start, corner, delta, rotation, 0, true);
                     assert!((f.2 / f.3 - 4.0).abs() < 1e-9);

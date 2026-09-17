@@ -145,3 +145,8 @@ ratio. You can press or release Shift during the drag. The opposite corner stays
 including on rotated nodes; line endpoints keep their direction and text continues to
 scale its font proportionally. Independent edge snapping pauses while Shift constrains
 the resize.
+
+Start dragging a selected node while holding **Option** on macOS or **Alt** on other
+platforms to drag a copy. Multiple selected nodes and groups are copied together,
+without an initial offset. Releasing the modifier continues dragging the copies;
+one Undo removes the copies and one Redo restores their final positions.

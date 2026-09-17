@@ -863,6 +863,71 @@ pub(crate) fn duplicate_selection() {
     paste_text(&svg, "duplicate");
 }
 
+/// Exact copies for a drag: no paste offset or SVG conversion, and nested selections stay
+/// in their parent. The caller keeps the undo group open until the drag commits its position.
+pub(crate) fn duplicate_for_drag() -> Vec<u64> {
+    let store = nodes();
+    let selected = selection().get_untracked();
+    let mut roots: Vec<_> = selected
+        .iter()
+        .copied()
+        .filter(|id| {
+            !selected
+                .iter()
+                .any(|other| other != id && is_within(*id, *other))
+        })
+        .collect();
+    roots.sort_by(|a, b| {
+        store
+            .elem(*a)
+            .z()
+            .peek()
+            .total_cmp(&store.elem(*b).z().peek())
+    });
+    let mut next = next_id(store);
+    fn copy(
+        store: Store<Keyed<Node>>,
+        source: u64,
+        parent: Option<One<Node>>,
+        z: f64,
+        next: &mut u64,
+    ) -> u64 {
+        let children = children_of(Some(source));
+        let mut node = store.with_untracked(|rows| rows.get(source).unwrap().clone());
+        let id = *next;
+        *next += 1;
+        node.id = id;
+        node.parent = parent;
+        node.children = Many::default();
+        node.z = z;
+        store.restructure("duplicate", Op::Insert, id, move |rows| rows.push(node));
+        for child in children {
+            copy(
+                store,
+                child,
+                Some(One::to(id)),
+                store.elem(child).z().peek(),
+                next,
+            );
+        }
+        id
+    }
+    let mut copies = Vec::new();
+    for id in roots {
+        let parent = store.elem(id).parent().peek();
+        let z = store.with_untracked(|rows| {
+            rows.items()
+                .iter()
+                .filter(|n| n.parent == parent)
+                .map(|n| n.z)
+                .fold(0.0, f64::max)
+        }) + 1.0;
+        copies.push(copy(store, id, parent, z, &mut next));
+    }
+    selection().set(copies.clone());
+    copies
+}
+
 /// Move the selection by (dx, dy) as one undo unit: the arrow keys' work (1px, or 10 with
 /// shift). A no-op with nothing selected.
 pub(crate) fn nudge_selection(dx: f64, dy: f64) {
@@ -2308,6 +2373,36 @@ mod tests {
             .peek()
             .and_then(|r| r.id())
             .map(|i| i.handle())
+    }
+
+    #[test]
+    fn drag_duplicates_preserve_groups_and_nested_parentage_without_offsets() {
+        let doc = install_test_doc();
+        let a = place_shape(NodeKind::Rect, 30.0, 40.0);
+        let b = place_shape(NodeKind::Oval, 200.0, 40.0);
+        selection().set(vec![a, b]);
+        group_selection();
+        day::reactive::flush_sync();
+        let group = selection().get_untracked()[0];
+        let guard = doc.stack.begin_group("duplicate");
+        let copies = duplicate_for_drag();
+        drop(guard);
+        day::reactive::flush_sync();
+        let children = children_of(Some(copies[0]));
+        assert_eq!(children.len(), 2);
+        assert_eq!(node_bounds(children[0]), node_bounds(a));
+        assert_eq!(node_bounds(children[1]), node_bounds(b));
+        assert_eq!(
+            doc.store.elem(children[0]).parent().peek(),
+            Some(One::to(copies[0]))
+        );
+        // A drilled-in member remains in its original group.
+        selection().set(vec![a]);
+        let guard = doc.stack.begin_group("duplicate");
+        let nested = duplicate_for_drag()[0];
+        drop(guard);
+        assert_eq!(doc.store.elem(nested).parent().peek(), Some(One::to(group)));
+        assert_eq!(node_bounds(nested), node_bounds(a));
     }
 
     #[test]
