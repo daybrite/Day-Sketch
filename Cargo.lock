@@ -463,6 +463,8 @@ dependencies = [
  "day-spec",
  "linkme",
  "log",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
