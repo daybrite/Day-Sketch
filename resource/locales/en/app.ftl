@@ -149,3 +149,5 @@ undo_add_image = Add Image
 insp_opacity = Opacity
 
 clipboard_failed = Could not access the clipboard. Try copying or pasting again.
+
+drag_selection = Drag selection to another window

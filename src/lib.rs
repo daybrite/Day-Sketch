@@ -11,6 +11,7 @@ mod clipboard;
 mod images;
 mod inspector;
 mod model;
+mod transfer;
 
 // The mobile / embedded entry point. Expands to the export each platform's shell binds against,
 // and to nothing at all on a plain cargo desktop build, where src/main.rs is the entry instead.

@@ -54,11 +54,15 @@ fn kind_glyph(kind: NodeKind) -> &'static str {
 /// tree's connection captures the current doc's store, and a new document is a new store, so
 /// without the rebuild the panel would keep watching the old one.
 pub(crate) fn layers_panel() -> AnyPiece {
-    when(
-        move || model::doc_rev().get().is_multiple_of(2),
-        layers_tree,
-    )
-    .otherwise(layers_tree)
+    column((
+        crate::transfer::selection_handle(),
+        when(
+            move || model::doc_rev().get().is_multiple_of(2),
+            layers_tree,
+        )
+        .otherwise(layers_tree)
+        .grow(),
+    ))
     .any()
 }
 

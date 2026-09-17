@@ -7,8 +7,8 @@ use day::clipboard::{Content, Representation};
 use day::prelude::*;
 use std::{rc::Rc, sync::Arc};
 
-const DRAWING: &str = "application/x-day-sketch+svg";
-const IMAGE_TYPES: &[&str] = &[
+pub(crate) const DRAWING: &str = "application/x-day-sketch+svg";
+pub(crate) const IMAGE_TYPES: &[&str] = &[
     "image/png",
     "image/tiff",
     "image/jpeg",
@@ -48,7 +48,7 @@ pub(crate) fn install() {
         },
     );
 }
-fn drawing_content(svg: String, image: Option<ImageBytes>) -> Content {
+pub(crate) fn drawing_content(svg: String, image: Option<ImageBytes>) -> Content {
     let mut reps = vec![
         Representation::new(DRAWING, svg.as_bytes()),
         Representation::new("image/svg+xml", svg.as_bytes()),
