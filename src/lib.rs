@@ -7,6 +7,7 @@
 use day::prelude::*;
 
 mod canvas;
+mod images;
 mod inspector;
 mod model;
 
@@ -305,6 +306,10 @@ fn shape_menu_entries() -> Vec<MenuEntry> {
         menu_item(res::str::tool_text().format())
             .icon(Symbol::Text)
             .action(|| canvas::place_centered(model::NodeKind::Text)),
+        menu_item(res::str::tool_image().format())
+            .id("insert-image")
+            .enabled(images::supported())
+            .action(images::insert_dialog),
     ]
 }
 
@@ -362,7 +367,7 @@ pub(crate) fn selection_context_menu() -> Vec<MenuEntry> {
     items
 }
 
-/// The tool row's shape button: the same two choices as an action sheet, so every target can
+/// The tool row's shape button: the same insertion choices as an action sheet, so every target can
 /// place a shape (and one id, `tool-shape`, drives it in the walkthrough everywhere).
 fn choose_shape() {
     day::task(async {
@@ -372,11 +377,16 @@ fn choose_shape() {
             .button(res::str::tool_oval(), model::NodeKind::Oval)
             .button(res::str::tool_line(), model::NodeKind::Line)
             .button(res::str::tool_text(), model::NodeKind::Text)
+            .button(res::str::tool_image(), model::NodeKind::Image)
             .cancel(res::str::menu_cancel())
             .present()
             .await;
         if let Some(kind) = picked {
-            canvas::place_centered(kind);
+            if kind == model::NodeKind::Image {
+                images::insert_dialog();
+            } else {
+                canvas::place_centered(kind);
+            }
         }
     });
 }

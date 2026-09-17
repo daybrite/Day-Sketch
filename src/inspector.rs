@@ -46,6 +46,7 @@ fn kind_glyph(kind: NodeKind) -> &'static str {
         NodeKind::Line => "∕",
         NodeKind::Group => "⊞",
         NodeKind::Text => "T",
+        NodeKind::Image => "▧",
     }
 }
 
@@ -194,7 +195,9 @@ fn set_extent(id: u64, v: f64, horizontal: bool) {
     match e.kind().peek() {
         NodeKind::Group => {}
         NodeKind::Line => field.write_commit(v.max(0.0).copysign(field.peek())),
-        NodeKind::Rect | NodeKind::Oval => field.write_commit(v.max(model::MIN_SIZE)),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Image => {
+            field.write_commit(v.max(model::MIN_SIZE))
+        }
         // A text node's frame is measured, so "make it 150 wide" means "scale the type until
         // it is": the point size takes the ratio, and the frame follows the type.
         NodeKind::Text => {
@@ -643,7 +646,11 @@ const STROKE_COLOR: StyleColor = StyleColor {
 /// A slider with its attached percentage field, the opacity rows' control.
 fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
     row((
-        slider(num).range(0.0..=1.0).step(0.01).grow(),
+        slider(num)
+            .range(0.0..=1.0)
+            .step(0.01)
+            .id(format!("{id}-slider"))
+            .grow(),
         // 72, not 64: Material's text field pads its text enough that "100%" clipped at 64.
         text_field(PctField { num }).id(id).width(72.0),
     ))
@@ -657,7 +664,9 @@ fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
 fn selection_is_rects() -> bool {
     every_target(|k| match k {
         NodeKind::Rect => true,
-        NodeKind::Oval | NodeKind::Line | NodeKind::Group | NodeKind::Text => false,
+        NodeKind::Oval | NodeKind::Line | NodeKind::Group | NodeKind::Text | NodeKind::Image => {
+            false
+        }
     })
 }
 
@@ -666,7 +675,9 @@ fn selection_is_rects() -> bool {
 fn selection_is_text() -> bool {
     every_target(|k| match k {
         NodeKind::Text => true,
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Line | NodeKind::Group => false,
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Line | NodeKind::Group | NodeKind::Image => {
+            false
+        }
     })
 }
 
@@ -675,7 +686,7 @@ fn selection_is_text() -> bool {
 fn selection_has_stroke() -> bool {
     every_target(|k| match k {
         NodeKind::Rect | NodeKind::Oval | NodeKind::Line => true,
-        NodeKind::Group | NodeKind::Text => false,
+        NodeKind::Group | NodeKind::Text | NodeKind::Image => false,
     })
 }
 
@@ -696,7 +707,7 @@ fn every_target(applies: impl Fn(NodeKind) -> bool) -> bool {
 fn selection_has_fill() -> bool {
     every_target(|k| match k {
         NodeKind::Rect | NodeKind::Oval | NodeKind::Text => true,
-        NodeKind::Line | NodeKind::Group => false,
+        NodeKind::Line | NodeKind::Group | NodeKind::Image => false,
     })
 }
 
@@ -714,7 +725,11 @@ fn selection_can_rotate() -> bool {
         && sel.iter().all(|t| {
             matches!(
                 model::nodes().elem(*t).kind().read(),
-                NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text
+                NodeKind::Rect
+                    | NodeKind::Oval
+                    | NodeKind::Group
+                    | NodeKind::Text
+                    | NodeKind::Image
             )
         })
 }
@@ -1063,6 +1078,15 @@ fn paint_row(
 
 fn style_section() -> impl Piece {
     section((
+        when(
+            || every_target(|k| k == NodeKind::Image),
+            || {
+                labeled(
+                    crate::res::str::insp_opacity(),
+                    opacity_row(FILL_OPACITY, "insp-image-op").grow(),
+                )
+            },
+        ),
         // The fill row mounts only for shapes that have an interior (docs: `when` disposes
         // the arm, so a line's inspector has no fill row at all rather than a dead one).
         when(selection_has_fill, || {

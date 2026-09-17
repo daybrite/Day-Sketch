@@ -109,3 +109,33 @@ day patch --local /path/to/day
 `day lint` checks routes, element ids, and locale coverage.
 
 Day Sketch is open source under the Apache-2.0 license.
+
+### Images
+
+Insert → Image… (also in the toolbar’s **+** menu) opens the platform file picker.
+The image lands centered in the current view, sized to fit without upscaling. Move or
+resize it with the canvas handles or Geometry fields; Rotation and Opacity work like
+other node properties. Images participate in grouping, layer order, undo/redo,
+duplication, and SVG clipboard copy/paste.
+
+The drawing stores the original encoded file in a SQLite `image_bytes` BLOB. It does
+not depend on the source path after insertion. Decoded native bitmaps are cached for
+the lifetime of each canvas and released when their nodes disappear. Opening an older
+drawing adds the BLOB column with empty values for its existing shapes.
+
+The insertion command requires Day’s image decoder and file-picker capabilities.
+Windows provides both, using its native WinRT file picker.
+
+For the desktop image walkthrough, first copy `resource/images/app_logo.png` to
+`/tmp/day-sketch-image-fixture.png`, then run
+`day launch -p macos-appkit --script dayscript/images.yaml`. The screenshots verify
+upright rendering, non-square resizing, rotation, opacity, and SQLite reopen. The
+ordinary editor walkthrough remains `dayscript/demo.yaml`.
+
+The browser counterpart is `scripts/web-image-check.mjs`: after a web build, run it
+with `DAY_WEB_DRIVER_PLAYWRIGHT` pointing to a directory containing
+`node_modules/playwright`. It uses a real file picker, waits for decoded canvas pixels,
+edits the image, then reloads the page to verify restoration from SQLite in OPFS.
+
+Use a Day CLI built from the same framework revision for web builds: its bundled
+`shim.js` must include the new image decoder imports.

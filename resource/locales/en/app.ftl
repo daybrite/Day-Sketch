@@ -137,3 +137,13 @@ undo_style = Style
 undo_background = Background
 undo_rotate = Rotate
 undo_corner = Corner Radius
+
+# Image insertion and the image node inspector.
+tool_image = Image…
+image_files = Images
+image_open_failed = Could not open this image
+image_open_failed_detail = The file could not be read or is not a supported image.
+image_unavailable = Images are not supported on this platform.
+layer_image = Image { $n }
+undo_add_image = Add Image
+insp_opacity = Opacity

@@ -38,6 +38,7 @@ name = "dayapp"
 crate-type = ["rlib"]
 
 [dependencies]
+base64 = "0.22"
 # The drawing is a SQLite file per document on every target; the web build opens the same
 # container over the OPFS-mirrored wasm driver (docs/persistence.md).
 day = { git = "https://github.com/daybrite/day.git", features = ["model", "persistence"] }
@@ -52,3 +53,7 @@ day-build = { git = "https://github.com/daybrite/day.git" }
 
 
 [workspace]
+
+[dev-dependencies]
+day-core = { git = "https://github.com/daybrite/day.git" }
+day-mock = { git = "https://github.com/daybrite/day.git" }

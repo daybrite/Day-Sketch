@@ -14,6 +14,7 @@
 //! commit that returned has been fsynced: the same open/flush/undo shape as the desktop,
 //! with the "path" serving as the document's name in the origin's pool.
 
+use crate::images::ImageBytes;
 use day::model::{Op, UndoStack};
 use day::prelude::*;
 use std::cell::RefCell;
@@ -58,6 +59,8 @@ pub(crate) enum NodeKind {
     /// [`refit_text`] re-derives `w`/`h` after every edit (and once at open, since another
     /// platform's fonts measure differently). The fill is the text's color; it never strokes.
     Text,
+    /// An encoded image, stored in `image_bytes` and drawn through Day’s native decoder.
+    Image,
 }
 
 /// `TEXT` in the file (`rect`/`oval`/`group`): readable by any SQLite tool, stable for SVG later.
@@ -71,6 +74,7 @@ impl day::persistence::ColumnValue for NodeKind {
                 NodeKind::Line => "line",
                 NodeKind::Group => "group",
                 NodeKind::Text => "text",
+                NodeKind::Image => "image",
             }
             .into(),
         )
@@ -82,6 +86,7 @@ impl day::persistence::ColumnValue for NodeKind {
             "line" => Ok(NodeKind::Line),
             "group" => Ok(NodeKind::Group),
             "text" => Ok(NodeKind::Text),
+            "image" => Ok(NodeKind::Image),
             other => Err(day::persistence::DbError::new(
                 day::persistence::DbErrorKind::Decode,
                 format!("not a node kind: {other:?}"),
@@ -114,7 +119,7 @@ pub(crate) struct Node {
     pub h: f64,
     /// `#RRGGBB`: the color well's currency, and SVG's `fill`.
     pub fill: String,
-    /// 0..=1: SVG's `fill-opacity`.
+    /// 0..=1: SVG's `fill-opacity`, or the overall opacity of an image.
     pub fill_opacity: f64,
     /// `#RRGGBB`: SVG's `stroke`.
     pub stroke: String,
@@ -138,6 +143,8 @@ pub(crate) struct Node {
     pub font_italic: bool,
     /// A text node's point size: SVG's `font-size`.
     pub font_size: f64,
+    /// Original encoded file contents, persisted as a BLOB; never a path or native handle.
+    pub image_bytes: ImageBytes,
 }
 
 /// Document-level settings: One row (id 1), seeded at open. A second model in the same
@@ -193,6 +200,7 @@ impl Default for Node {
             font_weight: 400,
             font_italic: false,
             font_size: DEFAULT_FONT_SIZE,
+            image_bytes: Default::default(),
         }
     }
 }
@@ -286,6 +294,7 @@ fn wire_undo(doc: &Doc) {
                 "add-oval" => crate::res::str::undo_add_oval().format(),
                 "add-line" => crate::res::str::undo_add_line().format(),
                 "add-text" => crate::res::str::undo_add_text().format(),
+                "add-image" => crate::res::str::undo_add_image().format(),
                 "edit-text" => crate::res::str::undo_edit_text().format(),
                 "move" => crate::res::str::undo_move().format(),
                 "resize" => crate::res::str::undo_resize().format(),
@@ -710,6 +719,7 @@ pub(crate) fn layer_label(kind: NodeKind, id: u64) -> String {
         NodeKind::Line => crate::res::str::layer_line(n).format(),
         NodeKind::Group => crate::res::str::layer_group(n).format(),
         NodeKind::Text => crate::res::str::layer_text(n).format(),
+        NodeKind::Image => crate::res::str::layer_image(n).format(),
     }
 }
 
@@ -912,7 +922,9 @@ pub(crate) fn shape_frame(id: u64) -> (f64, f64, f64, f64) {
     let e = nodes().elem(id);
     let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
     match e.kind().peek() {
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text => (x, y, w, h),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text | NodeKind::Image => {
+            (x, y, w, h)
+        }
         NodeKind::Line => (x.min(x + w), y.min(y + h), w.abs(), h.abs()),
     }
 }
@@ -974,7 +986,9 @@ fn text_fields_in(store: Store<Keyed<Node>>, id: u64) -> (String, f64, CanvasFon
 pub(crate) fn default_extent(kind: NodeKind) -> (f64, f64) {
     match kind {
         NodeKind::Line => (DEFAULT_LINE, 0.0),
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => (DEFAULT_W, DEFAULT_H),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Image => {
+            (DEFAULT_W, DEFAULT_H)
+        }
         NodeKind::Text => text_extent(
             &crate::res::str::text_default().format(),
             DEFAULT_FONT_SIZE,
@@ -1088,7 +1102,11 @@ pub(crate) fn set_rotation(id: u64, angle: f64, commit: bool) {
                 write(m.w(), bx - ax);
                 write(m.h(), by - ay);
             }
-            NodeKind::Rect | NodeKind::Oval | NodeKind::Group | NodeKind::Text => {
+            NodeKind::Rect
+            | NodeKind::Oval
+            | NodeKind::Group
+            | NodeKind::Text
+            | NodeKind::Image => {
                 let (x, y, w, h) = (m.x().peek(), m.y().peek(), m.w().peek(), m.h().peek());
                 let (mx, my) = turn_about(x + w / 2.0, y + h / 2.0, cx, cy, delta);
                 write(m.x(), mx - w / 2.0);
@@ -1136,7 +1154,9 @@ pub(crate) fn visual_frame(store: Store<Keyed<Node>>, id: u64) -> (f64, f64, f64
     let (x, y, w, h) = shape_frame(id);
     let e = store.elem(id);
     let r = match e.kind().peek() {
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Text => e.rotation().peek().rem_euclid(360.0),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Text | NodeKind::Image => {
+            e.rotation().peek().rem_euclid(360.0)
+        }
         // A line's direction is its endpoints; a group never reaches here
         // (`shape_descendants` yields shapes).
         NodeKind::Line | NodeKind::Group => 0.0,
@@ -1188,6 +1208,7 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             defaults.stroke_opacity,
         ),
         NodeKind::Line => ("add-line", DEFAULT_LINE, 0.0, 2.0, 1.0),
+        NodeKind::Image => ("add-image", DEFAULT_W, DEFAULT_H, 0.0, 0.0),
         // Type is its fill; a text node never strokes, and its frame is what its default line
         // measures to on this platform.
         NodeKind::Text => {
@@ -1224,6 +1245,31 @@ pub(crate) fn place_shape(kind: NodeKind, x: f64, y: f64) -> u64 {
             },
             ..Node::default()
         });
+    });
+    id
+}
+
+/// Insert an already validated image as one undoable row, preserving its original bytes.
+pub(crate) fn place_image(bytes: crate::images::ImageBytes, frame: (f64, f64, f64, f64)) -> u64 {
+    let store = nodes();
+    let id = next_id(store);
+    let z = children_of(None)
+        .last()
+        .map(|id| store.elem(*id).z().peek() + 1.0)
+        .unwrap_or(1.0);
+    store.restructure("add-image", Op::Insert, id, move |v| {
+        v.push(Node {
+            id,
+            z,
+            kind: NodeKind::Image,
+            x: frame.0,
+            y: frame.1,
+            w: frame.2,
+            h: frame.3,
+            image_bytes: bytes.clone(),
+            stroke_width: 0.0,
+            ..Default::default()
+        })
     });
     id
 }
@@ -1351,6 +1397,23 @@ pub(crate) fn selection_to_svg() -> Option<String> {
     fn write_node(out: &mut String, store: Store<Keyed<Node>>, id: u64) {
         let e = store.elem(id);
         match e.kind().peek() {
+            NodeKind::Image => {
+                use base64::Engine as _;
+                let bytes = e.image_bytes().read();
+                let mime = day::ImageFormat::sniff(&bytes.0)
+                    .unwrap_or(day::ImageFormat::Unknown)
+                    .mime();
+                let data = base64::engine::general_purpose::STANDARD.encode(&*bytes.0);
+                let (x, y, w, h) = (e.x().peek(), e.y().peek(), e.w().peek(), e.h().peek());
+                let _ = std::fmt::Write::write_fmt(
+                    out,
+                    format_args!(
+                        "<image x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" opacity=\"{}\" preserveAspectRatio=\"none\" href=\"data:{mime};base64,{data}\"{}/>",
+                        e.fill_opacity().peek(),
+                        rotate_attr(e.rotation().peek(), x, y, w, h)
+                    ),
+                );
+            }
             NodeKind::Text => {
                 // SVG's own text: `y` is the baseline, so the frame's top plus the measured
                 // ascent; the family only when one is set (the default face has no name).
@@ -1546,6 +1609,15 @@ struct SvgText {
 /// fragment without them pastes with the document defaults.
 #[derive(Debug, PartialEq)]
 enum SvgNode {
+    Image {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        opacity: f64,
+        rotation: f64,
+        bytes: crate::images::ImageBytes,
+    },
     Shape {
         kind: NodeKind,
         x: f64,
@@ -1691,6 +1763,29 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
         let name = tag[..name_end].to_ascii_lowercase();
         let a = attrs(&tag[name_end..]);
         let shape = match name.as_str() {
+            "image" => {
+                use base64::Engine as _;
+                let bytes = a
+                    .iter()
+                    .find(|(k, _)| k == "href" || k == "xlink:href")
+                    .and_then(|(_, v)| v.strip_prefix("data:"))
+                    .and_then(|v| v.split_once(";base64,"))
+                    .filter(|(mime, _)| {
+                        mime.starts_with("image/") || *mime == "application/octet-stream"
+                    })
+                    .and_then(|(_, data)| {
+                        base64::engine::general_purpose::STANDARD.decode(data).ok()
+                    });
+                bytes.filter(|b| !b.is_empty()).map(|bytes| SvgNode::Image {
+                    x: num(&a, "x").unwrap_or(0.0),
+                    y: num(&a, "y").unwrap_or(0.0),
+                    w: num(&a, "width").unwrap_or(0.0),
+                    h: num(&a, "height").unwrap_or(0.0),
+                    opacity: num(&a, "opacity").unwrap_or(1.0).clamp(0.0, 1.0),
+                    rotation: rotation_of(&a).unwrap_or(0.0),
+                    bytes: bytes.into(),
+                })
+            }
             "g" if !self_closing => {
                 stack.push(Vec::new());
                 continue;
@@ -1871,7 +1966,7 @@ fn svg_parse(text: &str) -> Vec<SvgNode> {
                     text,
                     ..
                 } => text.as_ref().is_some_and(|t| !t.content.is_empty()),
-                SvgNode::Shape { w, h, .. } => *w > 0.0 && *h > 0.0,
+                SvgNode::Shape { w, h, .. } | SvgNode::Image { w, h, .. } => *w > 0.0 && *h > 0.0,
                 SvgNode::Group(_) => true,
             };
             if keep {
@@ -1950,6 +2045,32 @@ fn paste_text(text: &str, label: &'static str) {
         let id = *next;
         *next += 1;
         match node {
+            SvgNode::Image {
+                x,
+                y,
+                w,
+                h,
+                opacity,
+                rotation,
+                bytes,
+            } => {
+                let node = Node {
+                    id,
+                    parent,
+                    z,
+                    kind: NodeKind::Image,
+                    x: x + offset,
+                    y: y + offset,
+                    w: *w,
+                    h: *h,
+                    fill_opacity: *opacity,
+                    rotation: *rotation,
+                    image_bytes: bytes.clone(),
+                    stroke_width: 0.0,
+                    ..Default::default()
+                };
+                store.restructure("paste", Op::Insert, id, move |v| v.push(node.clone()));
+            }
             SvgNode::Shape {
                 kind,
                 x,
@@ -2020,6 +2141,7 @@ fn paste_text(text: &str, label: &'static str) {
                     font_weight,
                     font_italic,
                     font_size,
+                    image_bytes: Default::default(),
                 };
                 store.restructure("paste", Op::Insert, id, move |v| v.push(node.clone()));
             }

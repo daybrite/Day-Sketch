@@ -615,7 +615,7 @@ fn point_in_shape(store: Store<Keyed<Node>>, id: u64, px: f64, py: f64) -> bool 
         // A group is never tested directly (`hit_top_level` walks its shape descendants),
         // but the arm is written out so a new kind must decide its own hit shape. Text is
         // its measured frame.
-        NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
+        NodeKind::Rect | NodeKind::Group | NodeKind::Text | NodeKind::Image => {
             px >= x && py >= y && px <= x + w && py <= y + h
         }
     }
@@ -726,7 +726,7 @@ fn shape_touches(id: u64, band: &[Point; 4]) -> bool {
         }
         // A group is never tested directly (the walk below descends to its shapes), but the
         // arm is written out so a new kind must decide its own hit shape. Text is its frame.
-        NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
+        NodeKind::Rect | NodeKind::Group | NodeKind::Text | NodeKind::Image => {
             let frame = [
                 Point::new(x, y),
                 Point::new(x + w, y),
@@ -805,7 +805,7 @@ fn corner_points(b: (f64, f64, f64, f64)) -> [(Corner, f64, f64); 4] {
 fn rotation_of(id: u64) -> f64 {
     let e = model::nodes().elem(id);
     match e.kind().peek() {
-        NodeKind::Rect | NodeKind::Oval | NodeKind::Text => e.rotation().peek(),
+        NodeKind::Rect | NodeKind::Oval | NodeKind::Text | NodeKind::Image => e.rotation().peek(),
         // A group's frame is the axis-aligned union of its members and turns with none of
         // them; a line's direction is its two endpoints, so it carries no separate angle
         // (and the inspector offers it none).
@@ -861,7 +861,7 @@ fn hit_handle(px: f64, py: f64) -> Option<(u64, Handle)> {
                     }
                 }
             }
-            NodeKind::Rect | NodeKind::Oval | NodeKind::Text => {
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Text | NodeKind::Image => {
                 let Some(b) = model::node_bounds(*id) else {
                     continue;
                 };
@@ -892,7 +892,7 @@ fn shape_of(node: &Node) -> Shape {
         // A group draws nothing of its own (its members draw themselves), but the arm is
         // written out so a new kind must say what it looks like. Text draws through
         // `Draw::text`, never through a shape; its frame is what it would be here.
-        NodeKind::Rect | NodeKind::Group | NodeKind::Text => {
+        NodeKind::Rect | NodeKind::Group | NodeKind::Text | NodeKind::Image => {
             round_rect_shape(node.x, node.y, node.w, node.h, node.corner_radius)
         }
     }
@@ -1019,7 +1019,8 @@ fn handle_shape(cx: f64, cy: f64, rotation: f64) -> Shape {
         .build()
 }
 
-fn draw_scene(d: &mut Draw, size: Size) {
+fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
+    images.track();
     // Everything clips to the viewport: panned/zoomed content otherwise escapes the canvas
     // in offscreen captures (the live window clips it; cacheDisplayInRect does not).
     d.clip(rect_shape(0.0, 0.0, size.width, size.height));
@@ -1034,15 +1035,24 @@ fn draw_scene(d: &mut Draw, size: Size) {
     let store = model::nodes();
     // A tracked walk: shape + z reads through the collection, field reads per shape.
     let _shape_of_collection = store.keys();
-    fn draw_children(d: &mut Draw, store: Store<Keyed<Node>>, parent: Option<u64>) {
+    fn draw_children(
+        d: &mut Draw,
+        store: Store<Keyed<Node>>,
+        parent: Option<u64>,
+        images: &crate::images::ImageCache,
+    ) {
         // Tracked order: an arrange writes the child's z, the relation index reorders, and
         // this read wakes; one dependency per parent, not one per node in the document.
         for id in crate::model::children_of(parent) {
             let e = store.elem(id);
             let kind = e.kind().with(|k| k.copied().unwrap_or_default());
             match kind {
-                NodeKind::Group => draw_children(d, store, Some(id)),
-                NodeKind::Rect | NodeKind::Oval | NodeKind::Line | NodeKind::Text => {
+                NodeKind::Group => draw_children(d, store, Some(id), images),
+                NodeKind::Rect
+                | NodeKind::Oval
+                | NodeKind::Line
+                | NodeKind::Text
+                | NodeKind::Image => {
                     let node = Node {
                         id,
                         children: day::persistence::Many::default(),
@@ -1065,8 +1075,19 @@ fn draw_scene(d: &mut Draw, size: Size) {
                         font_weight: e.font_weight().read(),
                         font_italic: e.font_italic().read(),
                         font_size: e.font_size().read(),
+                        image_bytes: Default::default(),
                     };
                     let paint = |d: &mut Draw| {
+                        if node.kind == NodeKind::Image {
+                            if let Some(bitmap) = images.get(id) {
+                                d.image_with_opacity(
+                                    &bitmap,
+                                    Rect::new(node.x, node.y, node.w, node.h),
+                                    node.fill_opacity,
+                                );
+                            }
+                            return;
+                        }
                         // Type: one line from the frame's top-leading corner, in the node's
                         // font, colored by its fill. It never strokes.
                         if node.kind == NodeKind::Text {
@@ -1090,7 +1111,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
                         // fills, then strokes its outline.
                         let fills = match node.kind {
                             NodeKind::Rect | NodeKind::Oval | NodeKind::Group => true,
-                            NodeKind::Line | NodeKind::Text => false,
+                            NodeKind::Line | NodeKind::Text | NodeKind::Image => false,
                         };
                         if fills {
                             d.fill(
@@ -1126,7 +1147,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
     let pn = pan().get();
     d.transformed(
         Affine::scale(z, z).then(Affine::translate(pn.x, pn.y)),
-        |d| draw_children(d, store, None),
+        |d| draw_children(d, store, None, images),
     );
 
     // Selection outlines + handles, above everything, drawn in screen space at the
@@ -1170,7 +1191,7 @@ fn draw_scene(d: &mut Draw, size: Size) {
                 continue;
             }
             // A frame, with corner handles to resize by (or, for text, to scale by).
-            NodeKind::Rect | NodeKind::Oval | NodeKind::Text => true,
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Text | NodeKind::Image => true,
             // A group shows the frame it occupies and no handles: groups move, their members
             // resize.
             NodeKind::Group => false,
@@ -1664,6 +1685,7 @@ fn nudge_by_key(ev: &day::KeyEvent) {
 }
 
 pub(crate) fn editor_canvas() -> impl Piece {
+    let images = crate::images::ImageCache::mount(model::nodes());
     let op: Rc<RefCell<DragOp>> = Rc::new(RefCell::new(DragOp::Idle));
     let op2 = op.clone();
     // The pinch scales against the zoom captured at Began (Pinch.scale is cumulative), and
@@ -1672,7 +1694,7 @@ pub(crate) fn editor_canvas() -> impl Piece {
     let pinch_base: Rc<Cell<(f64, Point)>> = Rc::new(Cell::new((1.0, Point::ZERO)));
     canvas(move |d, size| {
         crate::scene().cells.viewport.set((size.width, size.height));
-        draw_scene(d, size)
+        draw_scene(d, size, &images)
     })
     // The live modifiers are read here, at the edge, and travel into the machine as data:
     // shift-drag and shift-click both change meaning, and a handler that reads them itself
@@ -1730,6 +1752,92 @@ pub(crate) fn editor_canvas() -> impl Piece {
 mod tests {
     use super::*;
     use crate::model::install_test_doc;
+
+    #[test]
+    fn an_image_moves_resizes_and_hits_under_rotation() {
+        let doc = install_test_doc();
+        unzoomed();
+        crate::snap_enabled().set(false);
+        let bytes: crate::images::ImageBytes = include_bytes!("../resource/images/app_logo.png")
+            .to_vec()
+            .into();
+        let id = model::place_image(bytes.clone(), (100.0, 100.0, 160.0, 80.0));
+        model::selection().set(vec![id]);
+        day::reactive::flush_sync();
+        sweep_gesture((180.0, 140.0), (210.0, 160.0), plain());
+        day::reactive::flush_sync();
+        assert_eq!(model::node_bounds(id), Some((130.0, 120.0, 160.0, 80.0)));
+        let c = corner(id, Corner::BottomRight);
+        sweep_gesture(c, (c.0 + 40.0, c.1 + 20.0), plain());
+        day::reactive::flush_sync();
+        assert_eq!(model::node_bounds(id), Some((130.0, 120.0, 200.0, 100.0)));
+        let e = doc.store.elem(id);
+        e.rotation().write_commit(90.0);
+        day::reactive::flush_sync();
+        assert_eq!(
+            hit_leaf(230.0, 90.0),
+            Some(id),
+            "the turned image is taller"
+        );
+        assert_eq!(
+            hit_leaf(140.0, 170.0),
+            None,
+            "the old unturned edge is empty"
+        );
+        let c = corner(id, Corner::BottomRight);
+        let held = corner(id, Corner::TopLeft);
+        sweep_gesture(c, (c.0 - 20.0, c.1 + 40.0), plain());
+        day::reactive::flush_sync();
+        assert_eq!((e.w().peek(), e.h().peek()), (240.0, 120.0));
+        let after = corner(id, Corner::TopLeft);
+        assert!((held.0 - after.0).abs() < 1e-6 && (held.1 - after.1).abs() < 1e-6);
+        assert_eq!(e.image_bytes().peek(), bytes);
+        assert!(doc.stack.undo());
+        day::reactive::flush_sync();
+        assert_eq!((e.w().peek(), e.h().peek()), (200.0, 100.0));
+    }
+
+    #[test]
+    fn image_display_list_uses_native_bitmap_opacity_and_transform() {
+        day_core::uninstall_tree();
+        let doc = install_test_doc();
+        unzoomed();
+        let (mock, _) = day_mock::MockToolkit::new();
+        day_core::launch_with(mock, WindowOptions::default(), || label("test").any());
+        let scope = day::reactive::Scope::child();
+        let images = scope.enter(|| crate::images::ImageCache::mount(doc.store));
+        let id = model::place_image(
+            include_bytes!("../resource/images/app_logo.png")
+                .to_vec()
+                .into(),
+            (20.0, 30.0, 100.0, 80.0),
+        );
+        doc.store.elem(id).rotation().write_commit(35.0);
+        doc.store.elem(id).fill_opacity().write_commit(0.4);
+        day::reactive::flush_sync();
+        let mut d = Draw::new();
+        draw_scene(&mut d, Size::new(400.0, 300.0), &images);
+        let ops = d.ops();
+        let at = ops
+            .iter()
+            .position(|op| matches!(op, DrawOp::Image { .. }))
+            .expect("image op");
+        assert_eq!(
+            ops[at],
+            DrawOp::Image {
+                image: images.get(id).unwrap().id(),
+                rect: Rect::new(20.0, 30.0, 100.0, 80.0),
+                opacity: 0.4
+            }
+        );
+        assert_eq!(
+            ops[at - 1],
+            DrawOp::Concat(rotation_about_center(20.0, 30.0, 100.0, 80.0, 35.0))
+        );
+        scope.dispose();
+        drop(images);
+        day_core::uninstall_tree();
+    }
 
     /// A 96×64 rectangle at the origin, selected, turned by `degrees`.
     fn turned(degrees: f64) -> u64 {
@@ -2909,7 +3017,11 @@ mod tests {
         unzoomed();
         guides().set(vec![Guide::Vertical(30.0), Guide::Horizontal(50.0)]);
         let mut d = Draw::new();
-        draw_scene(&mut d, Size::new(400.0, 300.0));
+        draw_scene(
+            &mut d,
+            Size::new(400.0, 300.0),
+            &crate::images::ImageCache::empty(),
+        );
         let lines: Vec<(Point, Point)> = d
             .ops()
             .iter()
@@ -2929,7 +3041,11 @@ mod tests {
         assert_eq!(lines[1], (Point::new(0.0, 50.0), Point::new(400.0, 50.0)));
         guides().set(Vec::new());
         let mut d = Draw::new();
-        draw_scene(&mut d, Size::new(400.0, 300.0));
+        draw_scene(
+            &mut d,
+            Size::new(400.0, 300.0),
+            &crate::images::ImageCache::empty(),
+        );
         assert!(
             !d.ops()
                 .iter()
