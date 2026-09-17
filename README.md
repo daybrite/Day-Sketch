@@ -150,3 +150,14 @@ Start dragging a selected node while holding **Option** on macOS or **Alt** on o
 platforms to drag a copy. Multiple selected nodes and groups are copied together,
 without an initial offset. Releasing the modifier continues dragging the copies;
 one Undo removes the copies and one Redo restores their final positions.
+
+
+Copy/Paste now exchanges image bytes through the system clipboard. A single copied image
+also offers PNG (converting when needed), and editable SVG retains its original bytes and
+node properties for a Day-Sketch round trip. Pasting a screenshot or other supported raster
+image creates a new embedded Image node. Cut removes nodes only after clipboard publication
+succeeds. Text fields keep their normal text clipboard behavior.
+
+Run `dayscript/clipboard-images.yaml` with the image fixture staged as described above, or
+`scripts/web-clipboard-check.mjs` for a real browser clipboard/persistence check. The native
+binary probe lives in `day/parts/day-part-clipboard/examples/binary_clipboard.rs`.

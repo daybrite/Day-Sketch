@@ -2070,6 +2070,7 @@ pub(crate) fn copy_selection_svg() -> Option<String> {
 }
 
 /// Cut: copy, then delete as one labeled undo unit.
+#[cfg(test)]
 pub(crate) fn cut_selection_svg() -> Option<String> {
     let svg = selection_to_svg()?;
     undo_stack().grouped("cut", delete_selection);
@@ -2078,6 +2079,10 @@ pub(crate) fn cut_selection_svg() -> Option<String> {
 
 /// Paste SVG text: parsed shapes land offset +16 (stepping on repeats), stacked above
 /// everything, selected, as one undo unit.
+pub(crate) fn can_paste_svg(text: &str) -> bool {
+    !svg_parse(text).is_empty()
+}
+
 pub(crate) fn paste_clipboard(text: &str) {
     paste_text(text, "paste");
 }

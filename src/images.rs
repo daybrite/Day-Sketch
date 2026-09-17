@@ -135,7 +135,7 @@ pub(crate) fn supported() -> bool {
 }
 
 /// Fit a new image inside 80% of the visible canvas, preserving aspect and never upscaling.
-fn initial_frame(scene: &crate::Scene, size: Size) -> (f64, f64, f64, f64) {
+pub(crate) fn initial_frame(scene: &crate::Scene, size: Size) -> (f64, f64, f64, f64) {
     let (vw, vh) = scene.cells.viewport.get();
     let zoom = scene.zoom.get_untracked();
     let pan = scene.pan.get_untracked();

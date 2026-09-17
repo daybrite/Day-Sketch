@@ -7,6 +7,7 @@
 use day::prelude::*;
 
 mod canvas;
+mod clipboard;
 mod images;
 mod inspector;
 mod model;
@@ -627,13 +628,7 @@ fn window_shell() -> impl Piece {
         // `root()` ordered it: the edit-state bind reads a selection the document owns.
         static EDIT_ONCE: std::sync::Once = std::sync::Once::new();
         EDIT_ONCE.call_once(|| {
-            day::install_edit_commands(
-                || !model::selection().get().is_empty(),
-                model::copy_selection_svg,
-                model::cut_selection_svg,
-                model::paste_clipboard,
-                model::select_all,
-            );
+            clipboard::install();
         });
         // The selection drives the inspector's tab, per window: any change lands it on the tab
         // that talks about the current state. Inside the scope, so the bind reads this window's
