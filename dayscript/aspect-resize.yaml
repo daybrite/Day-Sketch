@@ -1,0 +1,28 @@
+name: sketch-aspect-resize
+description: Shift locks resize proportions; ordinary resizing and undo remain available.
+flow:
+  - wait_for: { id: canvas }
+  - menu: { key: menu_new }
+  - menu: { key: tool_rect, path: [menu_insert] }
+  - input: { id: insp-x, text: "100" }
+  - submit: { id: insp-x }
+  - input: { id: insp-y, text: "100" }
+  - submit: { id: insp-y }
+  - input: { id: insp-w, text: "200" }
+  - submit: { id: insp-w }
+  - input: { id: insp-h, text: "100" }
+  - submit: { id: insp-h }
+  - drag: { id: canvas, from: [300, 200], to: [350, 200], modifiers: [shift] }
+  - assert_text: { id: sk-frame, text: "100,100 240x120" }
+  - screenshot: aspect-locked
+  - menu: { key: menu_undo }
+  - assert_text: { id: sk-frame, text: "100,100 200x100" }
+  - menu: { key: menu_redo }
+  - assert_text: { id: sk-frame, text: "100,100 240x120" }
+  - input: { id: insp-rotation, text: "90" }
+  - submit: { id: insp-rotation }
+  - drag: { id: canvas, from: [160, 280], to: [160, 330], modifiers: [shift] }
+  - assert_text: { id: sk-frame, text: "70,110 280x140" }
+  - screenshot: aspect-locked-rotated
+  - menu: { key: menu_undo }
+  - assert_text: { id: sk-frame, text: "100,100 240x120" }

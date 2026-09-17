@@ -139,3 +139,9 @@ edits the image, then reloads the page to verify restoration from SQLite in OPFS
 
 Use a Day CLI built from the same framework revision for web builds: its bundled
 `shim.js` must include the new image decoder imports.
+
+Hold **Shift** while dragging a canvas resize handle to preserve the starting aspect
+ratio. You can press or release Shift during the drag. The opposite corner stays fixed,
+including on rotated nodes; line endpoints keep their direction and text continues to
+scale its font proportionally. Independent edge snapping pauses while Shift constrains
+the resize.

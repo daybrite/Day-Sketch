@@ -355,6 +355,22 @@ fn snapped_point(px: f64, py: f64, dx: f64, dy: f64, id: u64) -> (f64, f64) {
     (dx + sx, dy + sy)
 }
 
+/// A line has endpoint handles: preserving its aspect ratio means keeping its direction.
+fn endpoint_delta(start: (f64, f64, f64, f64), end: LineEnd, delta: Point, id: u64, lock_aspect: bool) -> (f64, f64) {
+    if lock_aspect {
+        guides().set(Vec::new());
+        let (w, h) = (start.2, start.3);
+        let length2 = w * w + h * h;
+        if length2 > f64::EPSILON {
+            let scale = (delta.x * w + delta.y * h) / length2;
+            return (w * scale, h * scale);
+        }
+        return (0.0, 0.0);
+    }
+    let (px, py) = moving_end(start, end);
+    snapped_point(px, py, delta.x, delta.y, id)
+}
+
 fn field_previews_move(dx: f64, dy: f64, starts: &[(u64, f64, f64)]) {
     let store = model::nodes();
     for (id, sx, sy) in starts {
@@ -449,6 +465,33 @@ fn resized_under_rotation(
     // R(-θ) · (dx, dy): the pointer's travel in the shape's own frame.
     let f = resized(start, corner, dx * cos + dy * sin, -dx * sin + dy * cos);
     reanchor(start, f, corner, rotation)
+}
+
+/// Read Shift on every update (and release), using the gesture's original ratio. Project
+/// onto its diagonal in local coordinates, then clamp one scale so neither dimension flips
+/// or falls below the minimum. Independent edge snapping would break this constraint.
+fn resize_frame(
+    start: (f64, f64, f64, f64),
+    corner: Corner,
+    delta: Point,
+    rotation: f64,
+    id: u64,
+    lock_aspect: bool,
+) -> (f64, f64, f64, f64) {
+    if !lock_aspect || start.2 <= 0.0 || start.3 <= 0.0 {
+        let (dx, dy) = snapped_resize(start, corner, delta.x, delta.y, rotation, id);
+        return resized_under_rotation(start, corner, dx, dy, rotation);
+    }
+    guides().set(Vec::new());
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let (dx, dy) = (delta.x * cos + delta.y * sin, -delta.x * sin + delta.y * cos);
+    let x_sign = if matches!(corner, Corner::TopLeft | Corner::BottomLeft) { -1.0 } else { 1.0 };
+    let y_sign = if matches!(corner, Corner::TopLeft | Corner::TopRight) { -1.0 } else { 1.0 };
+    let (w, h) = (start.2, start.3);
+    let scale = (1.0 + (dx * x_sign * w + dy * y_sign * h) / (w * w + h * h))
+        .max((model::MIN_SIZE / w).max(model::MIN_SIZE / h));
+    let frame = (start.0, start.1, w * scale, h * scale);
+    reanchor(start, frame, corner, rotation)
 }
 
 /// Where the corner opposite `corner` of frame `b` lands on the canvas once the frame is
@@ -1492,25 +1535,18 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 start,
                 rotation,
             } => {
-                let (dx, dy) = snapped_resize(
-                    *start,
-                    *corner,
-                    drag.translation.x / zf,
-                    drag.translation.y / zf,
-                    *rotation,
-                    *id,
+                let f = resize_frame(
+                    *start, *corner,
+                    Point::new(drag.translation.x / zf, drag.translation.y / zf),
+                    *rotation, *id, mods.shift,
                 );
-                let f = resized_under_rotation(*start, *corner, dx, dy, *rotation);
                 apply_resize(*id, f, *start, false);
             }
             DragOp::Endpoint { id, end, start } => {
-                let (px, py) = moving_end(*start, *end);
-                let (dx, dy) = snapped_point(
-                    px,
-                    py,
-                    drag.translation.x / zf,
-                    drag.translation.y / zf,
-                    *id,
+                let (dx, dy) = endpoint_delta(
+                    *start, *end,
+                    Point::new(drag.translation.x / zf, drag.translation.y / zf),
+                    *id, mods.shift,
                 );
                 let f = line_dragged(*start, *end, dx, dy);
                 apply_resize(*id, f, *start, false);
@@ -1560,22 +1596,20 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                     start,
                     rotation,
                 } => {
-                    let (dx, dy) = snapped_resize(
-                        start,
-                        corner,
-                        drag.translation.x / zf,
-                        drag.translation.y / zf,
-                        rotation,
-                        id,
+                    let f = resize_frame(
+                        start, corner,
+                        Point::new(drag.translation.x / zf, drag.translation.y / zf),
+                        rotation, id, mods.shift,
                     );
                     guides().set(Vec::new());
-                    let f = resized_under_rotation(start, corner, dx, dy, rotation);
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
                 }
                 DragOp::Endpoint { id, end, start } => {
-                    let (px, py) = moving_end(start, end);
-                    let (dx, dy) =
-                        snapped_point(px, py, drag.translation.x / zf, drag.translation.y / zf, id);
+                    let (dx, dy) = endpoint_delta(
+                        start, end,
+                        Point::new(drag.translation.x / zf, drag.translation.y / zf),
+                        id, mods.shift,
+                    );
                     guides().set(Vec::new());
                     let f = line_dragged(start, end, dx, dy);
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
@@ -1752,6 +1786,71 @@ pub(crate) fn editor_canvas() -> impl Piece {
 mod tests {
     use super::*;
     use crate::model::install_test_doc;
+
+    #[test]
+    fn shift_endpoint_resize_preserves_signed_slope_and_axis_aligned_lines() {
+        let _doc = install_test_doc();
+        for (w, h) in [(100.0, -50.0), (0.0, 100.0), (100.0, 0.0)] {
+            for end in [LineEnd::Start, LineEnd::End] {
+                let start = (20.0, 30.0, w, h);
+                let (dx, dy) = endpoint_delta(start, end, Point::new(40.0, 60.0), 0, true);
+                let f = line_dragged(start, end, dx, dy);
+                assert!((f.2 * h - f.3 * w).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn shift_resize_preserves_ratio_and_anchor_at_every_corner_and_rotation() {
+        let _doc = install_test_doc();
+        let start = (100.0, 80.0, 200.0, 50.0);
+        for rotation in [0.0, 30.0, 90.0, -120.0] {
+            for corner in [Corner::TopLeft, Corner::TopRight, Corner::BottomLeft, Corner::BottomRight] {
+                for delta in [Point::new(70.0, -20.0), Point::new(-1000.0, 2000.0)] {
+                    let f = resize_frame(start, corner, delta, rotation, 0, true);
+                    assert!((f.2 / f.3 - 4.0).abs() < 1e-9);
+                    assert!(f.2 >= model::MIN_SIZE && f.3 >= model::MIN_SIZE);
+                    let a = held_corner(start, corner, rotation);
+                    let b = held_corner(f, corner, rotation);
+                    assert!((a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shift_can_toggle_during_a_zoomed_image_resize_and_commit_one_undo() {
+        let doc = install_test_doc();
+        unzoomed();
+        crate::snap_enabled().set(true);
+        let id = model::place_image(Vec::new().into(), (100.0, 100.0, 200.0, 100.0));
+        model::selection().set(vec![id]);
+        zoom().set(2.0);
+        day::reactive::flush_sync();
+        let from = corner(id, Corner::BottomRight);
+        let op = Rc::new(RefCell::new(DragOp::Idle));
+        let drag = |phase, dx| Drag {
+            phase,
+            location: Point::new(from.0 + dx, from.1),
+            translation: Point::new(dx, 0.0),
+        };
+        on_drag(drag(DragPhase::Began, 0.0), plain(), &op);
+        on_drag(drag(DragPhase::Changed, 100.0), plain(), &op);
+        let e = doc.store.elem(id);
+        assert_eq!((e.w().peek(), e.h().peek()), (250.0, 100.0));
+        on_drag(drag(DragPhase::Changed, 100.0), shift(), &op);
+        assert_eq!((e.w().peek(), e.h().peek()), (240.0, 120.0));
+        assert!(guides().get_untracked().is_empty());
+        on_drag(drag(DragPhase::Changed, 100.0), plain(), &op);
+        assert_eq!((e.w().peek(), e.h().peek()), (250.0, 100.0));
+        // The modifier at release applies even when the last preview was unconstrained.
+        on_drag(drag(DragPhase::Ended, 100.0), shift(), &op);
+        assert_eq!((e.w().peek(), e.h().peek()), (240.0, 120.0));
+        assert!(doc.stack.undo());
+        assert_eq!((e.w().peek(), e.h().peek()), (200.0, 100.0));
+        assert!(doc.stack.redo());
+        assert_eq!((e.w().peek(), e.h().peek()), (240.0, 120.0));
+    }
 
     #[test]
     fn an_image_moves_resizes_and_hits_under_rotation() {
