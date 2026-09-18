@@ -62,9 +62,20 @@ try {
   const rect = await page.locator('#canvas').boundingBox();
   await page.mouse.click(rect.x+200,rect.y+160);
   await page.keyboard.press('Meta+c');
-  await page.waitForFunction(async () => (await navigator.clipboard.read()).some(i=>i.types.includes('text/html') && i.types.includes('image/png')));
-  const pngSize = await page.evaluate(async () => (await (await navigator.clipboard.read())[0].getType('image/png')).size);
-  assert.ok(pngSize > 0);
+  // Copy publishes native event data and then the encoded PNG asynchronously. Read
+  // the bytes in the polling condition: a ClipboardItem can become stale between
+  // listing its types and getType() while the async publication replaces it.
+  await page.waitForFunction(async () => {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        if (item.types.includes('text/html') && item.types.includes('image/png')
+            && (await item.getType('image/png')).size > 0) return true;
+      }
+    } catch (error) {
+      if (error.name !== 'InvalidStateError') throw error;
+    }
+    return false;
+  });
   await page.keyboard.press('Meta+v');
   await page.waitForFunction(() => document.querySelector('#sk-count')?.textContent.includes('2'));
   assert.equal(await page.locator('#sk-frame').textContent(), '116,96 200x160');
