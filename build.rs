@@ -6,5 +6,5 @@
 //! build error, the resource is guaranteed bundled, and the available names autocomplete. Adding or
 //! removing a file under `resource/` regenerates on the next build.
 fn main() {
-    day_build::generate_resources().expect("day-build: resource codegen");
+    day_build::prebuild_project().expect("day-build: prebuild");
 }
