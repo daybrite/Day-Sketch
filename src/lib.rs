@@ -149,15 +149,9 @@ fn menus() -> Vec<MenuEntry> {
             .shortcut(cmd_shift(res::str::menu_export_key())),
     ];
     let mut view = vec![
-        menu_item(res::str::menu_zoom_in().format())
-            .action(|| canvas::zoom_step(1.25))
-            .shortcut(cmd(res::str::menu_zoom_in_key())),
-        menu_item(res::str::menu_zoom_reset().format())
-            .action(canvas::zoom_reset)
-            .shortcut(cmd(res::str::menu_zoom_reset_key())),
-        menu_item(res::str::menu_zoom_out().format())
-            .action(|| canvas::zoom_step(0.8))
-            .shortcut(cmd(res::str::menu_zoom_out_key())),
+        zoom_in_command().menu_item(),
+        zoom_reset_command().menu_item(),
+        zoom_out_command().menu_item(),
         menu_separator(),
         // One stable label ("Inspector"), not a Show/Hide flip: dayscript targets menu items
         // by catalog key, and a flipping label would break `menu: { key: menu_inspector }`.
@@ -249,18 +243,9 @@ fn toolbar() -> Vec<ToolbarEntry> {
         toolbar_separator(),
         // The zoom group: out, actual size, in. The separator sets the trio off from its
         // neighbors.
-        toolbar_button("tb-zoom-out", res::str::menu_zoom_out())
-            .icon(Symbol::ZoomOut)
-            .tooltip(res::str::menu_zoom_out())
-            .action(|| canvas::zoom_step(0.8)),
-        toolbar_button("tb-zoom-reset", res::str::menu_zoom_reset())
-            .icon(Symbol::ZoomReset)
-            .tooltip(res::str::menu_zoom_reset())
-            .action(canvas::zoom_reset),
-        toolbar_button("tb-zoom-in", res::str::menu_zoom_in())
-            .icon(Symbol::ZoomIn)
-            .tooltip(res::str::menu_zoom_in())
-            .action(|| canvas::zoom_step(1.25)),
+        zoom_out_command().toolbar_item().id("tb-zoom-out"),
+        zoom_reset_command().toolbar_item().id("tb-zoom-reset"),
+        zoom_in_command().toolbar_item().id("tb-zoom-in"),
         // The arrange pair and the inspector toggle trail the rest: `Secondary` is what packs
         // them to the far end of a desktop bar and folds them away first on a phone
         // (docs/toolbars.md), which is what the flexible space used to say by position.
@@ -663,4 +648,37 @@ fn window_shell() -> impl Piece {
             editor_with_inspector.any()
         }
     })
+}
+
+fn zoom_in_command() -> CommandHandle {
+    Command {
+        id: "zoom-in",
+        label: res::str::menu_zoom_in(),
+        action: || canvas::zoom_step(1.25),
+    }
+    .build()
+    .icon(Symbol::ZoomIn)
+    .shortcut(cmd(res::str::menu_zoom_in_key()))
+}
+
+fn zoom_out_command() -> CommandHandle {
+    Command {
+        id: "zoom-out",
+        label: res::str::menu_zoom_out(),
+        action: || canvas::zoom_step(0.8),
+    }
+    .build()
+    .icon(Symbol::ZoomOut)
+    .shortcut(cmd(res::str::menu_zoom_out_key()))
+}
+
+fn zoom_reset_command() -> CommandHandle {
+    Command {
+        id: "zoom-reset",
+        label: res::str::menu_zoom_reset(),
+        action: canvas::zoom_reset,
+    }
+    .build()
+    .icon(Symbol::ZoomReset)
+    .shortcut(cmd(res::str::menu_zoom_reset_key()))
 }
