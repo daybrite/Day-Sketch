@@ -240,7 +240,7 @@ fn toolbar() -> Vec<ToolbarEntry> {
         toolbar_menu("tb-shape", res::str::tool_shape(), shape_menu_entries())
             .icon(Symbol::Add)
             .tooltip(res::str::tool_shape()),
-        toolbar_separator(),
+        toolbar_separator("tb-sep-tools"),
         // The zoom group: out, actual size, in. The separator sets the trio off from its
         // neighbors.
         zoom_out_command().toolbar_item().id("tb-zoom-out"),

@@ -11,7 +11,7 @@ id = "dev.daybrite.sketch"
 # default is the id\'s last segment, which is not what this app published.
 scheme = "daysketch"
 title = "Day Sketch"
-build = 4
+build = 5
 targets = ["macos-appkit", "macos-gtk", "macos-qt", "ios-uikit", "android-mdc", "linux-gtk", "linux-qt", "windows-xaml", "harmony-arkui", "web-dom"]
 
 [window]

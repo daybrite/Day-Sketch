@@ -59,4 +59,4 @@ day-core = { git = "https://github.com/daybrite/day.git" }
 day-mock = { git = "https://github.com/daybrite/day.git" }
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
