@@ -12,7 +12,7 @@ id = "dev.daybrite.sketch"
 scheme = "daysketch"
 title = "Day Sketch"
 build = 5
-targets = ["macos-appkit", "macos-gtk", "macos-qt", "ios-uikit", "android-mdc", "linux-gtk", "linux-qt", "windows-xaml", "harmony-arkui", "web-dom"]
+targets = ["macos-appkit", "macos-gtk", "macos-qt", "ios-uikit", "android-mdc", "linux-gtk", "linux-qt", "windows-winui", "windows-xaml", "harmony-arkui", "web-dom"]
 
 [window]
 width = 960
