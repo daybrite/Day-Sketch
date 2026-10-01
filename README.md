@@ -41,7 +41,9 @@ their platform expects.
 Under the canvas, a drawing is one observable table in a SQLite file. A drag edits it live through
 a preview session, and the committed result is a row change, which is what makes undo a matter of
 replaying turns. The app was the stress test the day-model and day-persistence design was drafted
-against.
+against. Native **Export a Copy** first saves pending edits, then uses a separate database
+worker for the consistent SQLite snapshot and file read. Export does not hold the UI thread
+through the backup; the drawing's small interactive edits retain their UI-owned model and undo.
 
 ## The same code on every platform
 

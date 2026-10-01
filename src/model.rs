@@ -599,17 +599,65 @@ pub(crate) fn export_copy_dialog() {
     let Some(container) = d.container.clone() else {
         return;
     };
+    let path = d.path.clone();
+    // Seal UI edits before the independent reader starts its WAL snapshot. The potentially
+    // large backup and file read run on a worker; its connection never leaves that queue.
+    if container.save().is_err() {
+        return;
+    }
     let name = format!("{}.daysketch", doc_name());
-    day::task(async move {
-        let tmp = day::app_temp_dir().join(format!("sketch-export-{}", std::process::id()));
-        let _ = std::fs::remove_file(&tmp);
-        if container.backup_to(&tmp).is_err() {
-            return;
+    static NEXT_EXPORT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ticket = NEXT_EXPORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = day::app_temp_dir().join(format!("sketch-export-{}-{ticket}", std::process::id()));
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
         }
-        let Ok(bytes) = std::fs::read(&tmp) else {
-            return;
+    }
+    let cleanup = Cleanup(tmp);
+    let file_backed = path.is_some();
+    // Preserve export from the emergency in-memory document too. Its connection cannot move
+    // queues; only that fallback needs a synchronous snapshot before the background file read.
+    if !file_backed && let Err(error) = container.backup_to(&cleanup.0) {
+        day::error!("export in-memory snapshot: {error}");
+        return;
+    }
+    day::task(async move {
+        use day::persistence::{DatabaseWorker, DbError};
+        let worker = match DatabaseWorker::open(move || {
+            ModelContainer::open(
+                path.map(Sqlite::at).unwrap_or_else(Sqlite::memory),
+                day::persistence::Schema::new(),
+            )
+        })
+        .await
+        {
+            Ok(worker) => worker,
+            Err(error) => {
+                day::error!("export snapshot open: {error}");
+                return;
+            }
         };
-        let _ = std::fs::remove_file(&tmp);
+        let backup = if file_backed {
+            worker.backup_to(cleanup.0.clone()).await
+        } else {
+            Ok(())
+        };
+        let result = worker
+            .read(move |_db| {
+                backup?;
+                std::fs::read(&cleanup.0).map_err(|e| DbError::driver(e.to_string()))
+            })
+            .await;
+        let closed = worker.close().await;
+        let bytes = match result.and_then(|bytes| closed.map(|()| bytes)) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                day::error!("export snapshot: {error}");
+                return;
+            }
+        };
         let _ = save_file(bytes)
             .title(crate::res::str::menu_export())
             .suggested_name(name)

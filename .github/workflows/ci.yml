@@ -26,7 +26,7 @@ jobs:
       id-token: write # deploy-pages OIDC token (deploy-web)
     secrets: inherit
     with:
-      targets: windows-xaml, macos-appkit, linux-gtk, linux-qt, ios-uikit, android-mdc, harmony-arkui, web-dom
+      targets: windows-winui, macos-appkit, linux-gtk, linux-qt, ios-uikit, android-mdc, harmony-arkui, web-dom
       scripts: dayscript/demo.yaml
       #launch-env: WEATHER_MOCK=1
       locales: en
