@@ -2,7 +2,7 @@
 // injected dayscript events) places and moves a shape, then a real page.reload() must find
 // the drawing again out of the origin's OPFS, through the day-sql worker channel.
 //
-// Run after `day build -p web-dom` (the dist this serves):
+// Run after `day build -t web-dom` (the dist this serves):
 //   DAY_WEB_DRIVER_PLAYWRIGHT=<dir with node_modules/playwright> \
 //     node scripts/web-reload-check.mjs build/day/cargo/web-dom/debug/dist [webkit|chromium]
 //

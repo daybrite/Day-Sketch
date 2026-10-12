@@ -1,5 +1,5 @@
 // Real browser binary clipboard → canvas → editable copy/paste → SQLite/OPFS reload.
-// After `day build -p web-dom`:
+// After `day build -t web-dom`:
 // DAY_WEB_DRIVER_PLAYWRIGHT=<dir containing node_modules/playwright> node scripts/web-clipboard-check.mjs [dist] [chromium|webkit]
 import { createRequire } from 'node:module';
 import http from 'node:http';

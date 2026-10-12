@@ -69,10 +69,10 @@ target the app ships is listed in `Day.toml`.
 
 ```sh
 day doctor                       # toolchains present and missing, with fixes
-day launch -p macos-appkit       # build + run
-day launch -p ios-uikit          # needs a booted Simulator
-day launch -p android-mdc        # needs a JDK and a running emulator or device
-day launch -p web-dom            # serves the WebAssembly build locally
+day launch -t macos-appkit       # build + run
+day launch -t ios-uikit          # needs a booted Simulator
+day launch -t android-mdc        # needs a JDK and a running emulator or device
+day launch -t web-dom            # serves the WebAssembly build locally
 ```
 
 A bare `cargo build` uses the crate's default `mock` backend, which is what lets rust-analyzer and
@@ -87,7 +87,7 @@ undoes, and screenshots along the way. It is the app's UI test and the script CI
 target to produce the gallery:
 
 ```sh
-day launch -p macos-appkit --script dayscript/demo.yaml
+day launch -t macos-appkit --script dayscript/demo.yaml
 ```
 
 To build against a local `day` checkout instead of the pinned git revision, let the CLI write and
@@ -106,7 +106,7 @@ day patch --local /path/to/day
 - `src/model.rs` is the scene as a day-model table, persisted to SQLite through
   day-persistence, with every edit as one undoable turn.
 - `resource/locales/en/app.ftl` carries every user-facing string.
-- `platform/` holds the thin native host projects the mobile targets build through.
+- `platform/` holds app-owned Apple host sources and any native resource customizations. Day generates the build projects under `build/`.
 
 `day lint` checks routes, element ids, and locale coverage.
 
@@ -130,7 +130,7 @@ Windows provides both, using its native WinRT file picker.
 
 For the desktop image walkthrough, first copy `resource/images/app_logo.png` to
 `/tmp/day-sketch-image-fixture.png`, then run
-`day launch -p macos-appkit --script dayscript/images.yaml`. The screenshots verify
+`day launch -t macos-appkit --script dayscript/images.yaml`. The screenshots verify
 upright rendering, non-square resizing, rotation, opacity, and SQLite reopen. The
 ordinary editor walkthrough remains `dayscript/demo.yaml`.
 
@@ -163,3 +163,14 @@ succeeds. Text fields keep their normal text clipboard behavior.
 Run `dayscript/clipboard-images.yaml` with the image fixture staged as described above, or
 `scripts/web-clipboard-check.mjs` for a real browser clipboard/persistence check. The native
 binary probe lives in `day/parts/day-part-clipboard/examples/binary_clipboard.rs`.
+
+
+## Generated native projects
+
+Use a Day CLI with automatic native project generation; Apple builds require **Xcode 27
+or newer**. Xcode project documents, Android Gradle files, and HarmonyOS hvigor files are
+created under `build/` by `day prepare`, `day build`, and `day launch`. Open the selected
+project with `day open -t <target>`; edits to generated files are disposable. Apple Swift
+sources, plists and `.xcconfig` files, and any Android resource overlays, remain app-owned
+under `platform/`. For additional native configuration, use
+`day project add-target <target> --persist-native-project` to create a persistent override.
