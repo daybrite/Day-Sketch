@@ -1116,7 +1116,7 @@ fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
                 | NodeKind::Image => {
                     let node = Node {
                         id,
-                        children: day::persistence::Many::default(),
+                        children: day_persistence::Many::default(),
                         parent: None,
                         z: 0.0,
                         kind,

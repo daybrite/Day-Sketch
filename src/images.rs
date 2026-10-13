@@ -13,18 +13,16 @@ impl From<Vec<u8>> for ImageBytes {
     }
 }
 
-impl day::persistence::ColumnValue for ImageBytes {
-    const SQL_TYPE: day::persistence::SqlType = day::persistence::SqlType::Blob;
-    fn to_sqlite_value(&self) -> day::persistence::Value {
-        day::persistence::Value::Blob(self.0.as_ref().clone())
+impl day_persistence::ColumnValue for ImageBytes {
+    const SQL_TYPE: day_persistence::SqlType = day_persistence::SqlType::Blob;
+    fn to_sqlite_value(&self) -> day_persistence::Value {
+        day_persistence::Value::Blob(self.0.as_ref().clone())
     }
-    fn from_sqlite_value(
-        value: day::persistence::Value,
-    ) -> Result<Self, day::persistence::DbError> {
+    fn from_sqlite_value(value: day_persistence::Value) -> Result<Self, day_persistence::DbError> {
         match value {
-            day::persistence::Value::Blob(bytes) => Ok(bytes.into()),
-            other => Err(day::persistence::DbError::new(
-                day::persistence::DbErrorKind::Decode,
+            day_persistence::Value::Blob(bytes) => Ok(bytes.into()),
+            other => Err(day_persistence::DbError::new(
+                day_persistence::DbErrorKind::Decode,
                 format!("expected image BLOB, found {other:?}"),
             )),
         }
@@ -209,7 +207,7 @@ pub(crate) fn insert_dialog() {
 mod tests {
     use super::*;
     use crate::model::{self, Node, NodeKind};
-    use day::persistence::{SqliteConnection, SqliteDriver, Value};
+    use day_persistence::{SqliteConnection, SqliteDriver, Value};
 
     fn bytes() -> ImageBytes {
         include_bytes!("../resource/images/app_logo.png")
@@ -280,7 +278,7 @@ mod tests {
             std::env::temp_dir().join(format!("day-sketch-image-{}.sqlite", std::process::id()));
         doc.container.as_ref().unwrap().backup_to(&path).unwrap();
         {
-            let mut connection = day::persistence::Sqlite::at(&path).open().unwrap();
+            let mut connection = day_persistence::Sqlite::at(&path).open().unwrap();
             let mut rows = Vec::new();
             connection
                 .query(
@@ -293,9 +291,9 @@ mod tests {
             assert_eq!(rows[0][1], Value::Blob(bytes.0.as_ref().clone()));
         }
         {
-            let reopened = day::persistence::ModelContainer::open(
-                day::persistence::Sqlite::at(&path),
-                day::persistence::schema![Node, model::DocMeta],
+            let reopened = day_persistence::ModelContainer::open(
+                day_persistence::Sqlite::at(&path),
+                day_persistence::schema![Node, model::DocMeta],
             )
             .unwrap();
             reopened.warm::<Node>().unwrap();
@@ -317,12 +315,11 @@ mod tests {
 
     #[test]
     fn pre_image_documents_backfill_an_empty_blob() {
-        let driver = day::persistence::Sqlite::memory().with_init(|db| {
+        let driver = day_persistence::Sqlite::memory().with_init(|db| {
             db.execute_batch("CREATE TABLE nodes (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, x REAL NOT NULL); INSERT INTO nodes VALUES (1, 'rect', 42);").unwrap();
         });
         let container =
-            day::persistence::ModelContainer::open(driver, day::persistence::schema![Node])
-                .unwrap();
+            day_persistence::ModelContainer::open(driver, day_persistence::schema![Node]).unwrap();
         container.warm::<Node>().unwrap();
         let node = container.cache::<Node>().elem(1);
         assert_eq!(node.kind().peek(), NodeKind::Rect);

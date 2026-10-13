@@ -17,6 +17,7 @@
 use crate::images::ImageBytes;
 use day::model::{Op, UndoStack};
 use day::prelude::*;
+use day_persistence::prelude::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -64,10 +65,10 @@ pub(crate) enum NodeKind {
 }
 
 /// `TEXT` in the file (`rect`/`oval`/`group`): readable by any SQLite tool, stable for SVG later.
-impl day::persistence::ColumnValue for NodeKind {
-    const SQL_TYPE: day::persistence::SqlType = day::persistence::SqlType::Text;
-    fn to_sqlite_value(&self) -> day::persistence::Value {
-        day::persistence::Value::Text(
+impl day_persistence::ColumnValue for NodeKind {
+    const SQL_TYPE: day_persistence::SqlType = day_persistence::SqlType::Text;
+    fn to_sqlite_value(&self) -> day_persistence::Value {
+        day_persistence::Value::Text(
             match self {
                 NodeKind::Rect => "rect",
                 NodeKind::Oval => "oval",
@@ -79,7 +80,7 @@ impl day::persistence::ColumnValue for NodeKind {
             .into(),
         )
     }
-    fn from_sqlite_value(v: day::persistence::Value) -> Result<Self, day::persistence::DbError> {
+    fn from_sqlite_value(v: day_persistence::Value) -> Result<Self, day_persistence::DbError> {
         match v.as_text()? {
             "rect" => Ok(NodeKind::Rect),
             "oval" => Ok(NodeKind::Oval),
@@ -87,8 +88,8 @@ impl day::persistence::ColumnValue for NodeKind {
             "group" => Ok(NodeKind::Group),
             "text" => Ok(NodeKind::Text),
             "image" => Ok(NodeKind::Image),
-            other => Err(day::persistence::DbError::new(
-                day::persistence::DbErrorKind::Decode,
+            other => Err(day_persistence::DbError::new(
+                day_persistence::DbErrorKind::Decode,
                 format!("not a node kind: {other:?}"),
             )),
         }
@@ -212,9 +213,9 @@ impl Default for Node {
 pub(crate) struct Doc {
     pub store: Store<Keyed<Node>>,
     pub meta: Store<Keyed<DocMeta>>,
-    pub container: Option<day::persistence::ModelContainer>,
+    pub container: Option<day_persistence::ModelContainer>,
     /// The top-level nodes, in z order; see [`doc_from_driver_inner`].
-    pub roots: day::persistence::Query<Node>,
+    pub roots: day_persistence::Query<Node>,
     pub stack: UndoStack,
     pub path: Option<PathBuf>,
 }
@@ -384,7 +385,7 @@ fn open_default() -> Doc {
         .filter(|p| p.exists());
     match remembered {
         Some(p) => open_file_doc(p),
-        None => match day::persistence::Sqlite::app_data(DEFAULT_FILE) {
+        None => match day_persistence::Sqlite::app_data(DEFAULT_FILE) {
             Ok(driver) => doc_from_driver(traced(driver), default_path()),
             Err(_) => memory_doc(),
         },
@@ -397,7 +398,7 @@ fn open_default() -> Doc {
 /// not persistent.
 #[cfg(target_arch = "wasm32")]
 fn open_default() -> Doc {
-    let storage = day::persistence::Sqlite::web_storage().ok();
+    let storage = day_persistence::Sqlite::web_storage().ok();
     let remembered =
         day::prefs::get(LAST_DOC_KEY).filter(|n| storage.as_ref().is_some_and(|s| s.exists(n)));
     match (remembered, storage) {
@@ -412,7 +413,7 @@ const LAST_DOC_KEY: &str = "sketch.last-doc";
 
 #[cfg(not(target_arch = "wasm32"))]
 fn default_path() -> Option<PathBuf> {
-    day::persistence::Sqlite::app_data_dir()
+    day_persistence::Sqlite::app_data_dir()
         .ok()
         .map(|d| d.join(DEFAULT_FILE))
 }
@@ -423,7 +424,7 @@ fn default_path() -> Option<PathBuf> {
 /// `DAY_LOG=trace` shows it; anything less hides it, which is what a level is for. The
 /// `cfg!(debug_assertions)` guard stays: a release build should not pay to format SQL it will
 /// then discard.
-fn traced(driver: day::persistence::Sqlite) -> day::persistence::Sqlite {
+fn traced(driver: day_persistence::Sqlite) -> day_persistence::Sqlite {
     if cfg!(debug_assertions) {
         driver.trace_sql(|sql| trace!("sql: {sql}"))
     } else {
@@ -431,7 +432,7 @@ fn traced(driver: day::persistence::Sqlite) -> day::persistence::Sqlite {
     }
 }
 
-fn doc_from_driver(driver: day::persistence::Sqlite, path: Option<PathBuf>) -> Doc {
+fn doc_from_driver(driver: day_persistence::Sqlite, path: Option<PathBuf>) -> Doc {
     match doc_from_driver_inner(driver, path) {
         Ok(doc) => doc,
         // A file that will not open (corrupt, wrong schema) must not take the app down:
@@ -443,11 +444,11 @@ fn doc_from_driver(driver: day::persistence::Sqlite, path: Option<PathBuf>) -> D
 /// The open itself, fallible, so [`memory_doc`] can call it without the fallback recursing
 /// into itself.
 fn doc_from_driver_inner(
-    driver: day::persistence::Sqlite,
+    driver: day_persistence::Sqlite,
     path: Option<PathBuf>,
-) -> Result<Doc, day::persistence::DbError> {
+) -> Result<Doc, day_persistence::DbError> {
     let container =
-        day::persistence::ModelContainer::open(driver, day::persistence::schema![Node, DocMeta])?;
+        day_persistence::ModelContainer::open(driver, day_persistence::schema![Node, DocMeta])?;
     // A sketch is a document: the canvas draws the whole scene, so the whole scene is the
     // working set. Lift the cache bound and warm every table (the lazy engine loads nothing
     // at open).
@@ -483,14 +484,14 @@ fn doc_from_driver_inner(
 }
 
 fn open_file_doc(path: PathBuf) -> Doc {
-    doc_from_driver(traced(day::persistence::Sqlite::at(&path)), Some(path))
+    doc_from_driver(traced(day_persistence::Sqlite::at(&path)), Some(path))
 }
 
 /// The fallback document: in memory, but still a container. Relations are wired by the
 /// container, so a bare store would leave the scene graph with no `children` index at all.
 /// An in-memory SQLite costs nothing and keeps every document shape identical.
 fn memory_doc() -> Doc {
-    match doc_from_driver_inner(day::persistence::Sqlite::memory(), None) {
+    match doc_from_driver_inner(day_persistence::Sqlite::memory(), None) {
         Ok(doc) => doc,
         // Nothing left to fall back to; a store without relations would draw an empty scene,
         // which is worse than the panic that says why.
@@ -501,7 +502,7 @@ fn memory_doc() -> Doc {
 /// File ▸ New: a fresh drawing beside the default one, numbered, opened immediately.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn new_doc() {
-    let Ok(dir) = day::persistence::Sqlite::app_data_dir() else {
+    let Ok(dir) = day_persistence::Sqlite::app_data_dir() else {
         install_doc(memory_doc());
         return;
     };
@@ -519,7 +520,7 @@ pub(crate) fn new_doc() {
 /// File ▸ New on the web: the same numbering over the origin's OPFS pool, synchronously.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn new_doc() {
-    let Ok(storage) = day::persistence::Sqlite::web_storage() else {
+    let Ok(storage) = day_persistence::Sqlite::web_storage() else {
         install_doc(memory_doc());
         return;
     };
@@ -549,7 +550,7 @@ pub(crate) fn open_doc_dialog() {
         };
         let path = match file.local_path() {
             Some(p) => Some(p),
-            None => match (file.read(), day::persistence::Sqlite::app_data_dir()) {
+            None => match (file.read(), day_persistence::Sqlite::app_data_dir()) {
                 (Ok(bytes), Ok(dir)) => {
                     let name = file
                         .file_name()
@@ -579,7 +580,7 @@ pub(crate) fn open_doc_dialog() {
         else {
             return;
         };
-        let Ok(storage) = day::persistence::Sqlite::web_storage() else {
+        let Ok(storage) = day_persistence::Sqlite::web_storage() else {
             return;
         };
         let (Some(name), Ok(bytes)) = (file.file_name(), file.read()) else {
@@ -624,11 +625,11 @@ pub(crate) fn export_copy_dialog() {
         return;
     }
     day::task(async move {
-        use day::persistence::{DatabaseWorker, DbError};
+        use day_persistence::{DatabaseWorker, DbError};
         let worker = match DatabaseWorker::open(move || {
             ModelContainer::open(
                 path.map(Sqlite::at).unwrap_or_else(Sqlite::memory),
-                day::persistence::Schema::new(),
+                day_persistence::Schema::new(),
             )
         })
         .await
@@ -683,7 +684,7 @@ pub(crate) fn export_copy_dialog() {
         if container.save().is_err() {
             return;
         }
-        let Ok(storage) = day::persistence::Sqlite::web_storage() else {
+        let Ok(storage) = day_persistence::Sqlite::web_storage() else {
             return;
         };
         let Ok(bytes) = storage.export_db(&path.to_string_lossy()) else {
@@ -2376,9 +2377,9 @@ pub(crate) fn install_test_doc() -> Rc<Doc> {
     if crate::Scene::try_ambient().is_none() {
         day::reactive::Scope::root().provide(crate::Scene::create());
     }
-    let container = day::persistence::ModelContainer::open(
-        day::persistence::Sqlite::memory(),
-        day::persistence::schema![Node, DocMeta],
+    let container = day_persistence::ModelContainer::open(
+        day_persistence::Sqlite::memory(),
+        day_persistence::schema![Node, DocMeta],
     )
     .expect("open");
     container.set_cache_limit(usize::MAX);
@@ -3591,9 +3592,9 @@ mod tests {
         let _doc = install_test_doc();
         // A container whose text row carries a stale frame, the way a file made on another
         // platform (or by hand) does.
-        let container = day::persistence::ModelContainer::open(
-            day::persistence::Sqlite::memory(),
-            day::persistence::schema![Node, DocMeta],
+        let container = day_persistence::ModelContainer::open(
+            day_persistence::Sqlite::memory(),
+            day_persistence::schema![Node, DocMeta],
         )
         .expect("open");
         container.set_cache_limit(usize::MAX);
