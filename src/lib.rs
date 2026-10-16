@@ -220,6 +220,9 @@ fn toolbar() -> Vec<ToolbarEntry> {
         // The arrange pair and the inspector toggle trail the rest: `Secondary` is what packs
         // them to the far end of a desktop bar and folds them away first on a phone
         // (docs/toolbars.md), which is what the flexible space used to say by position.
+        // The inspector is the exception where no menu bar backs the toolbar (the phones and
+        // the web): there it is the one way to the properties panel, so it stays on the bar
+        // (`Primary` folds last) rather than two taps away in the overflow.
         toolbar_button("tb-forward", res::str::menu_forward())
             .icon(Symbol::Up)
             .placement(ToolbarPlacement::Secondary)
@@ -237,19 +240,38 @@ fn toolbar() -> Vec<ToolbarEntry> {
             inspector::visible(),
         )
         .icon(Symbol::Info)
-        .placement(ToolbarPlacement::Secondary)
+        .placement(if capability(Cap::AppMenu) == Support::Native {
+            ToolbarPlacement::Secondary
+        } else {
+            ToolbarPlacement::Primary
+        })
         .tooltip(res::str::menu_inspector()),
     ]);
+    // Settings: the desktops reach the shared surface (https://daybrite.dev/docs/settings)
+    // from the App menu and the web from its emulated one, so only a phone, which has neither,
+    // carries the command on its bar. It trails with the other secondary items, and `open()`
+    // presents the surface as a cover: this window is a canvas, not a nav host, so no nav item
+    // claims the `settings` route.
+    if capability(Cap::AppMenu) == Support::Unsupported {
+        items.push(
+            toolbar_button("tb-settings", day::tr("day-settings"))
+                .icon(Symbol::Settings)
+                .placement(ToolbarPlacement::Secondary)
+                .tooltip(day::tr("day-settings"))
+                .action(|| {
+                    day_piece_settings::open();
+                }),
+        );
+    }
     items
 }
 
 /// The shape vocabulary, served twice. Choosing one places it in the middle of the visible
 /// canvas and selects it; placing is a command, not an armed-tool mode.
 ///
-/// The window toolbar's pull-down is the desktop form, each item drawn with the platform's own
-/// glyph. Phones have no window toolbar (`Cap::Toolbar` is Unsupported there), so the tool row
-/// carries the same two choices as a native action sheet, the mobile idiom for exactly this,
-/// and docs/toolbars.md's advice for a command that has nowhere on the chrome to live.
+/// The window toolbar's pull-down, each item drawn with the platform's own glyph; on a phone the
+/// same item rides the navigation bar or app bar (docs/toolbars.md), folding into its overflow
+/// when the bar is narrow.
 fn shape_menu_entries() -> Vec<MenuEntry> {
     vec![
         menu_item(res::str::tool_rect().format())
@@ -325,100 +347,6 @@ pub(crate) fn selection_context_menu() -> Vec<MenuEntry> {
     items
 }
 
-/// The tool row's shape button: the same insertion choices as an action sheet, so every target can
-/// place a shape (and one id, `tool-shape`, drives it in the walkthrough everywhere).
-fn choose_shape() {
-    day::task(async {
-        let picked = Alert::<model::NodeKind>::new(res::str::tool_shape())
-            .sheet()
-            .button(res::str::tool_rect(), model::NodeKind::Rect)
-            .button(res::str::tool_oval(), model::NodeKind::Oval)
-            .button(res::str::tool_line(), model::NodeKind::Line)
-            .button(res::str::tool_text(), model::NodeKind::Text)
-            .button(res::str::tool_image(), model::NodeKind::Image)
-            .cancel(res::str::menu_cancel())
-            .present()
-            .await;
-        if let Some(kind) = picked {
-            if kind == model::NodeKind::Image {
-                images::insert_dialog();
-            } else {
-                canvas::place_centered(kind);
-            }
-        }
-    });
-}
-
-/// The in-content strip exists only where the window has no toolbar (`Cap::Toolbar` is
-/// Unsupported on the phones and pads): there it is the home of the shape sheet, undo/redo,
-/// and the inspector toggle. Everywhere else those live in the window toolbar and the menus,
-/// and the strip would say everything twice.
-fn tool_row_if_no_toolbar() -> impl Piece {
-    when(
-        || capability(Cap::Toolbar) == Support::Unsupported,
-        tool_row,
-    )
-}
-
-fn tool_row() -> impl Piece {
-    let stack = model::undo_stack();
-    let (u1, u2, r1, r2) = (stack.clone(), stack.clone(), stack.clone(), stack);
-    row((
-        // The layers pane's in-content toggle, leading like the desktop toolbar's. Compact
-        // windows start with the pane closed (see `inspector::layers_visible`), and a phone
-        // has no toolbar or menu bar to reopen it from.
-        when(
-            || capability(Cap::Tree) != Support::Unsupported,
-            || {
-                button(res::str::menu_layers())
-                    .bordered()
-                    .action(inspector::layers_toggle)
-                    .id("tool-layers")
-            },
-        ),
-        // The same shape choices as the window toolbar's item, for the targets that have no
-        // window toolbar (`Cap::Toolbar` is Unsupported on mobile and the web).
-        button(res::str::tool_shape())
-            .bordered()
-            .action(choose_shape)
-            .id("tool-shape"),
-        spacer(),
-        button(res::str::menu_undo())
-            .bordered()
-            .action(move || {
-                u1.undo();
-            })
-            .enabled(move || u2.can_undo().get())
-            .id("sk-undo"),
-        button(res::str::menu_redo())
-            .bordered()
-            .action(move || {
-                r1.redo();
-            })
-            .enabled(move || r2.can_redo().get())
-            .id("sk-redo"),
-        // The inspector's in-content toggle: the mobile targets have no window toolbar
-        // (`Cap::Toolbar` is Unsupported there), so the tool row is where the affordance
-        // lives, and one id everywhere keeps the walkthrough portable.
-        button(res::str::tool_inspector())
-            .bordered()
-            .action(inspector::toggle)
-            .id("tool-inspector"),
-        // Settings: a phone has no App menu to reach the shared surface from
-        // (https://daybrite.dev/docs/settings), so the tool row opens it as a cover.
-        button(day::tr("day-settings"))
-            .bordered()
-            .action(|| {
-                day_piece_settings::open();
-            })
-            .id("tool-settings"),
-    ))
-    .spacing(8.0)
-    // Phone widths cannot hold the whole strip on one line; wrap instead of clipping.
-    .fit(RowFit::Wrap { run_spacing: 6.0 })
-    .padding(Insets::symmetric(12.0, 8.0))
-}
-
 fn status_row() -> impl Piece {
     row((
         label(move || {
@@ -473,12 +401,7 @@ fn editor() -> impl Piece {
     // The commands act on the canvas, so they are declared on it (docs/toolbars.md): they ride
     // whichever chrome the editor has, and a phone that pushes an inspector page over the canvas
     // gets that page's own commands instead of these.
-    column((
-        tool_row_if_no_toolbar(),
-        canvas::editor_canvas(),
-        status_row(),
-    ))
-    .toolbar(toolbar)
+    column((canvas::editor_canvas(), status_row())).toolbar(toolbar)
 }
 
 /// Everything one window owns (docs/state.md): what it is looking at and how, but never what
@@ -566,7 +489,7 @@ pub fn root() -> impl Piece {
     // Settings and About (https://daybrite.dev/docs/settings): appearance and language from
     // Day's catalog, the Editing group below, the app's name and version from Day.toml. On a
     // desktop this adds the App menu's Settings… and About items and their windows; a phone
-    // reaches the same pages from the tool row's Settings button (`tool_row`).
+    // reaches the same pages from the bar's Settings item (`toolbar`), as a cover.
     Preferences::new()
         .about(About::from_manifest().link(day::tr("day-about-website"), "https://daybrite.dev"))
         .group(general_group(res::locales::ALL))
@@ -615,12 +538,14 @@ fn window_shell() -> impl Piece {
         );
         // Rebuild the whole editor when a different document becomes current: the rev alternates
         // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
-        // the pane (and its visibility) survives a document switch.
+        // the pane (and its visibility) survives a document switch. On a compact window the
+        // panel is a half sheet, so the shapes it describes stay on show while it is open.
         let editor_with_inspector = inspector(
             inspector::visible(),
             when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor),
             inspector::panel,
         )
+        .half_sheet()
         .sheet_done(res::str::insp_done());
         // The layers pane wraps the whole editor on its leading side wherever the tree piece
         // exists, native (macOS/GTK/iOS) or composed (web, docs/tree.md M2); a target that
