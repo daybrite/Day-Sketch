@@ -245,6 +245,7 @@ version = "0.5.1"
 dependencies = [
  "day-core",
  "day-pieces",
+ "day-reactive",
  "day-spec",
  "jni",
  "linkme",
@@ -341,6 +342,7 @@ version = "0.5.1"
 dependencies = [
  "day-core",
  "day-geometry",
+ "day-l10n",
  "day-spec",
  "getrandom",
  "log",
@@ -465,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "day-persistence"
-version = "0.5.1"
+version = "0.1.0"
 dependencies = [
  "day-async",
  "day-macros",
@@ -482,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "day-persistence-macros"
-version = "0.5.1"
+version = "0.1.0"
 
 [[package]]
 name = "day-piece-colorpicker"
@@ -502,12 +504,19 @@ dependencies = [
 name = "day-piece-settings"
 version = "0.5.1"
 dependencies = [
+ "cc",
+ "day-build",
  "day-core",
  "day-fluent",
+ "day-l10n",
+ "day-part-clipboard",
  "day-part-prefs",
  "day-pieces",
  "day-reactive",
  "day-spec",
+ "day-toolchain",
+ "linkme",
+ "log",
 ]
 
 [[package]]
@@ -618,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "day-sqlite-worker"
-version = "0.5.1"
+version = "0.1.0"
 dependencies = [
  "cc",
  "log",

@@ -517,13 +517,27 @@ flow:
   - assert_text: { id: sk-frame, text: "300,44 96x64" }
   - drag: { id: canvas, from: [348, 76], to: [358, 76] }
   - assert_text: { id: sk-frame, text: "310,40 96x64" }
-  - menu: { key: day-preferences }
+  # Settings is the shared surface (https://daybrite.dev/docs/settings): a window the `settings`
+  # route opens on a desktop, where a group's own id routes to its tab; on a phone or the web,
+  # where no App menu exists, the tool row's Settings button presents it as a cover whose root
+  # lists the groups. The cover draws inside the main window, so one capture key serves both.
+  - navigate: { route: general, skip_on: [uikit, mdc, arkui, dom] }
+  - tap: { id: tool-settings, only_on: [uikit, mdc, arkui, dom] }
+  - tap: { id: prefs-group-general, only_on: [uikit, mdc, arkui, dom] }
+  - wait_for: { id: language-picker }
+  - screenshot: { name: settings, window: day.preferences }
+  - close_window: { window: day.preferences }
+  - navigate: { route: editing, skip_on: [uikit, mdc, arkui, dom] }
+  - tap: { id: tool-settings, only_on: [uikit, mdc, arkui, dom] }
+  - tap: { id: prefs-group-editing, only_on: [uikit, mdc, arkui, dom] }
   - wait_for: { id: pref-snap }
   - toggle: { id: pref-snap, value: false }
   - close_window: { window: day.preferences }
   - drag: { id: canvas, from: [358, 72], to: [358, 76] }
   - assert_text: { id: sk-frame, text: "310,44 96x64" }
-  - menu: { key: day-preferences }
+  - navigate: { route: editing, skip_on: [uikit, mdc, arkui, dom] }
+  - tap: { id: tool-settings, only_on: [uikit, mdc, arkui, dom] }
+  - tap: { id: prefs-group-editing, only_on: [uikit, mdc, arkui, dom] }
   - wait_for: { id: pref-snap }
   - toggle: { id: pref-snap, value: true }
   - close_window: { window: day.preferences }

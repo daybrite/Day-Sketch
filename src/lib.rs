@@ -5,6 +5,7 @@
 //! platform's undo system where it has one.
 
 use day::prelude::*;
+use day_piece_settings::prelude::*;
 
 mod canvas;
 mod clipboard;
@@ -22,39 +23,9 @@ pub mod res {
     include!(concat!(env!("OUT_DIR"), "/day_resources.rs"));
 }
 
-const THEME_KEY: &str = "app.theme";
-const LOCALE_KEY: &str = "app.locale";
-
-fn settings_body() -> impl Piece {
-    form((
-        day_piece_settings::settings_sections(THEME_KEY, LOCALE_KEY, res::locales::ALL),
-        section((labeled(
-            res::str::pref_snap(),
-            toggle(snap_enabled()).id("pref-snap"),
-        ),))
-        .title(res::str::pref_editing()),
-    ))
-}
-
-const SNAP_KEY: &str = "sketch.snap";
-
-/// Whether a drag snaps to the alignment guides (canvas.rs): a preference, app-wide, stored
-/// under `sketch.snap` and seeded from it. One signal for the process, made on the root scope
-/// so the store write-back outlives any page.
-pub(crate) fn snap_enabled() -> Signal<bool> {
-    thread_local! {
-        static SNAP: std::cell::OnceCell<Signal<bool>> = const { std::cell::OnceCell::new() };
-    }
-    SNAP.with(|c| {
-        *c.get_or_init(|| {
-            day::reactive::Scope::root().enter(|| {
-                let s = Signal::new(true);
-                day::prefs::bind(SNAP_KEY, s);
-                s
-            })
-        })
-    })
-}
+/// Whether a drag snaps to the alignment guides (canvas.rs): the Editing group's one setting,
+/// persisted under `sketch.snap` (https://daybrite.dev/docs/settings).
+pub(crate) static SNAP: Pref<bool> = Pref::new("sketch.snap", || true);
 
 /// ⌘/Ctrl + the localized key: the letter comes from the command's `.key` attribute in the
 /// catalog (docs/localization.md), so a locale may override it while every other locale
@@ -433,6 +404,14 @@ fn tool_row() -> impl Piece {
             .bordered()
             .action(inspector::toggle)
             .id("tool-inspector"),
+        // Settings: a phone has no App menu to reach the shared surface from
+        // (https://daybrite.dev/docs/settings), so the tool row opens it as a cover.
+        button(day::tr("day-settings"))
+            .bordered()
+            .action(|| {
+                day_piece_settings::open();
+            })
+            .id("tool-settings"),
     ))
     .spacing(8.0)
     // Phone widths cannot hold the whole strip on one line; wrap instead of clipping.
@@ -583,9 +562,20 @@ pub(crate) fn scene() -> Scene {
 
 pub fn root() -> impl Piece {
     res::locales::install();
-    day_piece_settings::apply_startup(THEME_KEY, LOCALE_KEY);
     day::prefs::install_nav_store();
-    day::register_preferences(settings_body);
+    // Settings and About (https://daybrite.dev/docs/settings): appearance and language from
+    // Day's catalog, the Editing group below, the app's name and version from Day.toml. On a
+    // desktop this adds the App menu's Settings… and About items and their windows; a phone
+    // reaches the same pages from the tool row's Settings button (`tool_row`).
+    Preferences::new()
+        .about(About::from_manifest().link(day::tr("day-about-website"), "https://daybrite.dev"))
+        .group(general_group(res::locales::ALL))
+        .group(
+            Group::new("editing", res::str::pref_editing())
+                .icon(Symbol::Edit)
+                .row(rows::toggle(&SNAP, res::str::pref_snap()).id("pref-snap")),
+        )
+        .install();
     // File ▸ New Window (docs/windows.md): the same shell again, which is why the view state
     // (zoom, pan, selection, the inspector) lives on a `Scene` rather than in globals. The
     // document stays shared, so two windows show one drawing from two vantage points.

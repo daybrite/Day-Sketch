@@ -265,7 +265,7 @@ fn snap_axis(moving: &[f64], targets: &[f64], tol: f64) -> Option<(f64, Vec<f64>
 /// guides to show. `moving_xs`/`moving_ys` are the dragged geometry's alignment values as the
 /// pointer has them now. Nothing when snapping is off in the preferences.
 fn snap(moving_xs: &[f64], moving_ys: &[f64], exclude: &[u64]) -> (f64, f64, Vec<Guide>) {
-    if !crate::snap_enabled().get_untracked() {
+    if !crate::SNAP.get_untracked() {
         return (0.0, 0.0, Vec::new());
     }
     let tol = SNAP_TOLERANCE / zoom().get_untracked();
@@ -541,6 +541,9 @@ fn reanchor(
 /// by the ratio of the corner's distance from the held (opposite) corner, the frame is what
 /// the text measures to at that size, placed so the held corner stays put and, under a
 /// rotation, re-anchored like any other turned resize.
+// The whole resize gesture, as the caller already holds it; a struct would name the same eight
+// values once more to unpack them here.
+#[allow(clippy::too_many_arguments)]
 fn scaled(
     start: (f64, f64, f64, f64),
     corner: Corner,
@@ -1836,7 +1839,7 @@ mod tests {
     fn alt_drag_copies_an_image_in_place_then_moves_only_the_copy_as_one_undo() {
         let doc = install_test_doc();
         unzoomed();
-        crate::snap_enabled().set(false);
+        crate::SNAP.set(false);
         let bytes: crate::images::ImageBytes = vec![1, 2, 3].into();
         let id = model::place_image(bytes.clone(), (100.0, 100.0, 160.0, 80.0));
         let original = doc.store.elem(id);
@@ -1882,7 +1885,7 @@ mod tests {
     fn alt_pressed_after_drag_start_does_not_duplicate() {
         let doc = install_test_doc();
         unzoomed();
-        crate::snap_enabled().set(false);
+        crate::SNAP.set(false);
         let id = rect_at(100.0, 100.0, 160.0, 80.0);
         model::selection().set(vec![id]);
         let op = Rc::new(RefCell::new(DragOp::Idle));
@@ -1951,7 +1954,7 @@ mod tests {
     fn shift_can_toggle_during_a_zoomed_image_resize_and_commit_one_undo() {
         let doc = install_test_doc();
         unzoomed();
-        crate::snap_enabled().set(true);
+        crate::SNAP.set(true);
         let id = model::place_image(Vec::new().into(), (100.0, 100.0, 200.0, 100.0));
         model::selection().set(vec![id]);
         zoom().set(2.0);
@@ -1985,7 +1988,7 @@ mod tests {
     fn an_image_moves_resizes_and_hits_under_rotation() {
         let doc = install_test_doc();
         unzoomed();
-        crate::snap_enabled().set(false);
+        crate::SNAP.set(false);
         let bytes: crate::images::ImageBytes = include_bytes!("../resource/images/app_logo.png")
             .to_vec()
             .into();
@@ -3160,7 +3163,7 @@ mod tests {
     fn a_move_snaps_onto_a_neighbors_edge_and_shows_the_guide_until_release() {
         let _doc = install_test_doc();
         unzoomed();
-        crate::snap_enabled().set(true);
+        crate::SNAP.set(true);
         let a = rect_at(10.0, 10.0, 40.0, 40.0);
         // Shorter than A, so only its top lines up with A's (equal boxes align at the top,
         // the middle and the bottom at once, and show all three guides).
@@ -3194,7 +3197,7 @@ mod tests {
         assert_eq!(store.elem(a).y().peek(), 10.0, "the neighbor never moves");
 
         // Off in the preferences: the same drag lands where the pointer left it.
-        crate::snap_enabled().set(false);
+        crate::SNAP.set(false);
         let c = rect_at(200.0, 13.0, 40.0, 24.0);
         let at = |phase, (x, y): (f64, f64)| Drag {
             phase,
@@ -3209,14 +3212,14 @@ mod tests {
             (store.elem(c).x().peek(), store.elem(c).y().peek()),
             (205.0, 13.0)
         );
-        crate::snap_enabled().set(true);
+        crate::SNAP.set(true);
     }
 
     #[test]
     fn a_resize_snaps_the_edge_it_moves_and_a_center_line_counts() {
         let _doc = install_test_doc();
         unzoomed();
-        crate::snap_enabled().set(true);
+        crate::SNAP.set(true);
         let _a = rect_at(10.0, 10.0, 40.0, 40.0); // bottom = 50
         let b = rect_at(100.0, 30.0, 40.0, 40.0); // bottom = 70
         model::selection().set(vec![b]);

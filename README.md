@@ -99,7 +99,8 @@ day patch --local /path/to/day
 
 ## Inside the code
 
-- `src/lib.rs` is `root()`: the window shell, the menus with localized shortcuts, and Settings.
+- `src/lib.rs` is `root()`: the window shell, the menus with localized shortcuts, and the
+  Settings and About declaration (appearance, language, and the snapping preference).
 - `src/canvas.rs` is the drawing surface: hit testing, handles, drag preview sessions, and the
   shape rendering.
 - `src/inspector.rs` is the side panel: the palette, the layer list, and arrangement.

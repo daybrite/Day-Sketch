@@ -43,7 +43,7 @@ base64 = "0.22"
 # The drawing is a SQLite file per document on every target; the web build opens the same
 # container over the OPFS-mirrored wasm driver (docs/persistence.md).
 day = { git = "https://github.com/daybrite/day.git", features = ["model"] }
-day-persistence = { git = "https://github.com/daybrite/day.git" }
+day-persistence = { git = "https://github.com/daybrite/day-persistence.git", version = "0.1" }
 day-piece-settings = { git = "https://github.com/daybrite/day.git" }
 # The inspector's Style group: the platform color chooser and the stepper field. `day build`
 # unions each piece's per-backend feature automatically (Tier A.2).
