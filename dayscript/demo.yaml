@@ -255,7 +255,7 @@ flow:
   # arrows must not nudge from.)
   #
   # `only_on` the toolkits whose canvas can hold keyboard focus (docs/menus.md) and that were
-  # run here. windows-xaml and harmony-arkui have the same backend route but neither can be
+  # run here. windows-winui and harmony-arkui have the same backend route but neither can be
   # launched on this machine, so asserting it would be a claim nobody checked; android-mdc has
   # no focusable canvas at all. This block used to "pass" everywhere because the key went to a
   # window-level handler inside day-core and no platform was involved.

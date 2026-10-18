@@ -52,7 +52,7 @@ publishes the results to the [gallery](https://daybrite.dev/gallery/Day-Sketch/)
 
 | Windows · XAML | Linux · GTK | Linux · Qt |
 |:---:|:---:|:---:|
-| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/windows-xaml/en/editor.png" width="300" alt="The editor on Windows"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/linux-gtk/en/editor.png" width="300" alt="The editor on GTK"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/linux-qt/en/editor.png" width="300" alt="The editor on Qt"></kbd> |
+| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/windows-winui/en/editor.png" width="300" alt="The editor on Windows"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/linux-gtk/en/editor.png" width="300" alt="The editor on GTK"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/linux-qt/en/editor.png" width="300" alt="The editor on Qt"></kbd> |
 
 | Web · DOM | macOS · outlines | macOS · a group, turned |
 |:---:|:---:|:---:|
