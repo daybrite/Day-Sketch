@@ -1784,7 +1784,7 @@ pub(crate) fn editor_canvas() -> impl Piece {
     // The selection's context menu, built when it is summoned: a right-click that lands
     // outside the current selection selects what is under it first (subtree-deep, the drag
     // rule), one on empty canvas clears, and the menu then describes exactly what it acts on.
-    .context_menu_fn(|p| {
+    .context_menu(|p: Point| {
         let m = to_model(p);
         match hit_top_level(m.x, m.y) {
             None => model::selection().set(Vec::new()),
@@ -1803,7 +1803,7 @@ pub(crate) fn editor_canvas() -> impl Piece {
             return items;
         }
         // Empty canvas: the one command that still applies is Paste.
-        vec![menu_item(crate::res::str::ctx_paste().format()).action(|| {
+        vec![menu_item(crate::res::str::ctx_paste()).action(|| {
             let _ = day::invoke_edit(day::EditOp::Paste);
         })]
     })

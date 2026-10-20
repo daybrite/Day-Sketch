@@ -50,18 +50,13 @@ fn kind_glyph(kind: NodeKind) -> &'static str {
     }
 }
 
-/// The layers pane, rebuilt per document exactly like the editor (`root`'s `when`): the
-/// tree's connection captures the current doc's store, and a new document is a new store, so
-/// without the rebuild the panel would keep watching the old one.
+/// The layers pane, rebuilt per document exactly like the editor (`window_shell`'s `keyed`):
+/// the tree's connection captures the current doc's store, and a new document is a new store,
+/// so without the rebuild the panel would keep watching the old one.
 pub(crate) fn layers_panel() -> AnyPiece {
     column((
         crate::transfer::selection_handle(),
-        when(
-            move || model::doc_rev().get().is_multiple_of(2),
-            layers_tree,
-        )
-        .otherwise(layers_tree)
-        .grow(),
+        keyed(move || Some(model::doc_rev().get()), |_| layers_tree()).grow(),
     ))
     .any()
 }
@@ -84,17 +79,16 @@ fn layers_tree() -> AnyPiece {
             ))
             .spacing(5.0)
             // Clear of the selection pill's rounded corner (the appkit row insets it 5pt).
-            .padding(Insets::symmetric(8.0, 0.0))
+            .padding(Insets::horizontal(8.0))
         },
     )
     .row_height(RowHeight::Uniform(28.0))
     .expanded(model::open_groups())
     .expandable(|id| model::node_kind(*id) == Some(NodeKind::Group))
-    .multi_select(true)
+    .multi_select()
     .selected(|| model::selection().get())
     .on_selection(|keys| model::selection().set(keys))
-    .movable(true)
-    .on_move(model::reparent)
+    .movable(Move::new(model::reparent))
     .type_ahead(|id| {
         model::node_kind(*id)
             .map(|k| model::layer_label(k, *id))
@@ -120,10 +114,14 @@ fn layers_tree() -> AnyPiece {
 // lets the user look at the other one until the selection next changes.
 // ---------------------------------------------------------------------------
 
-pub(crate) const TAB_CANVAS: usize = 0;
-pub(crate) const TAB_SELECTED: usize = 1;
+/// The inspector's two tabs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tab {
+    Canvas,
+    Selected,
+}
 
-pub(crate) fn active_tab() -> Signal<usize> {
+pub(crate) fn active_tab() -> Signal<Tab> {
     crate::scene().active_tab
 }
 
@@ -132,7 +130,7 @@ pub(crate) fn active_tab() -> Signal<usize> {
 /// selection bind in `root()`, so every path that selects (taps, drags, paste, undo/redo's
 /// transient restoration) retargets without knowing about tabs.
 pub(crate) fn retarget(selected: bool) {
-    let want = if selected { TAB_SELECTED } else { TAB_CANVAS };
+    let want = if selected { Tab::Selected } else { Tab::Canvas };
     if active_tab().get_untracked() != want {
         active_tab().set(want);
     }
@@ -836,11 +834,12 @@ fn family_names() -> Vec<String> {
         .collect()
 }
 
-/// The font menu's options: the default face first, then every family the platform lists.
-fn family_labels() -> Vec<String> {
-    let mut labels = vec![crate::res::str::font_system().format()];
-    labels.extend(family_names());
-    labels
+/// The font menu's options: the default face first (an empty family), then every family the
+/// platform lists, each its own label.
+fn family_options() -> Vec<(String, String)> {
+    let mut options = vec![(String::new(), crate::res::str::font_system().format())];
+    options.extend(family_names().into_iter().map(|f| (f.clone(), f)));
+    options
 }
 
 /// The first text target's family, tracked or not (empty = the default face).
@@ -856,43 +855,38 @@ fn current_family(tracked: bool) -> String {
         .unwrap_or_default()
 }
 
-/// The font menu's binding: index 0 is the default face, the rest the platform's families.
+/// The font menu's binding: the first target's family as the platform lists it, empty for the
+/// default face (and for a family the platform does not list).
 #[derive(Clone, Copy)]
 struct FamilyChoice;
 
 impl FamilyChoice {
-    fn index(tracked: bool) -> usize {
+    fn listed(tracked: bool) -> String {
         let family = current_family(tracked);
         if family.is_empty() {
-            return 0;
+            return String::new();
         }
         family_names()
-            .iter()
-            .position(|f| f.eq_ignore_ascii_case(&family))
-            .map(|i| i + 1)
-            .unwrap_or(0)
+            .into_iter()
+            .find(|f| f.eq_ignore_ascii_case(&family))
+            .unwrap_or_default()
     }
 }
 
-impl Binding<usize> for FamilyChoice {
-    fn read(&self) -> usize {
-        Self::index(true)
+impl Binding<String> for FamilyChoice {
+    fn read(&self) -> String {
+        Self::listed(true)
     }
-    fn peek(&self) -> usize {
-        Self::index(false)
+    fn peek(&self) -> String {
+        Self::listed(false)
     }
-    fn write(&self, i: usize) {
+    fn write(&self, family: String) {
         let targets = text_targets(false);
         // A re-selection of the current entry (a native control echoing the mark Day just
         // moved) is not an edit, so it records no unit.
-        if targets.is_empty() || i == Self::index(false) {
+        if targets.is_empty() || family == Self::listed(false) {
             return;
         }
-        let family = if i == 0 {
-            String::new()
-        } else {
-            family_names().get(i - 1).cloned().unwrap_or_default()
-        };
         model::undo_stack().grouped("style", || {
             for t in targets {
                 model::nodes()
@@ -905,18 +899,21 @@ impl Binding<usize> for FamilyChoice {
     }
 }
 
+/// A face as the style menu names it: weight and slant.
+type Face = (FontWeight, bool);
+
 /// The faces a family offers, as (weight, italic) pairs sorted light→heavy, upright before
 /// slanted. A family the platform did not describe (the default face, or one it lists
 /// without faces) offers the four synthesized styles every platform can draw, so the style
 /// menu always has Regular / Bold / Italic / Bold Italic in that order for the System face.
-fn styles_for(family: &str) -> Vec<(FontWeight, bool)> {
+fn styles_for(family: &str) -> Vec<Face> {
     let listed = (!family.is_empty())
         .then(|| {
             day::font_families()
                 .iter()
                 .find(|f| f.family.eq_ignore_ascii_case(family))
                 .map(|f| {
-                    let mut faces: Vec<(FontWeight, bool)> = f
+                    let mut faces: Vec<Face> = f
                         .faces
                         .iter()
                         .map(|face| (face.weight, face.italic))
@@ -971,50 +968,51 @@ fn style_label(weight: FontWeight, italic: bool) -> String {
 
 /// The style menu's options for the first target's family. Reactive, so choosing another
 /// family re-lists them.
-fn style_labels() -> Vec<String> {
+fn style_options() -> Vec<(Face, String)> {
     styles_for(&current_family(true))
         .into_iter()
-        .map(|(w, i)| style_label(w, i))
+        .map(|(w, i)| ((w, i), style_label(w, i)))
         .collect()
 }
 
-/// The style menu's binding over [`styles_for`].
+/// The style menu's binding over [`styles_for`]: the first target's face, or the family's
+/// first listed face when the target's is not among them.
 #[derive(Clone, Copy)]
 struct StyleChoice;
 
 impl StyleChoice {
-    fn index(tracked: bool) -> usize {
+    fn face(tracked: bool) -> Face {
+        let styles = styles_for(&current_family(tracked));
+        let fallback = styles
+            .first()
+            .copied()
+            .unwrap_or((FontWeight::Regular, false));
         let targets = text_targets(tracked);
         let Some(first) = targets.first() else {
-            return 0;
+            return fallback;
         };
         let e = model::nodes().elem(*first);
         let want = (
             model::weight_of(e.font_weight().peek()),
             e.font_italic().peek(),
         );
-        styles_for(&current_family(tracked))
-            .iter()
-            .position(|s| *s == want)
-            .unwrap_or(0)
+        styles.into_iter().find(|s| *s == want).unwrap_or(fallback)
     }
 }
 
-impl Binding<usize> for StyleChoice {
-    fn read(&self) -> usize {
-        Self::index(true)
+impl Binding<Face> for StyleChoice {
+    fn read(&self) -> Face {
+        Self::face(true)
     }
-    fn peek(&self) -> usize {
-        Self::index(false)
+    fn peek(&self) -> Face {
+        Self::face(false)
     }
-    fn write(&self, i: usize) {
+    fn write(&self, face: Face) {
         let targets = text_targets(false);
-        if targets.is_empty() || i == Self::index(false) {
+        if targets.is_empty() || face == Self::face(false) {
             return;
         }
-        let Some((weight, italic)) = styles_for(&current_family(false)).get(i).copied() else {
-            return;
-        };
+        let (weight, italic) = face;
         model::undo_stack().grouped("style", || {
             for t in targets {
                 let e = model::nodes().elem(t);
@@ -1037,15 +1035,11 @@ fn text_section() -> AnyPiece {
             ),
             labeled(
                 crate::res::str::insp_font(),
-                picker(family_labels(), FamilyChoice)
-                    .options_reactive(family_labels)
-                    .id("insp-font"),
+                picker(FamilyChoice, family_options).id("insp-font"),
             ),
             labeled(
                 crate::res::str::insp_style(),
-                picker(style_labels(), StyleChoice)
-                    .options_reactive(style_labels)
-                    .id("insp-style"),
+                picker(StyleChoice, style_options).id("insp-style"),
             ),
             labeled(
                 crate::res::str::insp_size(),
@@ -1053,7 +1047,7 @@ fn text_section() -> AnyPiece {
                     .range(model::MIN_FONT_SIZE..=model::MAX_FONT_SIZE)
                     .step(1.0)
                     .decimals(0)
-                    .key("insp-size")
+                    .id("insp-size")
                     .grow(),
             ),
         ))
@@ -1071,12 +1065,12 @@ fn paint_row(
     id: &'static str,
 ) -> impl Piece {
     row((
-        day_piece_colorpicker::color_picker(well).key(well_key),
+        day_piece_colorpicker::color_picker(well).id(well_key),
         // The slider needs travel: below 160 points for the pair the row stacks under its
         // label (docs/forms.md) rather than squeezing the slider to a sliver beside the well.
         opacity_row(num, id).min_width(160.0).grow(),
     ))
-    .spacing(8.0)
+    .spacing(Space::S)
     .align(VAlign::Center)
 }
 
@@ -1119,7 +1113,7 @@ fn style_section() -> impl Piece {
                     .range(0.0..=64.0)
                     .step(1.0)
                     .decimals(0)
-                    .key("insp-stroke-w")
+                    .id("insp-stroke-w")
                     // Same right edge as the paint rows above it.
                     .grow(),
             )
@@ -1144,7 +1138,7 @@ fn rotation_field() -> impl Piece {
             .range(0.0..=360.0)
             .step(1.0)
             .decimals(0)
-            .key("insp-rotation")
+            .id("insp-rotation")
             // Fill the row like the text fields above, so every control in the section shares
             // one right edge instead of the steppers ending short.
             .grow(),
@@ -1162,20 +1156,20 @@ fn corner_row() -> AnyPiece {
                 .range(0.0..=200.0)
                 .step(1.0)
                 .decimals(0)
-                .key("insp-corner")
+                .id("insp-corner")
                 .grow(),
         )
     })
     .any()
 }
 
-/// The two tab labels. The second counts the selection, pluralized by the catalog (Fluent's
-/// plural nav), so a language with more forms than English adds them there, not here.
-fn tab_labels() -> Vec<String> {
+/// The two tabs with their labels. The second counts the selection, pluralized by the catalog
+/// (Fluent's plural nav), so a language with more forms than English adds them there, not here.
+fn tab_options() -> Vec<(Tab, day::LocalizedText)> {
     let n = model::selection().get().len() as i64;
     vec![
-        crate::res::str::insp_tab_canvas().format(),
-        crate::res::str::insp_tab_selected(n).format(),
+        (Tab::Canvas, crate::res::str::insp_tab_canvas()),
+        (Tab::Selected, crate::res::str::insp_tab_selected(n)),
     ]
 }
 
@@ -1190,7 +1184,7 @@ fn selected_panel() -> impl Piece {
     rows.push(rotation_row());
     rows.push(corner_row());
     form((
-        section(PieceVec(rows)).title(crate::res::str::insp_geometry()),
+        section(rows).title(crate::res::str::insp_geometry()),
         text_section(),
         style_section(),
     ))
@@ -1200,7 +1194,7 @@ fn selected_panel() -> impl Piece {
 fn canvas_panel() -> impl Piece {
     form((section((labeled(
         crate::res::str::insp_background(),
-        day_piece_colorpicker::color_picker(BgColor).key("insp-bg"),
+        day_piece_colorpicker::color_picker(BgColor).id("insp-bg"),
     ),)),))
 }
 
@@ -1209,13 +1203,16 @@ fn canvas_panel() -> impl Piece {
 /// lives here, once, for every target.
 pub(crate) fn panel() -> impl Piece {
     column((
-        picker(tab_labels(), active_tab())
-            .segmented()
-            // The Selected tab names its selection ("No Items" / "1 Item" / "3 Items"), so
-            // its label changes with the count: a reactive option list (docs/picker.md).
-            .options_reactive(tab_labels)
-            .id("insp-tab"),
-        when(|| active_tab().get() == TAB_SELECTED, selected_panel).otherwise(canvas_panel),
+        // The Selected tab names its selection ("No Items" / "1 Item" / "3 Items"), so its
+        // label changes with the count: a reactive option list (docs/picker.md).
+        picker(active_tab(), tab_options).segmented().id("insp-tab"),
+        switch(
+            || active_tab().get(),
+            |tab| match tab {
+                Tab::Canvas => canvas_panel().any(),
+                Tab::Selected => selected_panel().any(),
+            },
+        ),
     ))
     .spacing(10.0)
     .padding(Insets::symmetric(14.0, 12.0))
@@ -1393,7 +1390,7 @@ mod tests {
                 .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
                 .collect()
         }
-        let label = || visible(tab_labels()[1].clone());
+        let label = || visible(tab_options()[1].1.format());
 
         model::selection().set(Vec::new());
         assert_eq!(label(), "No Items");
@@ -1510,11 +1507,11 @@ mod tests {
     fn retargeting_lands_on_the_tab_that_matches_the_selection() {
         let _doc = install_test_doc();
         retarget(false);
-        assert_eq!(active_tab().get_untracked(), TAB_CANVAS);
+        assert_eq!(active_tab().get_untracked(), Tab::Canvas);
         retarget(true);
-        assert_eq!(active_tab().get_untracked(), TAB_SELECTED);
+        assert_eq!(active_tab().get_untracked(), Tab::Selected);
         retarget(false);
-        assert_eq!(active_tab().get_untracked(), TAB_CANVAS);
+        assert_eq!(active_tab().get_untracked(), Tab::Canvas);
     }
 
     #[test]
@@ -1602,17 +1599,17 @@ mod tests {
         let styles = styles_for("");
         assert_eq!(styles.len(), 4);
         assert_eq!(styles[1], (FontWeight::Bold, false));
-        assert_eq!(StyleChoice.peek(), 0);
-        StyleChoice.write(1);
+        assert_eq!(StyleChoice.peek(), (FontWeight::Regular, false));
+        StyleChoice.write((FontWeight::Bold, false));
         let e = model::nodes().elem(t);
         assert_eq!(e.font_weight().peek(), 700);
         assert!(!e.font_italic().peek());
-        assert_eq!(StyleChoice.peek(), 1);
-        StyleChoice.write(3);
+        assert_eq!(StyleChoice.peek(), (FontWeight::Bold, false));
+        StyleChoice.write((FontWeight::Bold, true));
         assert!(e.font_italic().peek() && e.font_weight().peek() == 700);
         assert_eq!(
             FamilyChoice.peek(),
-            0,
+            "",
             "the default face is the first entry"
         );
     }

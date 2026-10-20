@@ -1,11 +1,9 @@
 fn main() {
     day::launch(
-        day::WindowOptions {
-            title: "Day Sketch".into(),
+        day::WindowOptions::default()
+            .title("Day Sketch")
             // A desktop-appropriate default size; mobile fills the screen regardless.
-            size: day::prelude::Size::new(960.0, 640.0),
-            ..Default::default()
-        },
+            .size(960.0, 640.0),
         dayapp::root,
     );
 }

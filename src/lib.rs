@@ -31,29 +31,15 @@ pub(crate) static SNAP: Pref<bool> = Pref::new("sketch.snap", || true);
 /// catalog (docs/localization.md), so a locale may override it while every other locale
 /// inherits the default's. The modifier scheme stays semantic, here in code.
 fn cmd(key: day::LocalizedText) -> Shortcut {
-    Shortcut {
-        key: key.format(),
-        primary: true,
-        ..Default::default()
-    }
+    Shortcut::primary(key.format())
 }
 
 fn cmd_shift(key: day::LocalizedText) -> Shortcut {
-    Shortcut {
-        key: key.format(),
-        primary: true,
-        shift: true,
-        ..Default::default()
-    }
+    Shortcut::primary(key.format()).shift()
 }
 
 fn cmd_alt(key: day::LocalizedText) -> Shortcut {
-    Shortcut {
-        key: key.format(),
-        primary: true,
-        alt: true,
-        ..Default::default()
-    }
+    Shortcut::primary(key.format()).alt()
 }
 
 /// The arrange commands, one list served three ways: the Arrange menu, the canvas context
@@ -74,33 +60,33 @@ fn arrange_entries(track: bool) -> Vec<MenuEntry> {
     let some = !track || !sel.is_empty();
     let two = !track || sel.len() >= 2;
     vec![
-        menu_item(res::str::menu_group().format())
+        menu_item(res::str::menu_group())
             .action(model::group_selection)
             .shortcut(cmd(res::str::menu_group_key()))
             .enabled(two),
-        menu_item(res::str::menu_ungroup().format())
+        menu_item(res::str::menu_ungroup())
             .action(model::ungroup_selection)
             .shortcut(cmd_shift(res::str::menu_ungroup_key()))
             .enabled(some),
         menu_separator(),
-        menu_item(res::str::menu_forward().format())
+        menu_item(res::str::menu_forward())
             .action(|| model::arrange_named(model::Arrange::Up))
             .shortcut(cmd(res::str::menu_forward_key()))
             .enabled(some),
-        menu_item(res::str::menu_backward().format())
+        menu_item(res::str::menu_backward())
             .action(|| model::arrange_named(model::Arrange::Down))
             .shortcut(cmd(res::str::menu_backward_key()))
             .enabled(some),
-        menu_item(res::str::menu_front().format())
+        menu_item(res::str::menu_front())
             .action(|| model::arrange_named(model::Arrange::Top))
             .shortcut(cmd_shift(res::str::menu_front_key()))
             .enabled(some),
-        menu_item(res::str::menu_back().format())
+        menu_item(res::str::menu_back())
             .action(|| model::arrange_named(model::Arrange::Bottom))
             .shortcut(cmd_shift(res::str::menu_back_key()))
             .enabled(some),
         menu_separator(),
-        menu_item(res::str::menu_delete().format())
+        menu_item(res::str::menu_delete())
             .action(model::delete_selection)
             .enabled(some),
     ]
@@ -108,14 +94,14 @@ fn arrange_entries(track: bool) -> Vec<MenuEntry> {
 
 fn menus() -> Vec<MenuEntry> {
     let file = vec![
-        menu_item(res::str::menu_new().format())
+        menu_item(res::str::menu_new())
             .action(model::new_doc)
             .shortcut(cmd(res::str::menu_new_key())),
-        menu_item(res::str::menu_open().format())
+        menu_item(res::str::menu_open())
             .action(model::open_doc_dialog)
             .shortcut(cmd(res::str::menu_open_key())),
         menu_separator(),
-        menu_item(res::str::menu_export().format())
+        menu_item(res::str::menu_export())
             .action(model::export_copy_dialog)
             .shortcut(cmd_shift(res::str::menu_export_key())),
     ];
@@ -126,7 +112,7 @@ fn menus() -> Vec<MenuEntry> {
         menu_separator(),
         // One stable label ("Inspector"), not a Show/Hide flip: dayscript targets menu items
         // by catalog key, and a flipping label would break `menu: { key: menu_inspector }`.
-        menu_item(res::str::menu_inspector().format())
+        menu_item(res::str::menu_inspector())
             .action(inspector::toggle)
             .shortcut(cmd_alt(res::str::menu_inspector_key())),
     ];
@@ -134,13 +120,13 @@ fn menus() -> Vec<MenuEntry> {
     // or composed; there is no menu item for a pane a target cannot show.
     if capability(Cap::Tree) != Support::Unsupported {
         view.push(
-            menu_item(res::str::menu_layers().format())
+            menu_item(res::str::menu_layers())
                 .action(inspector::layers_toggle)
                 .shortcut(cmd_alt(res::str::menu_layers_key())),
         );
     }
     vec![
-        sub_menu(res::str::menu_file().format(), file).bar_role(MenuBarRole::File),
+        sub_menu(res::str::menu_file(), file).bar_role(MenuBarRole::File),
         // Role-only Undo/Redo: the native standard commands, which on macOS/iOS resolve
         // through the responder chain to Day's NSUndoManager front: a focused text field
         // keeps its own typing undo, everything else reaches the document stack.
@@ -166,17 +152,17 @@ fn menus() -> Vec<MenuEntry> {
                 // Backspace answers to the same accelerator: appkit and gtk both fold the two
                 // names onto one key, and `canvas::canvas_key` accepts both where it handles
                 // this itself.
-                menu_item(res::str::menu_delete().format())
+                menu_item(res::str::menu_delete())
                     .action(model::delete_selection)
                     .shortcut(Shortcut::plain("Delete")),
             ],
         )
         .bar_role(MenuBarRole::Edit),
-        sub_menu(res::str::menu_view().format(), view).bar_role(MenuBarRole::View),
+        sub_menu(res::str::menu_view(), view).bar_role(MenuBarRole::View),
         // Insert: the shape vocabulary, one item per kind, the same entries the toolbar's
         // pull-down and the mobile sheet serve, so a new shape appears in all three at once.
-        sub_menu(res::str::menu_insert().format(), shape_menu_entries()),
-        sub_menu(res::str::menu_arrange().format(), arrange_menu_entries()),
+        sub_menu(res::str::menu_insert(), shape_menu_entries()),
+        sub_menu(res::str::menu_arrange(), arrange_menu_entries()),
     ]
 }
 
@@ -274,19 +260,19 @@ fn toolbar() -> Vec<ToolbarEntry> {
 /// when the bar is narrow.
 fn shape_menu_entries() -> Vec<MenuEntry> {
     vec![
-        menu_item(res::str::tool_rect().format())
+        menu_item(res::str::tool_rect())
             .icon(Symbol::Rectangle)
             .action(|| canvas::place_centered(model::NodeKind::Rect)),
-        menu_item(res::str::tool_oval().format())
+        menu_item(res::str::tool_oval())
             .icon(Symbol::Oval)
             .action(|| canvas::place_centered(model::NodeKind::Oval)),
-        menu_item(res::str::tool_line().format())
+        menu_item(res::str::tool_line())
             .icon(Symbol::Line)
             .action(|| canvas::place_centered(model::NodeKind::Line)),
-        menu_item(res::str::tool_text().format())
+        menu_item(res::str::tool_text())
             .icon(Symbol::Text)
             .action(|| canvas::place_centered(model::NodeKind::Text)),
-        menu_item(res::str::tool_image().format())
+        menu_item(res::str::tool_image())
             .id("insert-image")
             .enabled(images::supported())
             .action(images::insert_dialog),
@@ -304,45 +290,41 @@ pub(crate) fn selection_context_menu() -> Vec<MenuEntry> {
         return Vec::new();
     }
     let mut items = vec![
-        menu_item(res::str::menu_delete().format()).action(model::delete_selection),
+        menu_item(res::str::menu_delete()).action(model::delete_selection),
         menu_separator(),
     ];
     let before_grouping = items.len();
     if sel.len() >= 2 {
-        items.push(menu_item(res::str::menu_group().format()).action(model::group_selection));
+        items.push(menu_item(res::str::menu_group()).action(model::group_selection));
     }
     if sel
         .iter()
         .any(|id| model::node_kind(*id) == Some(model::NodeKind::Group))
     {
-        items.push(menu_item(res::str::menu_ungroup().format()).action(model::ungroup_selection));
+        items.push(menu_item(res::str::menu_ungroup()).action(model::ungroup_selection));
     }
     if sel.iter().any(|id| model::parent_of(*id).is_some()) {
         items.push(
-            menu_item(res::str::ctx_remove_group().format())
-                .action(model::remove_selection_from_group),
+            menu_item(res::str::ctx_remove_group()).action(model::remove_selection_from_group),
         );
     }
     if items.len() > before_grouping {
         items.push(menu_separator());
     }
     items.extend([
-        menu_item(res::str::ctx_move_up().format())
-            .action(|| model::arrange_named(model::Arrange::Up)),
-        menu_item(res::str::ctx_move_down().format())
-            .action(|| model::arrange_named(model::Arrange::Down)),
-        menu_item(res::str::ctx_move_front().format())
-            .action(|| model::arrange_named(model::Arrange::Top)),
-        menu_item(res::str::ctx_move_back().format())
+        menu_item(res::str::ctx_move_up()).action(|| model::arrange_named(model::Arrange::Up)),
+        menu_item(res::str::ctx_move_down()).action(|| model::arrange_named(model::Arrange::Down)),
+        menu_item(res::str::ctx_move_front()).action(|| model::arrange_named(model::Arrange::Top)),
+        menu_item(res::str::ctx_move_back())
             .action(|| model::arrange_named(model::Arrange::Bottom)),
         menu_separator(),
-        menu_item(res::str::ctx_cut().format()).action(|| {
+        menu_item(res::str::ctx_cut()).action(|| {
             let _ = day::invoke_edit(day::EditOp::Cut);
         }),
-        menu_item(res::str::ctx_copy().format()).action(|| {
+        menu_item(res::str::ctx_copy()).action(|| {
             let _ = day::invoke_edit(day::EditOp::Copy);
         }),
-        menu_item(res::str::ctx_duplicate().format()).action(model::duplicate_selection),
+        menu_item(res::str::ctx_duplicate()).action(model::duplicate_selection),
     ]);
     items
 }
@@ -390,7 +372,7 @@ fn status_row() -> impl Piece {
         .font(Font::Footnote)
         .id("sk-doc"),
     ))
-    .spacing(16.0)
+    .spacing(Space::L)
     // Phone widths cannot hold every readout on one line (the tool row's rule): wrap, or
     // the trailing doc name squeezes into a one-character-wide column.
     .fit(RowFit::Wrap { run_spacing: 4.0 })
@@ -429,7 +411,7 @@ pub(crate) struct Scene {
     // --- the inspector (inspector.rs) ---
     pub(crate) inspector_visible: Signal<bool>,
     pub(crate) layers_visible: Signal<bool>,
-    pub(crate) active_tab: Signal<usize>,
+    pub(crate) active_tab: Signal<inspector::Tab>,
     pub(crate) refresh: Signal<u64>,
     /// Transient, non-reactive scratch: the last laid-out canvas size and the click/tap
     /// debounce the double-click drill needs, plus the paste ladder.
@@ -465,7 +447,7 @@ impl Ambient for Scene {
                     .map(|s| s.width != day::prelude::WidthClass::Compact)
                     .unwrap_or(true),
             ),
-            active_tab: Signal::new(inspector::TAB_CANVAS),
+            active_tab: Signal::new(inspector::Tab::Canvas),
             refresh: Signal::new(0),
             cells: std::rc::Rc::new(SceneCells {
                 viewport: std::cell::Cell::new((800.0, 600.0)),
@@ -517,7 +499,7 @@ fn window_shell() -> impl Piece {
         // window is looking at (through `scene()`), so they install from inside a window's
         // scope, once, in the order `root()` used to run them.
         static APP_ONCE: std::sync::Once = std::sync::Once::new();
-        APP_ONCE.call_once(|| app_menu_reactive(menus));
+        APP_ONCE.call_once(|| app_menu(menus));
         // Opening the (or a) document wires its undo stack to the platform, synchronously on
         // every target; the web's day-sql worker is up before app code runs. Idempotent, so each
         // window finds the document already open.
@@ -536,13 +518,14 @@ fn window_shell() -> impl Piece {
             || model::selection().get(),
             |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
         );
-        // Rebuild the whole editor when a different document becomes current: the rev alternates
-        // the arms, and each arm builds fresh in its own scope. The inspector wraps the swap, so
-        // the pane (and its visibility) survives a document switch. On a compact window the
-        // panel is a half sheet, so the shapes it describes stay on show while it is open.
+        // Rebuild the whole editor when a different document becomes current: the editor is
+        // keyed on the document rev, and each build is fresh in its own scope. The inspector
+        // wraps the swap, so the pane (and its visibility) survives a document switch. On a
+        // compact window the panel is a half sheet, so the shapes it describes stay on show
+        // while it is open.
         let editor_with_inspector = inspector(
             inspector::visible(),
-            when(move || model::doc_rev().get().is_multiple_of(2), editor).otherwise(editor),
+            keyed(move || Some(model::doc_rev().get()), |_| editor()),
             inspector::panel,
         )
         .half_sheet()
@@ -565,35 +548,28 @@ fn window_shell() -> impl Piece {
     })
 }
 
-fn zoom_in_command() -> CommandHandle {
-    Command {
-        id: "zoom-in",
-        label: res::str::menu_zoom_in(),
-        action: || canvas::zoom_step(1.25),
-    }
-    .build()
+fn zoom_in_command() -> Command {
+    Command::new("zoom-in", res::str::menu_zoom_in(), || {
+        canvas::zoom_step(1.25)
+    })
     .icon(Symbol::ZoomIn)
     .shortcut(cmd(res::str::menu_zoom_in_key()))
 }
 
-fn zoom_out_command() -> CommandHandle {
-    Command {
-        id: "zoom-out",
-        label: res::str::menu_zoom_out(),
-        action: || canvas::zoom_step(0.8),
-    }
-    .build()
+fn zoom_out_command() -> Command {
+    Command::new("zoom-out", res::str::menu_zoom_out(), || {
+        canvas::zoom_step(0.8)
+    })
     .icon(Symbol::ZoomOut)
     .shortcut(cmd(res::str::menu_zoom_out_key()))
 }
 
-fn zoom_reset_command() -> CommandHandle {
-    Command {
-        id: "zoom-reset",
-        label: res::str::menu_zoom_reset(),
-        action: canvas::zoom_reset,
-    }
-    .build()
+fn zoom_reset_command() -> Command {
+    Command::new(
+        "zoom-reset",
+        res::str::menu_zoom_reset(),
+        canvas::zoom_reset,
+    )
     .icon(Symbol::ZoomReset)
     .shortcut(cmd(res::str::menu_zoom_reset_key()))
 }
