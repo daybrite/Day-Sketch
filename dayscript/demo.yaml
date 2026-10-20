@@ -12,127 +12,127 @@ flow:
   - wait_for: { id: canvas }
   # The inspector shows by default; nothing is selected, so it boots on the Canvas tab:
   # the Background well is the panel's first frame, and the tab reads "No Items".
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   # A fresh numbered document every run: the walkthrough never inherits the last run's scene.
   - menu: { key: menu_new }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 0 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 0 } }
 
   # ---- Place: the shape menu, then the inspector puts each shape where this script wants it ----
   # A placement lands in the middle of the visible canvas, which differs per target (a phone's
   # viewport is not a desktop's), so every shape's frame is set through the inspector right
   # after; from here on the geometry is identical everywhere.
   - menu: { key: tool_rect, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 1 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 1 } }
   # Placing selects the new shape, and selecting flips the inspector to the Selected tab.
-  - wait_for: { id: insp-x }
-  - input: { id: insp-x, text: "40" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "40" }
-  - submit: { id: insp-y }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - wait_for: { id: insp_x }
+  - input: { id: insp_x, text: "40" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "40" }
+  - submit: { id: insp_y }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   - menu: { key: tool_oval, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 2 } }
-  - input: { id: insp-x, text: "200" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "160" }
-  - submit: { id: insp-y }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 2 } }
+  - input: { id: insp_x, text: "200" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "160" }
+  - submit: { id: insp_y }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
-  - input: { id: insp-x, text: "80" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "60" }
-  - submit: { id: insp-y }
-  - assert_text: { id: sk-frame, text: "80,60 96x64" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
+  - input: { id: insp_x, text: "80" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "60" }
+  - submit: { id: insp_y }
+  - assert_text: { id: sk_frame, text: "80,60 96x64" }
 
   # ---- Hit testing honors z: the overlap point selects the top shape ----
   - tap: { id: canvas, at: [90, 70] }
-  - assert_text: { id: sk-frame, text: "80,60 96x64" }
+  - assert_text: { id: sk_frame, text: "80,60 96x64" }
   # Send it to the back; the same point now selects the shape underneath…
   - menu: { key: menu_back }
   - tap: { id: canvas, at: [90, 70] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   # …and one undo restores the stacking.
   - undo: {}
   - tap: { id: canvas, at: [90, 70] }
-  - assert_text: { id: sk-frame, text: "80,60 96x64" }
+  - assert_text: { id: sk_frame, text: "80,60 96x64" }
 
   # ---- Rubber band: a drag on blank canvas sweeps a selection ----
   # The scene is three 96x64 shapes: 40,40 · 80,60 · 200,160. A band takes everything it
   # touches, so it never has to surround a shape to catch it.
   - drag: { id: canvas, from: [5, 5], to: [190, 140] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 2 } }
+  - assert_text: { id: insp_w, text: "96" }
   # Reaching only the corner of the third shape is enough to take it, and it alone.
   - drag: { id: canvas, from: [150, 250], to: [210, 170] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
   # A band clear of every shape takes nothing, and an empty selection sends the inspector
   # back to its Canvas tab. Started well clear of the selected shape's corners: a press
   # within grabbing distance of a handle resizes, which beats sweeping and should.
   - drag: { id: canvas, from: [400, 300], to: [500, 400] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
-  - wait_for: { id: insp-bg }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
+  - wait_for: { id: insp_bg }
   # Shift keeps what is selected and adds what the next band catches.
   - drag: { id: canvas, from: [150, 250], to: [210, 170] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
   - drag: { id: canvas, from: [5, 5], to: [190, 140], modifiers: [shift] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 3 } }
   # Sweeping is not an edit: the whole section above leaves the document alone, so there is
   # nothing for undo to take back and the shape count never moved.
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   - tap: { id: canvas, at: [400, 400] }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
 
   # ---- Drag to move: live previews, one undo step ----
   - tap: { id: canvas, at: [248, 192] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
   - drag: { id: canvas, from: [248, 192], to: [298, 242] }
-  - assert_text: { id: sk-frame, text: "250,210 96x64" }
+  - assert_text: { id: sk_frame, text: "250,210 96x64" }
   # Undo lands on shape 3's placement, the selection that unit sealed with; the transient
   # switch to shape 2 is not history (docs/model.md "Transient UI state"). Re-select 2 to
   # check its restored frame.
   - undo: {}
-  - assert_text: { id: sk-frame, text: "80,60 96x64" }
+  - assert_text: { id: sk_frame, text: "80,60 96x64" }
   - tap: { id: canvas, at: [248, 192] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
 
   # ---- Resize by the bottom-right handle: four fields, one undo step ----
   - drag: { id: canvas, from: [296, 224], to: [346, 274] }
-  - assert_text: { id: sk-frame, text: "200,160 146x114" }
+  - assert_text: { id: sk_frame, text: "200,160 146x114" }
   - undo: {}
-  - assert_text: { id: sk-frame, text: "80,60 96x64" }
+  - assert_text: { id: sk_frame, text: "80,60 96x64" }
   - tap: { id: canvas, at: [248, 192] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
 
   # ---- Group: multi-select via the toggle, then one unit each way ----
   - tap: { id: canvas, at: [45, 45] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   # Shift-tap adds to the selection (the desktop multi-select idiom; `modifiers:` stands the
   # held key in for this synthetic tap). A multi-selection reads through the Selected tab's
   # fields: x disagrees (40 vs 80) so it shows the "multi" blank, width agrees on 96.
   - tap: { id: canvas, at: [90, 110], modifiers: [shift] }
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
   # Two selected, so the tab counts them, pluralized by the catalog.
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 2 } }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 2 } }
   - menu: { key: menu_group }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
 
   # Dragging any member moves the whole group, one undo step.
   - drag: { id: canvas, from: [50, 50], to: [60, 70] }
-  - assert_text: { id: sk-frame, text: "50,60 136x84" }
+  - assert_text: { id: sk_frame, text: "50,60 136x84" }
   - undo: {}
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
 
   # ---- Double-click drill-down: the pair's second click selects inside the group ----
   # `repeat: 2` delivers a double-click's two arrivals; the second descends one level toward
   # the shape under the pointer, so the selection narrows from the group to its rectangle.
   - tap: { id: canvas, at: [45, 45], repeat: 2 }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   # A repeat on the shape itself holds the deep selection (no bounce back to the group).
   - tap: { id: canvas, at: [45, 45], repeat: 2 }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # ---- The group outline is always the box around its members: drag the drilled rectangle
   # 20 right and down (from an interior point clear of its corner handles; a drilled shape
@@ -140,84 +140,84 @@ flow:
   # (the member at 60,60 96x64 with its partner at 80,60 96x64), not a box frozen at
   # grouping time. ----
   - drag: { id: canvas, from: [60, 50], to: [80, 70] }
-  - assert_text: { id: sk-frame, text: "60,60 96x64" }
+  - assert_text: { id: sk_frame, text: "60,60 96x64" }
   - tap: { id: canvas, at: [600, 500] }
   - tap: { id: canvas, at: [70, 70] }
-  - assert_text: { id: sk-frame, text: "60,60 116x64" }
+  - assert_text: { id: sk_frame, text: "60,60 116x64" }
   # Undo the member move: history lands on the grouping unit, whose seal selected the group
   # (docs/model.md "Transient UI state"), and its outline is the original union again.
   - undo: {}
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
   # A neutral click (which also breaks the double-click pairing), then the group again for
   # the rotation section below.
   - tap: { id: canvas, at: [600, 500] }
   - tap: { id: canvas, at: [45, 45] }
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
 
   # ---- Rotate the group: the arrangement turns, not each shape in place ----
   # The angle belongs to the group. A half turn about its own center (108, 82) leaves the
   # group's frame exactly where it was (a group turns about itself rather than wandering)
   # and carries its members around that center, which for a half turn swaps where the two of
   # them sit.
-  - input: { id: insp-rotation, text: "180" }
-  - submit: { id: insp-rotation }
-  - assert_text: { id: insp-rotation, text: "180" }
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  - input: { id: insp_rotation, text: "180" }
+  - submit: { id: insp_rotation }
+  - assert_text: { id: insp_rotation, text: "180" }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
   # The members moved rather than spinning where they stood: ungroup, and the shape that
   # started at 40,40 is the one now sitting at 80,60. (Tapped at 160,92, inside that shape
   # and clear of the other, which the half turn swung over to 40,40.)
   - menu: { key: menu_ungroup }
   - tap: { id: canvas, at: [160, 92] }
-  - assert_text: { id: sk-frame, text: "80,60 96x64" }
-  - assert_text: { id: insp-rotation, text: "180" }
+  - assert_text: { id: sk_frame, text: "80,60 96x64" }
+  - assert_text: { id: insp_rotation, text: "180" }
   # Both units back out, leaving the group as this section found it.
   - undo: {}
   - undo: {}
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
-  - assert_text: { id: insp-rotation, text: "0" }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
+  - assert_text: { id: insp_rotation, text: "0" }
 
   # Ungroup, undo it, redo it: each landing point brings its own selection back.
   - menu: { key: menu_ungroup }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
   - undo: {}
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
-  - assert_text: { id: sk-frame, text: "40,40 136x84" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
+  - assert_text: { id: sk_frame, text: "40,40 136x84" }
   - redo: {}
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
 
   # ---- Delete, and back ----
   - tap: { id: canvas, at: [248, 192] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
   - menu: { key: menu_delete, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 2 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 2 } }
   - undo: {}
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   # …landing on the ungroup's point, whose selection was the two ungrouped shapes.
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
 
   # ---- Edit ▸ Undo/Redo: the role items drive the same document stack ----
   # (`day-undo`/`day-redo` are the core catalog keys role items are labeled by.)
   - menu: { key: tool_rect, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
   - menu: { key: day-undo, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   # The undone delete left the timeline when the placement forked history, so this landing
   # point is the ungroup's, which brings the two ungrouped shapes' selection with it. The
   # redo then restores the placement's own selection, the new shape.
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
   - menu: { key: day-redo, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
   # (The redone placement's own frame is viewport-centered, so it is target-dependent; the
   # selection it restores is what this leg is about.)
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp_w, text: "96" }
   - menu: { key: day-undo, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
 
   # ---- Edit ▸ Cut/Copy/Paste: role items, SVG travelling the system clipboard ----
   # Skipped on HarmonyOS: on CI's Oniro emulator a paste brings nothing back (the count stays
@@ -225,30 +225,30 @@ flow:
   # system pasteboard is not something this run can check there; the selection the block
   # starts from is asserted, and the Select All below carries on from it either way.
   - tap: { id: canvas, at: [45, 45] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   - menu: { key: day-copy, path: [menu_edit], skip_on: [arkui] }
   - menu: { key: day-paste, path: [menu_edit], skip_on: [arkui] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 }, skip_on: [arkui] }
-  - assert_text: { id: sk-frame, text: "56,56 96x64", skip_on: [arkui] }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 }, skip_on: [arkui] }
+  - assert_text: { id: sk_frame, text: "56,56 96x64", skip_on: [arkui] }
   - menu: { key: day-cut, path: [menu_edit], skip_on: [arkui] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 }, skip_on: [arkui] }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 }, skip_on: [arkui] }
   - menu: { key: day-paste, path: [menu_edit], skip_on: [arkui] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 }, skip_on: [arkui] }
-  - assert_text: { id: sk-frame, text: "72,72 96x64", skip_on: [arkui] }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 }, skip_on: [arkui] }
+  - assert_text: { id: sk_frame, text: "72,72 96x64", skip_on: [arkui] }
   - menu: { key: day-undo, path: [menu_edit], skip_on: [arkui] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 }, skip_on: [arkui] }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 }, skip_on: [arkui] }
   # The undo's landing point had nothing selected; deselecting flips the inspector back to
   # the Canvas tab, whose Background well takes the Selected fields' place.
-  - wait_for: { id: insp-bg, skip_on: [arkui] }
+  - wait_for: { id: insp_bg, skip_on: [arkui] }
 
   # ---- Select All (the platform's own Edit item) + arrow-key nudging ----
   - menu: { key: day-select-all, path: [menu_edit] }
   # Everything selected: the inspector flips back to Selected, x mixed, width common.
-  - wait_for: { id: insp-x }
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - wait_for: { id: insp_x }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
   - tap: { id: canvas, at: [45, 45] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   # Keys follow focus, so the nudge only works while the canvas holds it; a synthetic tap does
   # not move the first responder the way a real press does, so ask for it and check it landed.
   # (Typing into the inspector above left focus in a text field, which is exactly the state the
@@ -268,120 +268,120 @@ flow:
   # Through the window toolbar's toggle, which every target has (iOS since 2026-09). `on:`
   # names the state rather than flipping, so the step says what it wants even when something
   # else moved the pane first.
-  - toolbar: { item: tb-inspector, on: false, only_on: [uikit] }
+  - toolbar: { item: tb_inspector, on: false, only_on: [uikit] }
   # A modal is still animating when the tree goes idle, and a view mid-transition is not yet in
   # (or out of) the window, so the settle is a pause, not a wait_idle.
   - pause: { secs: 1, only_on: [uikit] }
   - focus: { id: canvas, only_on: [appkit, gtk, qt, dom, uikit] }
   - assert_focused: { id: canvas, only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "41,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "41,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowDown, modifiers: [shift], only_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "41,50 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "41,50 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowLeft, only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowUp, modifiers: [shift], only_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
   # The same four moves, on the toolkits whose canvas cannot hold the keyboard, driven through
   # the inspector fields instead, the one rail every backend has. The input method does not
   # matter here: each move is a document edit, so this keeps the undo history the same depth
   # everywhere. Without it the block above is the only writer, and every `undo` after this
   # section lands four entries deeper on the backends that skipped it, which is exactly how
   # android-mdc came to read a shape at "56,56" where the rest of the fleet reads "40,40".
-  - input: { id: insp-x, text: "41", skip_on: [appkit, gtk, qt, dom, uikit] }
-  - submit: { id: insp-x, skip_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "41,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
-  - input: { id: insp-y, text: "50", skip_on: [appkit, gtk, qt, dom, uikit] }
-  - submit: { id: insp-y, skip_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "41,50 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
-  - input: { id: insp-x, text: "40", skip_on: [appkit, gtk, qt, dom, uikit] }
-  - submit: { id: insp-x, skip_on: [appkit, gtk, qt, dom, uikit] }
-  - input: { id: insp-y, text: "40", skip_on: [appkit, gtk, qt, dom, uikit] }
-  - submit: { id: insp-y, skip_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp_x, text: "41", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp_x, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "41,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp_y, text: "50", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp_y, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "41,50 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp_x, text: "40", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp_x, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - input: { id: insp_y, text: "40", skip_on: [appkit, gtk, qt, dom, uikit] }
+  - submit: { id: insp_y, skip_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "40,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit] }
   # …and with the keyboard back in a text field, the same arrows move a caret and nothing else.
   # (The sheet comes back first on iOS; its fields do not exist while it is closed.)
-  - toolbar: { item: tb-inspector, on: true, only_on: [uikit] }
+  - toolbar: { item: tb_inspector, on: true, only_on: [uikit] }
   - pause: { secs: 1, only_on: [uikit] }
-  - wait_for: { id: insp-x, only_on: [appkit, gtk, qt, dom, uikit] }
-  - focus: { id: insp-x, only_on: [appkit, gtk, qt, dom, uikit] }
+  - wait_for: { id: insp_x, only_on: [appkit, gtk, qt, dom, uikit] }
+  - focus: { id: insp_x, only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowRight, only_on: [appkit, gtk, qt, dom, uikit] }
   - key: { key: ArrowDown, only_on: [appkit, gtk, qt, dom, uikit] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
+  - assert_text: { id: sk_frame, text: "40,40 96x64", only_on: [appkit, gtk, qt, dom, uikit] }
 
   # ---- Multi-select handles: every selected shape carries its own corners ----
   - tap: { id: canvas, at: [90, 70], modifiers: [shift] }
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
   # Shape 3's bottom-right handle, dragged with both selected: only shape 3 resizes. Its right
   # edge lands 4 short of shape 2's left edge (200) and snaps onto it (an alignment guide's
   # reach), so the width reads 120, while the height follows the pointer.
   - drag: { id: canvas, from: [176, 124], to: [196, 144] }
   - tap: { id: canvas, at: [45, 45] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   - tap: { id: canvas, at: [90, 70] }
-  - assert_text: { id: sk-frame, text: "80,60 120x84" }
+  - assert_text: { id: sk_frame, text: "80,60 120x84" }
   - undo: {}
 
   # ---- Inspector: live geometry fields, multi-select editing (docs/inspector.md) ----
   # The single selection's live frame, field by field.
-  - assert_text: { id: insp-x, text: "40" }
-  - assert_text: { id: insp-y, text: "40" }
-  - assert_text: { id: insp-w, text: "96" }
-  - assert_text: { id: insp-h, text: "64" }
+  - assert_text: { id: insp_x, text: "40" }
+  - assert_text: { id: insp_y, text: "40" }
+  - assert_text: { id: insp_w, text: "96" }
+  - assert_text: { id: insp_h, text: "64" }
   # A typed value commits on submit and moves the shape; the status readout agrees…
-  - input: { id: insp-x, text: "120" }
-  - submit: { id: insp-x }
-  - assert_text: { id: insp-x, text: "120" }
-  - assert_text: { id: sk-frame, text: "120,40 96x64" }
+  - input: { id: insp_x, text: "120" }
+  - submit: { id: insp_x }
+  - assert_text: { id: insp_x, text: "120" }
+  - assert_text: { id: sk_frame, text: "120,40 96x64" }
   # …and one undo takes the whole edit back.
   - undo: {}
-  - assert_text: { id: insp-x, text: "40" }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: insp_x, text: "40" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   # A canvas drag live-updates the fields (previews flow through the same bindings).
   - drag: { id: canvas, from: [45, 45], to: [65, 75] }
-  - assert_text: { id: insp-x, text: "60" }
-  - assert_text: { id: insp-y, text: "70" }
+  - assert_text: { id: insp_x, text: "60" }
+  - assert_text: { id: insp_y, text: "70" }
   - undo: {}
   # Multi-select: widths agree, x positions differ, so x reads empty behind its "multi"
   # placeholder, and typing into it aligns every selected shape in one undo step.
   - tap: { id: canvas, at: [90, 70], modifiers: [shift] }
-  - assert_text: { id: insp-x, text: "" }
-  - assert_text: { id: insp-w, text: "96" }
-  - input: { id: insp-x, text: "40" }
-  - submit: { id: insp-x }
-  - assert_text: { id: insp-x, text: "40" }
+  - assert_text: { id: insp_x, text: "" }
+  - assert_text: { id: insp_w, text: "96" }
+  - input: { id: insp_x, text: "40" }
+  - submit: { id: insp_x }
+  - assert_text: { id: insp_x, text: "40" }
   # Undo lands on the last nudge (shape 1 alone), so the field shows its value, not "multi":
   # the shift-tap that widened the selection was transient, and is not history.
   - undo: {}
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - assert_text: { id: insp-x, text: "40" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
+  - assert_text: { id: insp_x, text: "40" }
 
   # ---- Style: opacity as a slider + localized percent field, width as a stepper field ----
   # (The color wells for fill, stroke, and the Canvas tab's background are exercised by unit
   # tests and the screenshots; a native chooser has no headless rail to drive.)
-  - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 100 } }
-  - input: { id: insp-fill-op, text: "40%" }
-  - submit: { id: insp-fill-op }
-  - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 40 } }
-  - input: { id: insp-stroke-w, text: "6" }
-  - submit: { id: insp-stroke-w }
-  - assert_text: { id: insp-stroke-w, text: "6" }
+  - assert_text: { id: insp_fill_op, key: insp_percent, args: { pct: 100 } }
+  - input: { id: insp_fill_op, text: "40%" }
+  - submit: { id: insp_fill_op }
+  - assert_text: { id: insp_fill_op, key: insp_percent, args: { pct: 40 } }
+  - input: { id: insp_stroke_w, text: "6" }
+  - submit: { id: insp_stroke_w }
+  - assert_text: { id: insp_stroke_w, text: "6" }
   # Each style commit is one undo unit, selection riding along as ever.
   - undo: {}
-  - assert_text: { id: insp-stroke-w, text: "1" }
+  - assert_text: { id: insp_stroke_w, text: "1" }
   - undo: {}
-  - assert_text: { id: insp-fill-op, key: insp_percent, args: { pct: 100 } }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: insp_fill_op, key: insp_percent, args: { pct: 100 } }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # ---- Rotation and corner radius: a stepper each, one undo unit each ----
   # The Selected tab names its count, so the strip reads "1 Item" here.
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
-  - assert_text: { id: insp-rotation, text: "0" }
-  - input: { id: insp-rotation, text: "45" }
-  - submit: { id: insp-rotation }
-  - assert_text: { id: insp-rotation, text: "45" }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 1 } }
+  - assert_text: { id: insp_rotation, text: "0" }
+  - input: { id: insp_rotation, text: "45" }
+  - submit: { id: insp_rotation }
+  - assert_text: { id: insp_rotation, text: "45" }
   # A rotation is a view transform about the shape's center: the stored frame is untouched.
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # The selection outline and its handles turn with the shape, and the grab follows the
   # drawing. Shape 1 is 96×64 at (40,40), so its center is (88,72); a quarter turn swings the
@@ -389,117 +389,117 @@ flow:
   # which it could only do if the handle moved with the outline. The drag is read in the
   # shape's own frame, so a downward pull lengthens its (now vertical) long edge. (That the
   # un-turned corner is now bare is a unit test's job: here it sits inside shape 3.)
-  - input: { id: insp-rotation, text: "90" }
-  - submit: { id: insp-rotation }
+  - input: { id: insp_rotation, text: "90" }
+  - submit: { id: insp_rotation }
   - drag: { id: canvas, from: [56, 120], to: [56, 140] }
-  - assert_text: { id: sk-frame, text: "30,50 116x64" }
+  - assert_text: { id: sk_frame, text: "30,50 116x64" }
   # Both units back out, leaving the history exactly where this section found it.
   - undo: {}
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
   - undo: {}
-  - assert_text: { id: insp-rotation, text: "45" }
+  - assert_text: { id: insp_rotation, text: "45" }
 
   # 360° is 0°: the angle wraps rather than growing without bound.
-  - input: { id: insp-rotation, text: "360" }
-  - submit: { id: insp-rotation }
-  - assert_text: { id: insp-rotation, text: "0" }
+  - input: { id: insp_rotation, text: "360" }
+  - submit: { id: insp_rotation }
+  - assert_text: { id: insp_rotation, text: "0" }
   - undo: {}
-  - assert_text: { id: insp-rotation, text: "45" }
+  - assert_text: { id: insp_rotation, text: "45" }
   - undo: {}
-  - assert_text: { id: insp-rotation, text: "0" }
+  - assert_text: { id: insp_rotation, text: "0" }
   # Corner radius belongs to rectangles: shape 1 is one, so the row is there…
-  - assert_text: { id: insp-corner, text: "0" }
-  - input: { id: insp-corner, text: "12" }
-  - submit: { id: insp-corner }
-  - assert_text: { id: insp-corner, text: "12" }
+  - assert_text: { id: insp_corner, text: "0" }
+  - input: { id: insp_corner, text: "12" }
+  - submit: { id: insp_corner }
+  - assert_text: { id: insp_corner, text: "12" }
   - undo: {}
-  - assert_text: { id: insp-corner, text: "0" }
+  - assert_text: { id: insp_corner, text: "0" }
   # …and the oval has no corners, so the row is not in its inspector at all.
   - tap: { id: canvas, at: [248, 192] }
-  - assert_text: { id: sk-frame, text: "200,160 96x64" }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 1 } }
-  - assert_missing: { id: insp-corner }
-  - assert_text: { id: insp-rotation, text: "0" }
+  - assert_text: { id: sk_frame, text: "200,160 96x64" }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 1 } }
+  - assert_missing: { id: insp_corner }
+  - assert_text: { id: insp_rotation, text: "0" }
   # Back to the rectangle for the zoom section.
   - tap: { id: canvas, at: [45, 45] }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - wait_for: { id: insp-corner }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
+  - wait_for: { id: insp_corner }
 
   # ---- Zoom: menu-driven, center-anchored; in and out are exact inverses ----
-  - assert_text: { id: sk-zoom, key: status_zoom, args: { pct: 100 } }
+  - assert_text: { id: sk_zoom, key: status_zoom, args: { pct: 100 } }
   - menu: { key: menu_zoom_in, path: [menu_view] }
-  - assert_text: { id: sk-zoom, key: status_zoom, args: { pct: 125 } }
+  - assert_text: { id: sk_zoom, key: status_zoom, args: { pct: 125 } }
   - menu: { key: menu_zoom_in, path: [menu_view] }
-  - assert_text: { id: sk-zoom, key: status_zoom, args: { pct: 156 } }
+  - assert_text: { id: sk_zoom, key: status_zoom, args: { pct: 156 } }
   # The transform is view-only: model geometry (and the inspector reading it) is untouched.
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
-  - assert_text: { id: insp-x, text: "40" }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
+  - assert_text: { id: insp_x, text: "40" }
   - menu: { key: menu_zoom_out, path: [menu_view] }
-  - assert_text: { id: sk-zoom, key: status_zoom, args: { pct: 125 } }
+  - assert_text: { id: sk_zoom, key: status_zoom, args: { pct: 125 } }
   - menu: { key: menu_zoom_reset, path: [menu_view] }
-  - assert_text: { id: sk-zoom, key: status_zoom, args: { pct: 100 } }
+  - assert_text: { id: sk_zoom, key: status_zoom, args: { pct: 100 } }
   # Back at identity (reset cancels the panning the anchored steps introduced), canvas
   # points mean model points again: a blank click clears the selection, and the inspector
   # follows it to the Canvas tab…
   - tap: { id: canvas, at: [600, 400] }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   # The strip now shows Canvas (a picker's text is the option it is showing)…
-  - assert_text: { id: insp-tab, key: insp_tab_canvas }
+  - assert_text: { id: insp_tab, key: insp_tab_canvas }
   # …and the other tab, chosen by hand, names the empty selection in the catalog's zero form.
-  - select: { id: insp-tab, index: 1 }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 0 } }
-  - select: { id: insp-tab, index: 0 }
+  - select: { id: insp_tab, index: 1 }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 0 } }
+  - select: { id: insp_tab, index: 0 }
   # …and re-selecting flips it back and gives the parting shot its handles.
   - tap: { id: canvas, at: [45, 45] }
-  - wait_for: { id: insp-x }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - wait_for: { id: insp_x }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # ---- Lines: two endpoint handles, and an inspector with only what a line has ----
   # Insert ▸ Line: the app menu's shape list, the same entries the toolbar pull-down and
   # the mobile sheet carry. It lands centered in the visible canvas and selected.
   - menu: { key: tool_line, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
-  - wait_for: { id: insp-x }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
+  - wait_for: { id: insp_x }
   # Put it somewhere this script knows: a horizontal line 144 long, so the frame reads 144x0.
-  - input: { id: insp-x, text: "300" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "300" }
-  - submit: { id: insp-y }
-  - assert_text: { id: sk-frame, text: "300,300 144x0" }
+  - input: { id: insp_x, text: "300" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "300" }
+  - submit: { id: insp_y }
+  - assert_text: { id: sk_frame, text: "300,300 144x0" }
   # A line is its stroke, so the fill rows, the angle and the corner radius are not in its
   # inspector at all, while the stroke trio is.
-  - assert_missing: { id: insp-fill }
-  - assert_missing: { id: insp-fill-op }
-  - assert_missing: { id: insp-rotation }
-  - assert_missing: { id: insp-corner }
-  - assert_text: { id: insp-stroke-w, text: "2" }
-  - assert_text: { id: insp-stroke-op, key: insp_percent, args: { pct: 100 } }
+  - assert_missing: { id: insp_fill }
+  - assert_missing: { id: insp_fill_op }
+  - assert_missing: { id: insp_rotation }
+  - assert_missing: { id: insp_corner }
+  - assert_text: { id: insp_stroke_w, text: "2" }
+  - assert_text: { id: insp_stroke_op, key: insp_percent, args: { pct: 100 } }
   # Its handles are the two ends: dragging the far one moves that point alone, so the frame
   # grows from the start rather than around a center.
   - drag: { id: canvas, from: [444, 300], to: [444, 380] }
-  - assert_text: { id: sk-frame, text: "300,300 144x80" }
+  - assert_text: { id: sk_frame, text: "300,300 144x80" }
   # Dragging the start end holds the far end still: the origin moves and the frame shrinks to
   # meet it.
   - drag: { id: canvas, from: [300, 300], to: [350, 300] }
-  - assert_text: { id: sk-frame, text: "350,300 94x80" }
+  - assert_text: { id: sk_frame, text: "350,300 94x80" }
   - undo: {}
-  - assert_text: { id: sk-frame, text: "300,300 144x80" }
+  - assert_text: { id: sk_frame, text: "300,300 144x80" }
   # A press near the segment selects it; the same distance from the segment but inside its
   # bounding box is bare canvas; a line has no interior.
   - tap: { id: canvas, at: [600, 400] }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - tap: { id: canvas, at: [372, 340] }
-  - wait_for: { id: insp-x }
-  - assert_text: { id: sk-frame, text: "300,300 144x80" }
+  - wait_for: { id: insp_x }
+  - assert_text: { id: sk_frame, text: "300,300 144x80" }
   - tap: { id: canvas, at: [430, 310] }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   # Delete it, so the parting shot is the same three shapes on every target.
   - tap: { id: canvas, at: [372, 340] }
   - menu: { key: menu_delete, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   - tap: { id: canvas, at: [45, 45] }
-  - wait_for: { id: insp-x }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - wait_for: { id: insp_x }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # ---- Alignment guides: a drag snaps onto a neighbor's edge when it comes within reach ----
   # A fourth rectangle 4 points below the first one's top edge (40): dragging it sideways
@@ -507,15 +507,15 @@ flow:
   # the pointer exactly. Then the same drag with snapping off in the preferences lands where
   # the pointer left it.
   - menu: { key: tool_rect, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
-  - wait_for: { id: insp-x }
-  - input: { id: insp-x, text: "300" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "44" }
-  - submit: { id: insp-y }
-  - assert_text: { id: sk-frame, text: "300,44 96x64" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
+  - wait_for: { id: insp_x }
+  - input: { id: insp_x, text: "300" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "44" }
+  - submit: { id: insp_y }
+  - assert_text: { id: sk_frame, text: "300,44 96x64" }
   - drag: { id: canvas, from: [348, 76], to: [358, 76] }
-  - assert_text: { id: sk-frame, text: "310,40 96x64" }
+  - assert_text: { id: sk_frame, text: "310,40 96x64" }
   # Settings is the shared surface (https://daybrite.dev/docs/settings): a group's own id routes
   # to its tab in the window a desktop opens, and to its page in the cover the web presents
   # (web-dom emulates the App menu, so the routes land on the cover too). A phone has no App
@@ -523,36 +523,36 @@ flow:
   # src/lib.rs) that presents the cover on its root, where the group's row is tapped. The cover
   # draws inside the main window, so one capture key serves every presentation.
   - navigate: { route: general, skip_on: [uikit, mdc, arkui] }
-  - toolbar: { item: tb-settings, only_on: [uikit, mdc, arkui] }
-  - tap: { id: prefs-group-general, only_on: [uikit, mdc, arkui] }
-  - wait_for: { id: language-picker }
+  - toolbar: { item: tb_settings, only_on: [uikit, mdc, arkui] }
+  - tap: { id: prefs_group:general, only_on: [uikit, mdc, arkui] }
+  - wait_for: { id: language_picker }
   - screenshot: { name: settings, window: day.preferences }
   - close_window: { window: day.preferences }
   - navigate: { route: editing, skip_on: [uikit, mdc, arkui] }
-  - toolbar: { item: tb-settings, only_on: [uikit, mdc, arkui] }
-  - tap: { id: prefs-group-editing, only_on: [uikit, mdc, arkui] }
-  - wait_for: { id: pref-snap }
-  - toggle: { id: pref-snap, value: false }
+  - toolbar: { item: tb_settings, only_on: [uikit, mdc, arkui] }
+  - tap: { id: prefs_group:editing, only_on: [uikit, mdc, arkui] }
+  - wait_for: { id: pref_snap }
+  - toggle: { id: pref_snap, value: false }
   - close_window: { window: day.preferences }
   - drag: { id: canvas, from: [358, 72], to: [358, 76] }
-  - assert_text: { id: sk-frame, text: "310,44 96x64" }
+  - assert_text: { id: sk_frame, text: "310,44 96x64" }
   - navigate: { route: editing, skip_on: [uikit, mdc, arkui] }
-  - toolbar: { item: tb-settings, only_on: [uikit, mdc, arkui] }
-  - tap: { id: prefs-group-editing, only_on: [uikit, mdc, arkui] }
-  - wait_for: { id: pref-snap }
-  - toggle: { id: pref-snap, value: true }
+  - toolbar: { item: tb_settings, only_on: [uikit, mdc, arkui] }
+  - tap: { id: prefs_group:editing, only_on: [uikit, mdc, arkui] }
+  - wait_for: { id: pref_snap }
+  - toggle: { id: pref_snap, value: true }
   - close_window: { window: day.preferences }
   # The two moves undo like any other; delete the extra rectangle so the scene is the same
   # three shapes on every target.
   - undo: {}
-  - assert_text: { id: sk-frame, text: "310,40 96x64" }
+  - assert_text: { id: sk_frame, text: "310,40 96x64" }
   - undo: {}
-  - assert_text: { id: sk-frame, text: "300,44 96x64" }
+  - assert_text: { id: sk_frame, text: "300,44 96x64" }
   - menu: { key: menu_delete, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   - tap: { id: canvas, at: [45, 45] }
-  - wait_for: { id: insp-x }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - wait_for: { id: insp_x }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # ---- Text: a line of type whose frame is what its font measures to ----
   # Insert ▸ Text lands a node reading "Text" at 24 points in the platform's face. Its
@@ -560,58 +560,58 @@ flow:
   # differently. What is the same everywhere: the Text section's rows, the absent stroke
   # rows, the style menu's synthesized faces for the System family, and the undo depth.
   - menu: { key: tool_text, path: [menu_insert] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 4 } }
-  - wait_for: { id: insp-text }
-  - input: { id: insp-x, text: "300" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "300" }
-  - submit: { id: insp-y }
-  - assert_text: { id: insp-x, text: "300" }
-  - assert_text: { id: insp-text, key: text_default }
-  - wait_for: { id: insp-font }
-  - wait_for: { id: insp-style }
-  - assert_text: { id: insp-size, text: "24" }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
+  - wait_for: { id: insp_text }
+  - input: { id: insp_x, text: "300" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "300" }
+  - submit: { id: insp_y }
+  - assert_text: { id: insp_x, text: "300" }
+  - assert_text: { id: insp_text, key: text_default }
+  - wait_for: { id: insp_font }
+  - wait_for: { id: insp_style }
+  - assert_text: { id: insp_size, text: "24" }
   # Type is filled (the fill is its color) and never stroked or rounded.
-  - wait_for: { id: insp-fill }
-  - assert_missing: { id: insp-stroke }
-  - assert_missing: { id: insp-stroke-w }
-  - assert_missing: { id: insp-stroke-op }
-  - assert_missing: { id: insp-corner }
+  - wait_for: { id: insp_fill }
+  - assert_missing: { id: insp_stroke }
+  - assert_missing: { id: insp_stroke_w }
+  - assert_missing: { id: insp_stroke_op }
+  - assert_missing: { id: insp_corner }
   # New words, one undo unit with the refit that follows them.
-  - input: { id: insp-text, text: "Day Sketch" }
-  - submit: { id: insp-text }
-  - assert_text: { id: insp-text, text: "Day Sketch" }
+  - input: { id: insp_text, text: "Day Sketch" }
+  - submit: { id: insp_text }
+  - assert_text: { id: insp_text, text: "Day Sketch" }
   # The System family offers the four synthesized faces in a fixed order, so index 1 is Bold
   # on every platform.
-  - select: { id: insp-style, index: 1 }
-  - assert_text: { id: insp-style, key: style_bold }
-  - input: { id: insp-size, text: "36" }
-  - submit: { id: insp-size }
-  - assert_text: { id: insp-size, text: "36" }
-  - input: { id: insp-rotation, text: "30" }
-  - submit: { id: insp-rotation }
-  - assert_text: { id: insp-rotation, text: "30" }
+  - select: { id: insp_style, index: 1 }
+  - assert_text: { id: insp_style, key: style_bold }
+  - input: { id: insp_size, text: "36" }
+  - submit: { id: insp_size }
+  - assert_text: { id: insp_size, text: "36" }
+  - input: { id: insp_rotation, text: "30" }
+  - submit: { id: insp_rotation }
+  - assert_text: { id: insp_rotation, text: "30" }
   # Four edits, four undos, in reverse: rotation, size, style, words.
   - undo: {}
-  - assert_text: { id: insp-rotation, text: "0" }
+  - assert_text: { id: insp_rotation, text: "0" }
   - undo: {}
-  - assert_text: { id: insp-size, text: "24" }
+  - assert_text: { id: insp_size, text: "24" }
   - undo: {}
-  - assert_text: { id: insp-style, key: style_regular }
+  - assert_text: { id: insp_style, key: style_regular }
   - undo: {}
-  - assert_text: { id: insp-text, key: text_default }
+  - assert_text: { id: insp_text, key: text_default }
   # Delete it, so the parting shot is the same three shapes on every target.
   - menu: { key: menu_delete, path: [menu_edit] }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 3 } }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   - tap: { id: canvas, at: [45, 45] }
-  - wait_for: { id: insp-x }
-  - assert_text: { id: sk-frame, text: "40,40 96x64" }
+  - wait_for: { id: insp_x }
+  - assert_text: { id: sk_frame, text: "40,40 96x64" }
 
   # ---- Tabs by hand: a manual switch shows the other tab until the selection next moves ----
-  - select: { id: insp-tab, index: 0 }
-  - wait_for: { id: insp-bg }
-  - select: { id: insp-tab, index: 1 }
-  - wait_for: { id: insp-x }
+  - select: { id: insp_tab, index: 0 }
+  - wait_for: { id: insp_bg }
+  - select: { id: insp_tab, index: 1 }
+  - wait_for: { id: insp_x }
 
   # Close the panel so the parting shot is the same canvas on every target, and give the
   # mobile sheet its dismiss transition, or the capture races it and catches a sliver.
@@ -646,44 +646,44 @@ flow:
   - tap: { id: canvas, at: [620, 500] }
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "20" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "40" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "20" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "40" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "132" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "40" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "132" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "40" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "244" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "40" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "244" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "40" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "20" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "120" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "20" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "120" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "132" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "120" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "132" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "120" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "244" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "120" }
-  - submit: { id: insp-y }
-  - assert_text: { id: sk-count, key: status_count, args: { n: 6 } }
+  - input: { id: insp_x, text: "244" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "120" }
+  - submit: { id: insp_y }
+  - assert_text: { id: sk_count, key: status_count, args: { n: 6 } }
   # One band across all six, so the corner radius is typed once and fans out to every one of
   # them: the same multi-selection edit the style section proves, put to work.
   - drag: { id: canvas, from: [4, 8], to: [352, 200] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 6 } }
-  - input: { id: insp-corner, text: "14" }
-  - submit: { id: insp-corner }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 6 } }
+  - input: { id: insp_corner, text: "14" }
+  - submit: { id: insp_corner }
   - tap: { id: canvas, at: [180, 300] }
   - menu: { key: menu_inspector }
   - pause: 1
@@ -696,45 +696,45 @@ flow:
   # ---- A fan: the same rectangle at five angles ----
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "110" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "110" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "110" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
-  - input: { id: insp-rotation, text: "36" }
-  - submit: { id: insp-rotation }
+  - input: { id: insp_x, text: "110" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
+  - input: { id: insp_rotation, text: "36" }
+  - submit: { id: insp_rotation }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "110" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
-  - input: { id: insp-rotation, text: "72" }
-  - submit: { id: insp-rotation }
+  - input: { id: insp_x, text: "110" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
+  - input: { id: insp_rotation, text: "72" }
+  - submit: { id: insp_rotation }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "110" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
-  - input: { id: insp-rotation, text: "108" }
-  - submit: { id: insp-rotation }
+  - input: { id: insp_x, text: "110" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
+  - input: { id: insp_rotation, text: "108" }
+  - submit: { id: insp_rotation }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "110" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
-  - input: { id: insp-rotation, text: "144" }
-  - submit: { id: insp-rotation }
+  - input: { id: insp_x, text: "110" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
+  - input: { id: insp_rotation, text: "144" }
+  - submit: { id: insp_rotation }
   # Half-transparent, so every layer of the fan shows through the ones above it.
   - drag: { id: canvas, from: [4, 60], to: [300, 300] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 5 } }
-  - input: { id: insp-fill-op, text: "55%" }
-  - submit: { id: insp-fill-op }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 5 } }
+  - input: { id: insp_fill_op, text: "55%" }
+  - submit: { id: insp_fill_op }
   - tap: { id: canvas, at: [20, 380] }
   - menu: { key: menu_inspector }
   - pause: 1
@@ -747,38 +747,38 @@ flow:
   # ---- Overlapping ovals: what translucency does to color ----
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: tool_oval, path: [menu_insert] }
-  - input: { id: insp-x, text: "40" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "90" }
-  - submit: { id: insp-y }
-  - input: { id: insp-w, text: "150" }
-  - submit: { id: insp-w }
-  - input: { id: insp-h, text: "150" }
-  - submit: { id: insp-h }
+  - input: { id: insp_x, text: "40" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "90" }
+  - submit: { id: insp_y }
+  - input: { id: insp_w, text: "150" }
+  - submit: { id: insp_w }
+  - input: { id: insp_h, text: "150" }
+  - submit: { id: insp_h }
   - menu: { key: tool_oval, path: [menu_insert] }
-  - input: { id: insp-x, text: "130" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "90" }
-  - submit: { id: insp-y }
-  - input: { id: insp-w, text: "150" }
-  - submit: { id: insp-w }
-  - input: { id: insp-h, text: "150" }
-  - submit: { id: insp-h }
+  - input: { id: insp_x, text: "130" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "90" }
+  - submit: { id: insp_y }
+  - input: { id: insp_w, text: "150" }
+  - submit: { id: insp_w }
+  - input: { id: insp_h, text: "150" }
+  - submit: { id: insp_h }
   - menu: { key: tool_oval, path: [menu_insert] }
-  - input: { id: insp-x, text: "85" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "170" }
-  - submit: { id: insp-y }
-  - input: { id: insp-w, text: "150" }
-  - submit: { id: insp-w }
-  - input: { id: insp-h, text: "150" }
-  - submit: { id: insp-h }
+  - input: { id: insp_x, text: "85" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "170" }
+  - submit: { id: insp_y }
+  - input: { id: insp_w, text: "150" }
+  - submit: { id: insp_w }
+  - input: { id: insp_h, text: "150" }
+  - submit: { id: insp_h }
   - drag: { id: canvas, from: [4, 60], to: [340, 350] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
-  - input: { id: insp-fill-op, text: "50%" }
-  - submit: { id: insp-fill-op }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 3 } }
+  - input: { id: insp_fill_op, text: "50%" }
+  - submit: { id: insp_fill_op }
   - tap: { id: canvas, at: [300, 400] }
   - menu: { key: menu_inspector }
   - pause: 1
@@ -791,45 +791,45 @@ flow:
   # ---- Outlines: the same shapes with their fill taken away ----
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "40" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "80" }
-  - submit: { id: insp-y }
-  - input: { id: insp-w, text: "180" }
-  - submit: { id: insp-w }
-  - input: { id: insp-h, text: "180" }
-  - submit: { id: insp-h }
+  - input: { id: insp_x, text: "40" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "80" }
+  - submit: { id: insp_y }
+  - input: { id: insp_w, text: "180" }
+  - submit: { id: insp_w }
+  - input: { id: insp_h, text: "180" }
+  - submit: { id: insp_h }
   - menu: { key: tool_oval, path: [menu_insert] }
-  - input: { id: insp-x, text: "110" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
-  - input: { id: insp-w, text: "180" }
-  - submit: { id: insp-w }
-  - input: { id: insp-h, text: "180" }
-  - submit: { id: insp-h }
+  - input: { id: insp_x, text: "110" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
+  - input: { id: insp_w, text: "180" }
+  - submit: { id: insp_w }
+  - input: { id: insp_h, text: "180" }
+  - submit: { id: insp_h }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "75" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "115" }
-  - submit: { id: insp-y }
-  - input: { id: insp-w, text: "180" }
-  - submit: { id: insp-w }
-  - input: { id: insp-h, text: "180" }
-  - submit: { id: insp-h }
-  - input: { id: insp-rotation, text: "45" }
-  - submit: { id: insp-rotation }
+  - input: { id: insp_x, text: "75" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "115" }
+  - submit: { id: insp_y }
+  - input: { id: insp_w, text: "180" }
+  - submit: { id: insp_w }
+  - input: { id: insp_h, text: "180" }
+  - submit: { id: insp_h }
+  - input: { id: insp_rotation, text: "45" }
+  - submit: { id: insp_rotation }
   # No fill at all, and a stroke heavy enough to carry the drawing on its own.
   - drag: { id: canvas, from: [4, 40], to: [340, 400] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
-  - input: { id: insp-fill-op, text: "0%" }
-  - submit: { id: insp-fill-op }
-  - input: { id: insp-stroke-w, text: "5" }
-  - submit: { id: insp-stroke-w }
-  - input: { id: insp-stroke-op, text: "100%" }
-  - submit: { id: insp-stroke-op }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 3 } }
+  - input: { id: insp_fill_op, text: "0%" }
+  - submit: { id: insp_fill_op }
+  - input: { id: insp_stroke_w, text: "5" }
+  - submit: { id: insp_stroke_w }
+  - input: { id: insp_stroke_op, text: "100%" }
+  - submit: { id: insp_stroke_op }
   - tap: { id: canvas, at: [300, 420] }
   - menu: { key: menu_inspector }
   - pause: 1
@@ -844,28 +844,28 @@ flow:
   # arrangement, which is what tells you the group moved as one thing and not as three.
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "30" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "30" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
   - menu: { key: tool_oval, path: [menu_insert] }
-  - input: { id: insp-x, text: "140" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "140" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
   - menu: { key: tool_rect, path: [menu_insert] }
-  - input: { id: insp-x, text: "250" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "150" }
-  - submit: { id: insp-y }
+  - input: { id: insp_x, text: "250" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "150" }
+  - submit: { id: insp_y }
   - drag: { id: canvas, from: [4, 120], to: [352, 240] }
-  - assert_text: { id: insp-tab, key: insp_tab_selected, args: { n: 3 } }
+  - assert_text: { id: insp_tab, key: insp_tab_selected, args: { n: 3 } }
   - menu: { key: menu_group }
-  - input: { id: insp-rotation, text: "20" }
-  - submit: { id: insp-rotation }
-  - assert_text: { id: insp-rotation, text: "20" }
+  - input: { id: insp_rotation, text: "20" }
+  - submit: { id: insp_rotation }
+  - assert_text: { id: insp_rotation, text: "20" }
   - menu: { key: menu_inspector }
   - pause: 1
   - screenshot:
@@ -880,68 +880,68 @@ flow:
   - tap: { id: canvas, at: [620, 500] }
   - menu: { key: menu_new }
   - menu: { key: menu_inspector }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: tool_text, path: [menu_insert] }
-  - input: { id: insp-text, text: "Aa Bb Cc" }
-  - submit: { id: insp-text }
-  - input: { id: insp-size, text: "56" }
-  - submit: { id: insp-size }
-  - input: { id: insp-x, text: "24" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "24" }
-  - submit: { id: insp-y }
+  - input: { id: insp_text, text: "Aa Bb Cc" }
+  - submit: { id: insp_text }
+  - input: { id: insp_size, text: "56" }
+  - submit: { id: insp_size }
+  - input: { id: insp_x, text: "24" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "24" }
+  - submit: { id: insp_y }
   - menu: { key: tool_text, path: [menu_insert] }
-  - input: { id: insp-text, text: "Bold" }
-  - submit: { id: insp-text }
-  - select: { id: insp-style, index: 1 }
-  - input: { id: insp-size, text: "32" }
-  - submit: { id: insp-size }
-  - input: { id: insp-x, text: "24" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "110" }
-  - submit: { id: insp-y }
+  - input: { id: insp_text, text: "Bold" }
+  - submit: { id: insp_text }
+  - select: { id: insp_style, index: 1 }
+  - input: { id: insp_size, text: "32" }
+  - submit: { id: insp_size }
+  - input: { id: insp_x, text: "24" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "110" }
+  - submit: { id: insp_y }
   - menu: { key: tool_text, path: [menu_insert] }
-  - input: { id: insp-text, text: "Italic" }
-  - submit: { id: insp-text }
-  - select: { id: insp-style, index: 2 }
-  - input: { id: insp-size, text: "32" }
-  - submit: { id: insp-size }
-  - input: { id: insp-x, text: "24" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "160" }
-  - submit: { id: insp-y }
+  - input: { id: insp_text, text: "Italic" }
+  - submit: { id: insp_text }
+  - select: { id: insp_style, index: 2 }
+  - input: { id: insp_size, text: "32" }
+  - submit: { id: insp_size }
+  - input: { id: insp_x, text: "24" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "160" }
+  - submit: { id: insp_y }
   - menu: { key: tool_text, path: [menu_insert] }
-  - input: { id: insp-text, text: "Bold Italic" }
-  - submit: { id: insp-text }
-  - select: { id: insp-style, index: 3 }
-  - input: { id: insp-size, text: "32" }
-  - submit: { id: insp-size }
-  - input: { id: insp-x, text: "24" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "210" }
-  - submit: { id: insp-y }
+  - input: { id: insp_text, text: "Bold Italic" }
+  - submit: { id: insp_text }
+  - select: { id: insp_style, index: 3 }
+  - input: { id: insp_size, text: "32" }
+  - submit: { id: insp_size }
+  - input: { id: insp_x, text: "24" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "210" }
+  - submit: { id: insp_y }
   - menu: { key: tool_text, path: [menu_insert] }
-  - input: { id: insp-text, text: "Turned fifteen degrees" }
-  - submit: { id: insp-text }
-  - input: { id: insp-size, text: "20" }
-  - submit: { id: insp-size }
-  - input: { id: insp-rotation, text: "15" }
-  - submit: { id: insp-rotation }
-  - input: { id: insp-x, text: "24" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "280" }
-  - submit: { id: insp-y }
+  - input: { id: insp_text, text: "Turned fifteen degrees" }
+  - submit: { id: insp_text }
+  - input: { id: insp_size, text: "20" }
+  - submit: { id: insp_size }
+  - input: { id: insp_rotation, text: "15" }
+  - submit: { id: insp_rotation }
+  - input: { id: insp_x, text: "24" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "280" }
+  - submit: { id: insp_y }
   - menu: { key: tool_text, path: [menu_insert] }
-  - input: { id: insp-text, text: "Twelve point" }
-  - submit: { id: insp-text }
-  - input: { id: insp-size, text: "12" }
-  - submit: { id: insp-size }
-  - input: { id: insp-x, text: "24" }
-  - submit: { id: insp-x }
-  - input: { id: insp-y, text: "360" }
-  - submit: { id: insp-y }
+  - input: { id: insp_text, text: "Twelve point" }
+  - submit: { id: insp_text }
+  - input: { id: insp_size, text: "12" }
+  - submit: { id: insp_size }
+  - input: { id: insp_x, text: "24" }
+  - submit: { id: insp_x }
+  - input: { id: insp_y, text: "360" }
+  - submit: { id: insp_y }
   - tap: { id: canvas, at: [300, 420] }
-  - wait_for: { id: insp-bg }
+  - wait_for: { id: insp_bg }
   - menu: { key: menu_inspector }
   - pause: 1
   - screenshot:

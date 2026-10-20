@@ -328,6 +328,7 @@ dependencies = [
  "day-async",
  "day-geometry",
  "day-l10n",
+ "day-macros",
  "day-reactive",
  "day-spec",
  "linkme",

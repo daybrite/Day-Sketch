@@ -172,7 +172,7 @@ fn toolbar() -> Vec<ToolbarEntry> {
         // Leading, like every sidebar toggle: the pane it shows is the leading pane.
         items.push(
             toolbar_toggle(
-                "tb-layers",
+                day::id!(tb_layers),
                 res::str::menu_layers(),
                 inspector::layers_visible(),
             )
@@ -183,45 +183,51 @@ fn toolbar() -> Vec<ToolbarEntry> {
         );
     }
     items.extend(vec![
-        toolbar_button("tb-group", res::str::menu_group())
+        toolbar_button(day::id!(tb_group), res::str::menu_group())
             .icon(Symbol::Group)
             .tooltip(res::str::menu_group())
             .action(model::group_selection),
-        toolbar_button("tb-ungroup", res::str::menu_ungroup())
+        toolbar_button(day::id!(tb_ungroup), res::str::menu_ungroup())
             .icon(Symbol::Ungroup)
             .tooltip(res::str::menu_ungroup())
             .action(model::ungroup_selection),
         // Insert: a pull-down of the shape vocabulary, each item drawn with the platform's
         // own glyph. Placing is a command, not a mode: the shape lands in the middle of the
         // visible canvas, selected and ready to style.
-        toolbar_menu("tb-shape", res::str::tool_shape(), shape_menu_entries())
-            .icon(Symbol::Add)
-            .tooltip(res::str::tool_shape()),
-        toolbar_separator("tb-sep-tools"),
+        toolbar_menu(
+            day::id!(tb_shape),
+            res::str::tool_shape(),
+            shape_menu_entries(),
+        )
+        .icon(Symbol::Add)
+        .tooltip(res::str::tool_shape()),
+        toolbar_separator(day::id!(tb_sep_tools)),
         // The zoom group: out, actual size, in. The separator sets the trio off from its
         // neighbors.
-        zoom_out_command().toolbar_item().id("tb-zoom-out"),
-        zoom_reset_command().toolbar_item().id("tb-zoom-reset"),
-        zoom_in_command().toolbar_item().id("tb-zoom-in"),
+        zoom_out_command().toolbar_item().id(day::id!(tb_zoom_out)),
+        zoom_reset_command()
+            .toolbar_item()
+            .id(day::id!(tb_zoom_reset)),
+        zoom_in_command().toolbar_item().id(day::id!(tb_zoom_in)),
         // The arrange pair and the inspector toggle trail the rest: `Secondary` is what packs
         // them to the far end of a desktop bar and folds them away first on a phone
         // (docs/toolbars.md), which is what the flexible space used to say by position.
         // The inspector is the exception where no menu bar backs the toolbar (the phones and
         // the web): there it is the one way to the properties panel, so it stays on the bar
         // (`Primary` folds last) rather than two taps away in the overflow.
-        toolbar_button("tb-forward", res::str::menu_forward())
+        toolbar_button(day::id!(tb_forward), res::str::menu_forward())
             .icon(Symbol::Up)
             .placement(ToolbarPlacement::Secondary)
             .tooltip(res::str::menu_forward())
             .action(|| model::arrange_named(model::Arrange::Up)),
-        toolbar_button("tb-backward", res::str::menu_backward())
+        toolbar_button(day::id!(tb_backward), res::str::menu_backward())
             .icon(Symbol::Down)
             .placement(ToolbarPlacement::Secondary)
             .tooltip(res::str::menu_backward())
             .action(|| model::arrange_named(model::Arrange::Down)),
         // Two-way: a menu/button toggle elsewhere re-checks this item through the signal.
         toolbar_toggle(
-            "tb-inspector",
+            day::id!(tb_inspector),
             res::str::menu_inspector(),
             inspector::visible(),
         )
@@ -240,7 +246,7 @@ fn toolbar() -> Vec<ToolbarEntry> {
     // claims the `settings` route.
     if capability(Cap::AppMenu) == Support::Unsupported {
         items.push(
-            toolbar_button("tb-settings", day::tr("day-settings"))
+            toolbar_button(day::id!(tb_settings), day::tr("day-settings"))
                 .icon(Symbol::Settings)
                 .placement(ToolbarPlacement::Secondary)
                 .tooltip(day::tr("day-settings"))
@@ -273,7 +279,7 @@ fn shape_menu_entries() -> Vec<MenuEntry> {
             .icon(Symbol::Text)
             .action(|| canvas::place_centered(model::NodeKind::Text)),
         menu_item(res::str::tool_image())
-            .id("insert-image")
+            .id(day::id!(insert_image))
             .enabled(images::supported())
             .action(images::insert_dialog),
     ]
@@ -338,7 +344,7 @@ fn status_row() -> impl Piece {
             res::str::status_count(n as i64).format()
         })
         .tabular()
-        .id("sk-count"),
+        .id(day::id!(sk_count)),
         // The single selection's frame, integer-rounded: what walkthrough drags assert on.
         label(move || {
             let sel = model::selection().get();
@@ -358,19 +364,19 @@ fn status_row() -> impl Piece {
             }
         })
         .tabular()
-        .id("sk-frame"),
+        .id(day::id!(sk_frame)),
         label(move || {
             res::str::status_zoom((canvas::zoom().get() * 100.0).round() as i64).format()
         })
         .tabular()
-        .id("sk-zoom"),
+        .id(day::id!(sk_zoom)),
         spacer(),
         label(move || {
             model::doc_rev().track();
             model::doc_name()
         })
         .font(Font::Footnote)
-        .id("sk-doc"),
+        .id(day::id!(sk_doc)),
     ))
     .spacing(Space::L)
     // Phone widths cannot hold every readout on one line (the tool row's rule): wrap, or
@@ -478,7 +484,7 @@ pub fn root() -> impl Piece {
         .group(
             Group::new("editing", res::str::pref_editing())
                 .icon(Symbol::Edit)
-                .row(rows::toggle(&SNAP, res::str::pref_snap()).id("pref-snap")),
+                .row(rows::toggle(&SNAP, res::str::pref_snap()).id(day::id!(pref_snap))),
         )
         .install();
     // File ▸ New Window (docs/windows.md): the same shell again, which is why the view state
@@ -549,7 +555,7 @@ fn window_shell() -> impl Piece {
 }
 
 fn zoom_in_command() -> Command {
-    Command::new("zoom-in", res::str::menu_zoom_in(), || {
+    Command::new(day::id!(zoom_in), res::str::menu_zoom_in(), || {
         canvas::zoom_step(1.25)
     })
     .icon(Symbol::ZoomIn)
@@ -557,7 +563,7 @@ fn zoom_in_command() -> Command {
 }
 
 fn zoom_out_command() -> Command {
-    Command::new("zoom-out", res::str::menu_zoom_out(), || {
+    Command::new(day::id!(zoom_out), res::str::menu_zoom_out(), || {
         canvas::zoom_step(0.8)
     })
     .icon(Symbol::ZoomOut)
@@ -566,7 +572,7 @@ fn zoom_out_command() -> Command {
 
 fn zoom_reset_command() -> Command {
     Command::new(
-        "zoom-reset",
+        day::id!(zoom_reset),
         res::str::menu_zoom_reset(),
         canvas::zoom_reset,
     )

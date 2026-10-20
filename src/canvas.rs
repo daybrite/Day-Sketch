@@ -1825,7 +1825,7 @@ pub(crate) fn editor_canvas() -> impl Piece {
     // than on every keystroke.
     .on_key(|ev| canvas_key(ev, capability(Cap::AppMenu) == Support::Unsupported))
     .focused(canvas_focused())
-    .id("canvas")
+    .id(day::id!(canvas))
     .drop_target(crate::transfer::canvas_target())
     .grow()
 }

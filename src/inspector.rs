@@ -94,7 +94,7 @@ fn layers_tree() -> AnyPiece {
             .map(|k| model::layer_label(k, *id))
             .unwrap_or_default()
     })
-    .row_id(|id| format!("layer-{id}"))
+    .row_id(|id| day::id!(layer, *id))
     // The same context menu the canvas serves, per row: a summon on a row outside the
     // current selection selects that row first, so the menu describes what it acts on.
     .row_context_menu(|id| {
@@ -104,7 +104,7 @@ fn layers_tree() -> AnyPiece {
         }
         crate::selection_context_menu()
     })
-    .id("layers")
+    .id(day::id!(layers))
     .any()
 }
 
@@ -149,8 +149,8 @@ fn refresh_fields() {
 
 /// One numeric property of the selection: a row in the geometry section.
 struct NumProp {
-    /// The field's element id (`insp-x`), the dayscript target.
-    id: &'static str,
+    /// The field's element id (`insp_x`), the dayscript target.
+    id: fn() -> day::ElementId,
     label: fn() -> day::LocalizedText,
     /// The property's value on one node; `None` for a node it doesn't apply to.
     get: fn(u64) -> Option<f64>,
@@ -225,28 +225,28 @@ fn set_h(id: u64, v: f64) {
 fn geometry_props() -> [NumProp; 4] {
     [
         NumProp {
-            id: "insp-x",
+            id: || day::id!(insp_x),
             label: crate::res::str::insp_x,
             get: |n| model::node_bounds(n).map(|b| b.0),
             set: set_x,
             undo: "move",
         },
         NumProp {
-            id: "insp-y",
+            id: || day::id!(insp_y),
             label: crate::res::str::insp_y,
             get: |n| model::node_bounds(n).map(|b| b.1),
             set: set_y,
             undo: "move",
         },
         NumProp {
-            id: "insp-w",
+            id: || day::id!(insp_w),
             label: crate::res::str::insp_w,
             get: |n| model::node_bounds(n).map(|b| b.2),
             set: set_w,
             undo: "resize",
         },
         NumProp {
-            id: "insp-h",
+            id: || day::id!(insp_h),
             label: crate::res::str::insp_h,
             get: |n| model::node_bounds(n).map(|b| b.3),
             set: set_h,
@@ -350,7 +350,7 @@ fn prop_row(ix: usize) -> AnyPiece {
                     String::new()
                 }
             })
-            .id(p.id),
+            .id((p.id)()),
     )
     .any()
 }
@@ -646,15 +646,11 @@ const STROKE_COLOR: StyleColor = StyleColor {
 };
 
 /// A slider with its attached percentage field, the opacity rows' control.
-fn opacity_row(num: StyleNum, id: &'static str) -> impl Piece {
+fn opacity_row(num: StyleNum, slider_id: day::ElementId, field: day::ElementId) -> impl Piece {
     row((
-        slider(num)
-            .range(0.0..=1.0)
-            .step(0.01)
-            .id(format!("{id}-slider"))
-            .grow(),
+        slider(num).range(0.0..=1.0).step(0.01).id(slider_id).grow(),
         // 72, not 64: Material's text field pads its text enough that "100%" clipped at 64.
-        text_field(PctField { num }).id(id).width(72.0),
+        text_field(PctField { num }).id(field).width(72.0),
     ))
     .spacing(6.0)
     .align(VAlign::Center)
@@ -1031,15 +1027,15 @@ fn text_section() -> AnyPiece {
         section((
             labeled(
                 crate::res::str::insp_content(),
-                text_field(TextContent).id("insp-text"),
+                text_field(TextContent).id(day::id!(insp_text)),
             ),
             labeled(
                 crate::res::str::insp_font(),
-                picker(FamilyChoice, family_options).id("insp-font"),
+                picker(FamilyChoice, family_options).id(day::id!(insp_font)),
             ),
             labeled(
                 crate::res::str::insp_style(),
-                picker(StyleChoice, style_options).id("insp-style"),
+                picker(StyleChoice, style_options).id(day::id!(insp_style)),
             ),
             labeled(
                 crate::res::str::insp_size(),
@@ -1047,7 +1043,7 @@ fn text_section() -> AnyPiece {
                     .range(model::MIN_FONT_SIZE..=model::MAX_FONT_SIZE)
                     .step(1.0)
                     .decimals(0)
-                    .id("insp-size")
+                    .id(day::id!(insp_size))
                     .grow(),
             ),
         ))
@@ -1060,15 +1056,16 @@ fn text_section() -> AnyPiece {
 /// the label column stays as narrow as "Stroke" and a 280-point pane still fits every row.
 fn paint_row(
     well: StyleColor,
-    well_key: &'static str,
+    well_id: day::ElementId,
     num: StyleNum,
-    id: &'static str,
+    slider_id: day::ElementId,
+    field: day::ElementId,
 ) -> impl Piece {
     row((
-        day_piece_colorpicker::color_picker(well).id(well_key),
+        day_piece_colorpicker::color_picker(well).id(well_id),
         // The slider needs travel: below 160 points for the pair the row stacks under its
         // label (docs/forms.md) rather than squeezing the slider to a sliver beside the well.
-        opacity_row(num, id).min_width(160.0).grow(),
+        opacity_row(num, slider_id, field).min_width(160.0).grow(),
     ))
     .spacing(Space::S)
     .align(VAlign::Center)
@@ -1081,7 +1078,12 @@ fn style_section() -> impl Piece {
             || {
                 labeled(
                     crate::res::str::insp_opacity(),
-                    opacity_row(FILL_OPACITY, "insp-image-op").grow(),
+                    opacity_row(
+                        FILL_OPACITY,
+                        day::id!(insp_image_op_slider),
+                        day::id!(insp_image_op),
+                    )
+                    .grow(),
                 )
             },
         ),
@@ -1090,7 +1092,14 @@ fn style_section() -> impl Piece {
         when(selection_has_fill, || {
             labeled(
                 crate::res::str::insp_fill(),
-                paint_row(FILL_COLOR, "insp-fill", FILL_OPACITY, "insp-fill-op").grow(),
+                paint_row(
+                    FILL_COLOR,
+                    day::id!(insp_fill),
+                    FILL_OPACITY,
+                    day::id!(insp_fill_op_slider),
+                    day::id!(insp_fill_op),
+                )
+                .grow(),
             )
         }),
         // The stroke pair mounts for what strokes: shapes and lines, never type.
@@ -1099,9 +1108,10 @@ fn style_section() -> impl Piece {
                 crate::res::str::insp_stroke(),
                 paint_row(
                     STROKE_COLOR,
-                    "insp-stroke",
+                    day::id!(insp_stroke),
                     STROKE_OPACITY,
-                    "insp-stroke-op",
+                    day::id!(insp_stroke_op_slider),
+                    day::id!(insp_stroke_op),
                 )
                 .grow(),
             )
@@ -1113,7 +1123,7 @@ fn style_section() -> impl Piece {
                     .range(0.0..=64.0)
                     .step(1.0)
                     .decimals(0)
-                    .id("insp-stroke-w")
+                    .id(day::id!(insp_stroke_w))
                     // Same right edge as the paint rows above it.
                     .grow(),
             )
@@ -1138,7 +1148,7 @@ fn rotation_field() -> impl Piece {
             .range(0.0..=360.0)
             .step(1.0)
             .decimals(0)
-            .id("insp-rotation")
+            .id(day::id!(insp_rotation))
             // Fill the row like the text fields above, so every control in the section shares
             // one right edge instead of the steppers ending short.
             .grow(),
@@ -1156,7 +1166,7 @@ fn corner_row() -> AnyPiece {
                 .range(0.0..=200.0)
                 .step(1.0)
                 .decimals(0)
-                .id("insp-corner")
+                .id(day::id!(insp_corner))
                 .grow(),
         )
     })
@@ -1194,7 +1204,7 @@ fn selected_panel() -> impl Piece {
 fn canvas_panel() -> impl Piece {
     form((section((labeled(
         crate::res::str::insp_background(),
-        day_piece_colorpicker::color_picker(BgColor).id("insp-bg"),
+        day_piece_colorpicker::color_picker(BgColor).id(day::id!(insp_bg)),
     ),)),))
 }
 
@@ -1205,7 +1215,9 @@ pub(crate) fn panel() -> impl Piece {
     column((
         // The Selected tab names its selection ("No Items" / "1 Item" / "3 Items"), so its
         // label changes with the count: a reactive option list (docs/picker.md).
-        picker(active_tab(), tab_options).segmented().id("insp-tab"),
+        picker(active_tab(), tab_options)
+            .segmented()
+            .id(day::id!(insp_tab)),
         switch(
             || active_tab().get(),
             |tab| match tab {

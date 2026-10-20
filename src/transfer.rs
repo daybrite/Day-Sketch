@@ -183,7 +183,7 @@ pub(crate) fn selection_handle() -> impl Piece {
                 )],
             })
         })
-        .id("drag-selection")
+        .id(day::id!(drag_selection))
 }
 
 #[cfg(test)]
