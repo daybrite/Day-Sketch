@@ -5,7 +5,7 @@ flow:
   - menu: { key: menu_new }
   - menu: { key: tool_image, path: [menu_insert] }
   - assert_presented: {}
-  - respond: { path: /tmp/day-sketch-image-fixture.png }
+  - respond: { path: "${project}/resource/images/app_logo.png" }
   - wait_for: { id: insp_image_op }
   - input: { id: insp_x, text: "100" }
   - submit: { id: insp_x }

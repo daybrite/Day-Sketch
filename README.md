@@ -129,9 +129,10 @@ drawing adds the BLOB column with empty values for its existing shapes.
 The insertion command requires Day’s image decoder and file-picker capabilities.
 Windows provides both, using its native WinRT file picker.
 
-For the desktop image walkthrough, first copy `resource/images/app_logo.png` to
-`/tmp/day-sketch-image-fixture.png`, then run
-`day launch -t macos-appkit --script dayscript/images.yaml`. The screenshots verify
+For the desktop image walkthrough, run
+`day launch -t windows-winui --script dayscript/images.yaml` (or choose another desktop
+target). The script uses the bundled `resource/images/app_logo.png` and writes its
+round-trip drawing under `build/day`. The screenshots verify
 upright rendering, non-square resizing, rotation, opacity, and SQLite reopen. The
 ordinary editor walkthrough remains `dayscript/demo.yaml`.
 

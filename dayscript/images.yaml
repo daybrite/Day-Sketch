@@ -1,7 +1,7 @@
 name: sketch-images
 description: >-
-  Desktop image insertion, editing, undo, and SQLite reopen. Before running, copy
-  resource/images/app_logo.png to /tmp/day-sketch-image-fixture.png. The asymmetric
+  Desktop image insertion, editing, undo, and SQLite reopen using the bundled
+  resource/images/app_logo.png fixture. The asymmetric
   sunrise must remain upright in the first screenshot. No external source file is
   needed after insertion; the exported drawing contains its original bytes.
 flow:
@@ -13,7 +13,7 @@ flow:
   - assert_text: { id: sk_count, key: status_count, args: { n: 0 } }
   - menu: { key: tool_image, path: [menu_insert] }
   - assert_presented: {}
-  - respond: { path: /tmp/day-sketch-image-fixture.png }
+  - respond: { path: "${project}/resource/images/app_logo.png" }
   - wait_for: { id: insp_image_op }
   - assert_text: { id: sk_count, key: status_count, args: { n: 1 } }
   - input: { id: insp_x, text: "100" }
@@ -37,12 +37,12 @@ flow:
   - assert_text: { id: insp_image_op, text: "50%" }
   - menu: { key: menu_export }
   - assert_presented: {}
-  - respond: { path: /tmp/day-sketch-image-roundtrip.daysketch }
+  - respond: { path: "${project}/build/day/sketch-image-roundtrip.daysketch" }
   - menu: { key: menu_new }
   - assert_text: { id: sk_count, key: status_count, args: { n: 0 } }
   - menu: { key: menu_open }
   - assert_presented: {}
-  - respond: { path: /tmp/day-sketch-image-roundtrip.daysketch }
+  - respond: { path: "${project}/build/day/sketch-image-roundtrip.daysketch" }
   - assert_text: { id: sk_count, key: status_count, args: { n: 1 } }
   - tap: { id: canvas, at: [200, 160] }
   - wait_for: { id: insp_image_op }
@@ -52,7 +52,7 @@ flow:
   # A selected file that is not an image reports an error without inserting an empty node.
   - menu: { key: tool_image, path: [menu_insert] }
   - assert_presented: {}
-  - respond: { path: /tmp/day-sketch-image-roundtrip.daysketch }
+  - respond: { path: "${project}/build/day/sketch-image-roundtrip.daysketch" }
   - assert_presented: {}
   - respond: { dismiss: true }
   - assert_text: { id: sk_count, key: status_count, args: { n: 1 } }

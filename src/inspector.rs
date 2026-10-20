@@ -513,12 +513,22 @@ struct PctField {
     num: StyleNum,
 }
 
+fn percent_field_text(value: f64) -> String {
+    // This is the entire editable value, not an interpolation inside surrounding prose.
+    // WinUI's TextBox displays Fluent's isolate controls as FSI/PDI boxes.
+    crate::res::str::insp_percent((value * 100.0).round() as i64)
+        .format()
+        .chars()
+        .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
+        .collect()
+}
+
 impl Binding<String> for PctField {
     fn read(&self) -> String {
-        crate::res::str::insp_percent((self.num.read() * 100.0).round() as i64).format()
+        percent_field_text(self.num.read())
     }
     fn peek(&self) -> String {
-        crate::res::str::insp_percent((self.num.peek() * 100.0).round() as i64).format()
+        percent_field_text(self.num.peek())
     }
     fn write(&self, s: String) {
         self.write_commit(s);
@@ -1052,8 +1062,8 @@ fn text_section() -> AnyPiece {
     .any()
 }
 
-/// A color well with its opacity beside it: one row per paint, the Keynote arrangement, so
-/// the label column stays as narrow as "Stroke" and a 280-point pane still fits every row.
+/// Keep the native color well above its opacity controls. The inspector's label column
+/// leaves too little width for all three controls side by side on some toolkits.
 fn paint_row(
     well: StyleColor,
     well_id: day::ElementId,
@@ -1061,14 +1071,12 @@ fn paint_row(
     slider_id: day::ElementId,
     field: day::ElementId,
 ) -> impl Piece {
-    row((
+    column((
         day_piece_colorpicker::color_picker(well).id(well_id),
-        // The slider needs travel: below 160 points for the pair the row stacks under its
-        // label (docs/forms.md) rather than squeezing the slider to a sliver beside the well.
-        opacity_row(num, slider_id, field).min_width(160.0).grow(),
+        opacity_row(num, slider_id, field).grow(),
     ))
-    .spacing(Space::S)
-    .align(VAlign::Center)
+    .spacing(4.0)
+    .align(HAlign::Leading)
 }
 
 fn style_section() -> impl Piece {
@@ -1356,21 +1364,21 @@ mod tests {
         model::selection().set(vec![a]);
         crate::res::locales::install();
 
-        // Fluent wraps interpolations in bidi isolates; strip them to see the visible text.
-        fn visible(s: String) -> String {
-            s.chars()
-                .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
-                .collect()
-        }
         let pct = PctField { num: FILL_OPACITY };
-        assert_eq!(visible(pct.peek()), "100%");
+        // Assert the actual editable text: normalizing away isolates here hid the
+        // visible FSI/PDI boxes in native Windows text fields.
+        assert_eq!(pct.peek(), "100%");
+        assert_eq!(pct.read(), "100%");
         pct.write_commit("25%".into());
         day::reactive::flush_sync();
         assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 0.25);
         pct.write_commit("80".into());
         day::reactive::flush_sync();
         assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 0.8);
-        assert_eq!(visible(pct.peek()), "80%");
+        assert_eq!(pct.peek(), "80%");
+        pct.write_commit("\u{2068}50\u{2069}%".into());
+        day::reactive::flush_sync();
+        assert_eq!(pct.peek(), "50%");
         // Out-of-range clamps; garbage leaves the value alone.
         pct.write_commit("250".into());
         day::reactive::flush_sync();

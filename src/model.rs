@@ -437,7 +437,10 @@ fn doc_from_driver(driver: day_persistence::Sqlite, path: Option<PathBuf>) -> Do
         Ok(doc) => doc,
         // A file that will not open (corrupt, wrong schema) must not take the app down:
         // fall back to an in-memory scene and surface nothing worse than an empty canvas.
-        Err(_) => memory_doc(),
+        Err(error) => {
+            day::error!("open drawing: {error}");
+            memory_doc()
+        }
     }
 }
 
