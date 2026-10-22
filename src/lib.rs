@@ -93,7 +93,7 @@ fn arrange_entries(track: bool) -> Vec<MenuEntry> {
 }
 
 fn menus() -> Vec<MenuEntry> {
-    let file = vec![
+    let mut file = vec![
         menu_item(res::str::menu_new())
             .action(model::new_doc)
             .shortcut(cmd(res::str::menu_new_key())),
@@ -104,7 +104,9 @@ fn menus() -> Vec<MenuEntry> {
         menu_item(res::str::menu_export())
             .action(model::export_copy_dialog)
             .shortcut(cmd_shift(res::str::menu_export_key())),
+        menu_separator(),
     ];
+    file.extend(canvas::export_menu_entries());
     let mut view = vec![
         zoom_in_command().menu_item(),
         zoom_reset_command().menu_item(),
@@ -246,10 +248,10 @@ fn toolbar() -> Vec<ToolbarEntry> {
     // claims the `settings` route.
     if capability(Cap::AppMenu) == Support::Unsupported {
         items.push(
-            toolbar_button(day::id!(tb_settings), day::tr("day-settings"))
+            toolbar_button(day::id!(tb_settings), res::str::day_settings())
                 .icon(Symbol::Settings)
                 .placement(ToolbarPlacement::Secondary)
-                .tooltip(day::tr("day-settings"))
+                .tooltip(res::str::day_settings())
                 .action(|| {
                     day_piece_settings::open();
                 }),
@@ -370,6 +372,9 @@ fn status_row() -> impl Piece {
         })
         .tabular()
         .id(day::id!(sk_zoom)),
+        label(move || export_status().get())
+            .font(Font::Footnote)
+            .id(day::id!(sk_export_status)),
         spacer(),
         label(move || {
             model::doc_rev().track();
@@ -383,6 +388,20 @@ fn status_row() -> impl Piece {
     // the trailing doc name squeezes into a one-character-wide column.
     .fit(RowFit::Wrap { run_spacing: 4.0 })
     .padding(Insets::symmetric(12.0, 6.0))
+}
+
+/// What the last export did, app-wide: the status row says it in every window.
+#[derive(Clone, Copy)]
+struct ExportStatus(Signal<String>);
+
+impl Ambient for ExportStatus {
+    fn create() -> Self {
+        ExportStatus(Signal::new(String::new()))
+    }
+}
+
+pub(crate) fn export_status() -> Signal<String> {
+    ExportStatus::app().0
 }
 
 fn editor() -> impl Piece {
@@ -434,6 +453,8 @@ pub(crate) struct SceneCells {
     /// Repeated pastes of the same payload step further (+16 each), so copies never stack
     /// invisibly; a new copy resets the ladder.
     pub(crate) paste_step: std::cell::RefCell<(u64, f64)>,
+    /// The editor canvas's decoded images, which export draws too.
+    pub(crate) images: std::cell::RefCell<Option<images::ImageCache>>,
 }
 
 impl Ambient for Scene {
@@ -479,7 +500,7 @@ pub fn root() -> impl Piece {
     // desktop this adds the App menu's Settings… and About items and their windows; a phone
     // reaches the same pages from the bar's Settings item (`toolbar`), as a cover.
     Preferences::new()
-        .about(About::from_manifest().link(day::tr("day-about-website"), "https://daybrite.dev"))
+        .about(About::from_manifest().link(res::str::day_about_website(), "https://daybrite.dev"))
         .group(general_group(res::locales::ALL))
         .group(
             Group::new("editing", res::str::pref_editing())

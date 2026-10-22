@@ -20,10 +20,10 @@ flow:
   - input: { id: insp_image_op, text: "50%" }
   - submit: { id: insp_image_op }
   - tap: { id: canvas, at: [200, 160] }
-  - menu: { key: day-copy }
+  - menu: { key: day_copy }
   - pause: 1
   - menu: { key: menu_new }
-  - menu: { key: day-paste }
+  - menu: { key: day_paste }
   - wait_for: { id: insp_image_op }
   - assert_text: { id: sk_count, key: status_count, args: { n: 1 } }
   - assert_text: { id: sk_frame, text: "116,96 200x160" }
@@ -31,10 +31,10 @@ flow:
   - assert_text: { id: insp_rotation, text: "30" }
   - screenshot: clipboard-image-pasted
   - tap: { id: canvas, at: [216, 176] }
-  - menu: { key: day-cut }
+  - menu: { key: day_cut }
   - pause: 1
   - assert_text: { id: sk_count, key: status_count, args: { n: 0 } }
-  - menu: { key: day-paste }
+  - menu: { key: day_paste }
   - wait_for: { id: insp_image_op }
   - assert_text: { id: sk_count, key: status_count, args: { n: 1 } }
   - undo: {}

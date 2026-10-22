@@ -1083,6 +1083,112 @@ fn handle_shape(cx: f64, cy: f64, rotation: f64) -> Shape {
         .build()
 }
 
+/// The document's nodes under `parent`, in z order, in model coordinates: what the editor shows
+/// under its view transform and what export records with no transform at all.
+fn draw_children(
+    d: &mut Draw,
+    store: Store<Keyed<Node>>,
+    parent: Option<u64>,
+    images: &crate::images::ImageCache,
+) {
+    // Tracked order: an arrange writes the child's z, the relation index reorders, and
+    // this read wakes; one dependency per parent, not one per node in the document.
+    for id in crate::model::children_of(parent) {
+        let e = store.elem(id);
+        let kind = e.kind().with(|k| k.copied().unwrap_or_default());
+        match kind {
+            NodeKind::Group => draw_children(d, store, Some(id), images),
+            NodeKind::Rect | NodeKind::Oval | NodeKind::Line | NodeKind::Text | NodeKind::Image => {
+                let node = Node {
+                    id,
+                    children: day_persistence::Many::default(),
+                    parent: None,
+                    z: 0.0,
+                    kind,
+                    x: e.x().read(),
+                    y: e.y().read(),
+                    w: e.w().read(),
+                    h: e.h().read(),
+                    fill: e.fill().read(),
+                    fill_opacity: e.fill_opacity().read(),
+                    stroke: e.stroke().read(),
+                    stroke_width: e.stroke_width().read(),
+                    stroke_opacity: e.stroke_opacity().read(),
+                    rotation: e.rotation().read(),
+                    corner_radius: e.corner_radius().read(),
+                    text: e.text().read(),
+                    font_family: e.font_family().read(),
+                    font_weight: e.font_weight().read(),
+                    font_italic: e.font_italic().read(),
+                    font_size: e.font_size().read(),
+                    image_bytes: Default::default(),
+                };
+                let paint = |d: &mut Draw| {
+                    if node.kind == NodeKind::Image {
+                        if let Some(bitmap) = images.get(id) {
+                            d.image_with_opacity(
+                                &bitmap,
+                                Rect::new(node.x, node.y, node.w, node.h),
+                                node.fill_opacity,
+                            );
+                        }
+                        return;
+                    }
+                    // Type: one line from the frame's top-leading corner, in the node's
+                    // font, colored by its fill. It never strokes.
+                    if node.kind == NodeKind::Text {
+                        d.text(
+                            &node.text,
+                            Point::new(node.x, node.y),
+                            TextStyle {
+                                size: node.font_size,
+                                color: fill_color(&node.fill).with_alpha(node.fill_opacity),
+                                anchor: TextAnchor::LEADING,
+                                font: model::canvas_font(
+                                    &node.font_family,
+                                    node.font_weight,
+                                    node.font_italic,
+                                ),
+                            },
+                        );
+                        return;
+                    }
+                    // A line has no interior to fill; it is its stroke. Everything else
+                    // fills, then strokes its outline.
+                    let fills = match node.kind {
+                        NodeKind::Rect | NodeKind::Oval | NodeKind::Group => true,
+                        NodeKind::Line | NodeKind::Text | NodeKind::Image => false,
+                    };
+                    if fills {
+                        d.fill(
+                            shape_of(&node),
+                            fill_color(&node.fill).with_alpha(node.fill_opacity),
+                        );
+                    }
+                    if node.stroke_width > 0.0 && node.stroke_opacity > 0.0 {
+                        d.stroke(
+                            shape_of(&node),
+                            fill_color(&node.stroke).with_alpha(node.stroke_opacity),
+                            node.stroke_width,
+                        );
+                    }
+                };
+                // A rotation is a transform about the shape's center, so the stored
+                // frame stays axis-aligned, which is what the inspector edits and the
+                // selection outline draws.
+                if node.rotation.abs() > f64::EPSILON {
+                    d.transformed(
+                        rotation_about_center(node.x, node.y, node.w, node.h, node.rotation),
+                        paint,
+                    );
+                } else {
+                    paint(d);
+                }
+            }
+        }
+    }
+}
+
 fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
     images.track();
     // Everything clips to the viewport: panned/zoomed content otherwise escapes the canvas
@@ -1099,113 +1205,6 @@ fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
     let store = model::nodes();
     // A tracked walk: shape + z reads through the collection, field reads per shape.
     let _shape_of_collection = store.keys();
-    fn draw_children(
-        d: &mut Draw,
-        store: Store<Keyed<Node>>,
-        parent: Option<u64>,
-        images: &crate::images::ImageCache,
-    ) {
-        // Tracked order: an arrange writes the child's z, the relation index reorders, and
-        // this read wakes; one dependency per parent, not one per node in the document.
-        for id in crate::model::children_of(parent) {
-            let e = store.elem(id);
-            let kind = e.kind().with(|k| k.copied().unwrap_or_default());
-            match kind {
-                NodeKind::Group => draw_children(d, store, Some(id), images),
-                NodeKind::Rect
-                | NodeKind::Oval
-                | NodeKind::Line
-                | NodeKind::Text
-                | NodeKind::Image => {
-                    let node = Node {
-                        id,
-                        children: day_persistence::Many::default(),
-                        parent: None,
-                        z: 0.0,
-                        kind,
-                        x: e.x().read(),
-                        y: e.y().read(),
-                        w: e.w().read(),
-                        h: e.h().read(),
-                        fill: e.fill().read(),
-                        fill_opacity: e.fill_opacity().read(),
-                        stroke: e.stroke().read(),
-                        stroke_width: e.stroke_width().read(),
-                        stroke_opacity: e.stroke_opacity().read(),
-                        rotation: e.rotation().read(),
-                        corner_radius: e.corner_radius().read(),
-                        text: e.text().read(),
-                        font_family: e.font_family().read(),
-                        font_weight: e.font_weight().read(),
-                        font_italic: e.font_italic().read(),
-                        font_size: e.font_size().read(),
-                        image_bytes: Default::default(),
-                    };
-                    let paint = |d: &mut Draw| {
-                        if node.kind == NodeKind::Image {
-                            if let Some(bitmap) = images.get(id) {
-                                d.image_with_opacity(
-                                    &bitmap,
-                                    Rect::new(node.x, node.y, node.w, node.h),
-                                    node.fill_opacity,
-                                );
-                            }
-                            return;
-                        }
-                        // Type: one line from the frame's top-leading corner, in the node's
-                        // font, colored by its fill. It never strokes.
-                        if node.kind == NodeKind::Text {
-                            d.text(
-                                &node.text,
-                                Point::new(node.x, node.y),
-                                TextStyle {
-                                    size: node.font_size,
-                                    color: fill_color(&node.fill).with_alpha(node.fill_opacity),
-                                    anchor: TextAnchor::LEADING,
-                                    font: model::canvas_font(
-                                        &node.font_family,
-                                        node.font_weight,
-                                        node.font_italic,
-                                    ),
-                                },
-                            );
-                            return;
-                        }
-                        // A line has no interior to fill; it is its stroke. Everything else
-                        // fills, then strokes its outline.
-                        let fills = match node.kind {
-                            NodeKind::Rect | NodeKind::Oval | NodeKind::Group => true,
-                            NodeKind::Line | NodeKind::Text | NodeKind::Image => false,
-                        };
-                        if fills {
-                            d.fill(
-                                shape_of(&node),
-                                fill_color(&node.fill).with_alpha(node.fill_opacity),
-                            );
-                        }
-                        if node.stroke_width > 0.0 && node.stroke_opacity > 0.0 {
-                            d.stroke(
-                                shape_of(&node),
-                                fill_color(&node.stroke).with_alpha(node.stroke_opacity),
-                                node.stroke_width,
-                            );
-                        }
-                    };
-                    // A rotation is a transform about the shape's center, so the stored
-                    // frame stays axis-aligned, which is what the inspector edits and the
-                    // selection outline draws.
-                    if node.rotation.abs() > f64::EPSILON {
-                        d.transformed(
-                            rotation_about_center(node.x, node.y, node.w, node.h, node.rotation),
-                            paint,
-                        );
-                    } else {
-                        paint(d);
-                    }
-                }
-            }
-        }
-    }
     // The scene under the view transform; tracked zoom/pan reads, so a gesture repaints.
     let z = zoom().get();
     let pn = pan().get();
@@ -1767,6 +1766,8 @@ fn nudge_by_key(ev: &day::KeyEvent) {
 
 pub(crate) fn editor_canvas() -> impl Piece {
     let images = crate::images::ImageCache::mount(model::nodes());
+    // Export draws the same decoded images the canvas does (`document_drawing`).
+    *crate::scene().cells.images.borrow_mut() = Some(images.clone());
     let op: Rc<RefCell<DragOp>> = Rc::new(RefCell::new(DragOp::Idle));
     let op2 = op.clone();
     // The pinch scales against the zoom captured at Began (Pinch.scale is cumulative), and
@@ -1798,14 +1799,18 @@ pub(crate) fn editor_canvas() -> impl Piece {
             }
         }
         day::reactive::flush_sync();
-        let items = crate::selection_context_menu();
-        if !items.is_empty() {
-            return items;
+        let mut items = crate::selection_context_menu();
+        if items.is_empty() {
+            // Empty canvas: the one selection command that still applies is Paste.
+            items.push(menu_item(crate::res::str::ctx_paste()).action(|| {
+                let _ = day::invoke_edit(day::EditOp::Paste);
+            }));
         }
-        // Empty canvas: the one command that still applies is Paste.
-        vec![menu_item(crate::res::str::ctx_paste()).action(|| {
-            let _ = day::invoke_edit(day::EditOp::Paste);
-        })]
+        // Export acts on the whole drawing whatever the click selected, the same two items the
+        // File menu carries.
+        items.push(menu_separator());
+        items.extend(export_menu_entries());
+        items
     })
     .on_drag(move |drag| on_drag(drag, day::modifiers(), &op2))
     .on_pinch(move |g| {
@@ -2102,6 +2107,34 @@ mod tests {
     }
 
     /// A rectangle of a given size at a given place: the shapes a band has to tell apart.
+    #[test]
+    fn export_crops_to_the_content_without_the_view_or_the_selection() {
+        let _doc = install_test_doc();
+        unzoomed();
+        assert!(document_drawing().is_none(), "an empty drawing has nothing to export");
+        let a = rect_at(100.0, 50.0, 40.0, 30.0);
+        let _b = rect_at(300.0, 200.0, 60.0, 20.0);
+        // A zoomed, panned view with a selection: none of it reaches the export.
+        zoom().set(2.0);
+        pan().set(Point::new(-70.0, 15.0));
+        model::selection().set(vec![a]);
+        day::reactive::flush_sync();
+        let drawing = document_drawing().expect("two shapes");
+        // 100..360 by 50..220, plus the default stroke and the margin on every side.
+        let half = model::nodes().elem(a).stroke_width().peek() / 2.0;
+        let expect = Size::new(
+            260.0 + 2.0 * half + 2.0 * EXPORT_MARGIN,
+            170.0 + 2.0 * half + 2.0 * EXPORT_MARGIN,
+        );
+        assert_eq!(drawing.size(), expect);
+        let mut live = Draw::new();
+        draw_scene(&mut live, Size::new(800.0, 600.0), &crate::images::ImageCache::empty());
+        assert!(
+            drawing.ops().len() < live.ops().len(),
+            "the export carries the shapes but not the selection outline and handles"
+        );
+    }
+
     fn rect_at(x: f64, y: f64, w: f64, h: f64) -> u64 {
         let id = model::place_shape(NodeKind::Rect, x, y);
         day::reactive::flush_sync();
@@ -3284,4 +3317,126 @@ mod tests {
             "no guides, no hairlines"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Export (docs/canvas.md "Exporting"): the drawing as a PNG or a PDF, rendered by the toolkit's
+// own painter from the same `draw_children` the canvas shows.
+// ---------------------------------------------------------------------------
+
+/// The space left around the drawing's content in an export.
+const EXPORT_MARGIN: f64 = 24.0;
+
+/// The pixels per point a PNG export renders at: crisp on a high-density screen.
+const EXPORT_PNG_SCALE: f64 = 2.0;
+
+/// The whole drawing as one still: every node at model scale, cropped to the content plus a
+/// margin, on the document's background, without the view's zoom and pan, the selection, the
+/// guides or the rubber band. `None` for an empty drawing.
+pub(crate) fn document_drawing() -> Option<Drawing> {
+    let images = crate::scene()
+        .cells
+        .images
+        .borrow()
+        .clone()
+        .unwrap_or_else(crate::images::ImageCache::empty);
+    let store = model::nodes();
+    let bounds = day::reactive::untrack(|| {
+        let mut acc: Option<(f64, f64, f64, f64)> = None;
+        for id in model::children_of(None) {
+            let Some((x, y, w, h)) = (if model::node_kind(id) == Some(NodeKind::Group) {
+                model::node_bounds(id)
+            } else {
+                Some(model::visual_frame(store, id))
+            }) else {
+                continue;
+            };
+            // A frame can be stored with a negative extent (a line drawn up or left), and a
+            // stroke reaches half its width past the frame.
+            let half = store.elem(id).stroke_width().peek().max(0.0) / 2.0;
+            let (x0, x1) = (x.min(x + w) - half, x.max(x + w) + half);
+            let (y0, y1) = (y.min(y + h) - half, y.max(y + h) + half);
+            acc = Some(match acc {
+                None => (x0, y0, x1, y1),
+                Some((ax0, ay0, ax1, ay1)) => (ax0.min(x0), ay0.min(y0), ax1.max(x1), ay1.max(y1)),
+            });
+        }
+        acc
+    })?;
+    let (x0, y0, x1, y1) = bounds;
+    let size = Size::new(
+        (x1 - x0).max(1.0) + 2.0 * EXPORT_MARGIN,
+        (y1 - y0).max(1.0) + 2.0 * EXPORT_MARGIN,
+    );
+    let background = fill_color(&model::background());
+    Some(Drawing::record(size, move |d, size| {
+        d.fill(rect_shape(0.0, 0.0, size.width, size.height), background);
+        d.transformed(
+            Affine::translate(EXPORT_MARGIN - x0, EXPORT_MARGIN - y0),
+            |d| draw_children(d, store, None, &images),
+        );
+    }))
+}
+
+/// File ▸ Export as PNG and File ▸ Export as PDF, which the canvas's context menu repeats. Both
+/// are present on every target; each is enabled where the toolkit renders that format.
+pub(crate) fn export_menu_entries() -> Vec<MenuEntry> {
+    let exports = day::canvas_exports();
+    vec![
+        menu_item(crate::res::str::menu_export_png())
+            .id(day::id!(sk_export_png))
+            .enabled(exports.png())
+            .action(|| export(ExportKind::Png)),
+        menu_item(crate::res::str::menu_export_pdf())
+            .id(day::id!(sk_export_pdf))
+            .enabled(exports.pdf)
+            .action(|| export(ExportKind::Pdf)),
+    ]
+}
+
+#[derive(Clone, Copy)]
+enum ExportKind {
+    Png,
+    Pdf,
+}
+
+fn export(kind: ExportKind) {
+    let status = crate::export_status();
+    let Some(drawing) = document_drawing() else {
+        status.set(crate::res::str::status_export_empty().format());
+        return;
+    };
+    let (extension, filter) = match kind {
+        ExportKind::Png => ("png", "PNG"),
+        ExportKind::Pdf => ("pdf", "PDF"),
+    };
+    let name = format!("{}.{extension}", model::doc_name());
+    let title = model::doc_name();
+    day::task(async move {
+        let rendered = match kind {
+            ExportKind::Png => drawing.to_png(EXPORT_PNG_SCALE).await,
+            ExportKind::Pdf => PdfDocument::new().title(title).page(drawing).render().await,
+        };
+        let bytes = match rendered {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                status.set(crate::res::str::status_export_failed(e.to_string()).format());
+                return;
+            }
+        };
+        let saved = save_file(bytes)
+            .suggested_name(name.clone())
+            .filter(filter, &[extension])
+            .await;
+        if let Some(url) = saved {
+            let saved_as = url
+                .as_str()
+                .rsplit(['/', '\\'])
+                .next()
+                .filter(|n| !n.is_empty())
+                .map(str::to_owned)
+                .unwrap_or(name);
+            status.set(crate::res::str::status_exported(saved_as).format());
+        }
+    });
 }

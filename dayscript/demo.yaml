@@ -201,22 +201,22 @@ flow:
   - assert_text: { id: insp_w, text: "96" }
 
   # ---- Edit ▸ Undo/Redo: the role items drive the same document stack ----
-  # (`day-undo`/`day-redo` are the core catalog keys role items are labeled by.)
+  # (`day_undo`/`day_redo` are the core catalog keys role items are labeled by.)
   - menu: { key: tool_rect, path: [menu_insert] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
-  - menu: { key: day-undo, path: [menu_edit] }
+  - menu: { key: day_undo, path: [menu_edit] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
   # The undone delete left the timeline when the placement forked history, so this landing
   # point is the ungroup's, which brings the two ungrouped shapes' selection with it. The
   # redo then restores the placement's own selection, the new shape.
   - assert_text: { id: insp_x, text: "" }
   - assert_text: { id: insp_w, text: "96" }
-  - menu: { key: day-redo, path: [menu_edit] }
+  - menu: { key: day_redo, path: [menu_edit] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 4 } }
   # (The redone placement's own frame is viewport-centered, so it is target-dependent; the
   # selection it restores is what this leg is about.)
   - assert_text: { id: insp_w, text: "96" }
-  - menu: { key: day-undo, path: [menu_edit] }
+  - menu: { key: day_undo, path: [menu_edit] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 3 } }
 
   # ---- Edit ▸ Cut/Copy/Paste: role items, SVG travelling the system clipboard ----
@@ -226,23 +226,23 @@ flow:
   # starts from is asserted, and the Select All below carries on from it either way.
   - tap: { id: canvas, at: [45, 45] }
   - assert_text: { id: sk_frame, text: "40,40 96x64" }
-  - menu: { key: day-copy, path: [menu_edit], skip_on: [arkui] }
-  - menu: { key: day-paste, path: [menu_edit], skip_on: [arkui] }
+  - menu: { key: day_copy, path: [menu_edit], skip_on: [arkui] }
+  - menu: { key: day_paste, path: [menu_edit], skip_on: [arkui] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 4 }, skip_on: [arkui] }
   - assert_text: { id: sk_frame, text: "56,56 96x64", skip_on: [arkui] }
-  - menu: { key: day-cut, path: [menu_edit], skip_on: [arkui] }
+  - menu: { key: day_cut, path: [menu_edit], skip_on: [arkui] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 3 }, skip_on: [arkui] }
-  - menu: { key: day-paste, path: [menu_edit], skip_on: [arkui] }
+  - menu: { key: day_paste, path: [menu_edit], skip_on: [arkui] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 4 }, skip_on: [arkui] }
   - assert_text: { id: sk_frame, text: "72,72 96x64", skip_on: [arkui] }
-  - menu: { key: day-undo, path: [menu_edit], skip_on: [arkui] }
+  - menu: { key: day_undo, path: [menu_edit], skip_on: [arkui] }
   - assert_text: { id: sk_count, key: status_count, args: { n: 3 }, skip_on: [arkui] }
   # The undo's landing point had nothing selected; deselecting flips the inspector back to
   # the Canvas tab, whose Background well takes the Selected fields' place.
   - wait_for: { id: insp_bg, skip_on: [arkui] }
 
   # ---- Select All (the platform's own Edit item) + arrow-key nudging ----
-  - menu: { key: day-select-all, path: [menu_edit] }
+  - menu: { key: day_select_all, path: [menu_edit] }
   # Everything selected: the inspector flips back to Selected, x mixed, width common.
   - wait_for: { id: insp_x }
   - assert_text: { id: insp_x, text: "" }

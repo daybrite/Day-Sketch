@@ -5,6 +5,10 @@ menu_open = Open…
     .key = o
 menu_export = Export a Copy…
     .key = s
+# Export the drawing as an image or a document (docs/canvas.md "Exporting"); also in the canvas's
+# context menu.
+menu_export_png = Export as PNG
+menu_export_pdf = Export as PDF
 menu_edit = Edit
 menu_undo = Undo
 menu_redo = Redo
@@ -46,6 +50,9 @@ menu_zoom_out = Zoom Out
 menu_zoom_reset = Actual Size
     .key = 0
 status_zoom = { $pct }%
+status_exported = Exported { $name }
+status_export_empty = Nothing to export
+status_export_failed = Export failed: { $reason }
 menu_inspector = Inspector
     .key = i
 tool_inspector = Inspector
