@@ -2111,7 +2111,10 @@ mod tests {
     fn export_crops_to_the_content_without_the_view_or_the_selection() {
         let _doc = install_test_doc();
         unzoomed();
-        assert!(document_drawing().is_none(), "an empty drawing has nothing to export");
+        assert!(
+            document_drawing().is_none(),
+            "an empty drawing has nothing to export"
+        );
         let a = rect_at(100.0, 50.0, 40.0, 30.0);
         let _b = rect_at(300.0, 200.0, 60.0, 20.0);
         // A zoomed, panned view with a selection: none of it reaches the export.
@@ -2128,7 +2131,11 @@ mod tests {
         );
         assert_eq!(drawing.size(), expect);
         let mut live = Draw::new();
-        draw_scene(&mut live, Size::new(800.0, 600.0), &crate::images::ImageCache::empty());
+        draw_scene(
+            &mut live,
+            Size::new(800.0, 600.0),
+            &crate::images::ImageCache::empty(),
+        );
         assert!(
             drawing.ops().len() < live.ops().len(),
             "the export carries the shapes but not the selection outline and handles"
