@@ -3,7 +3,7 @@
 //! A drawing is a SQLite file: each document opens as its own `ModelContainer`, with its own
 //! change log and undo stack, autosaved at every turn's end. Open is open, Save is
 //! autosave, and Export a Copy is a consistent `backup_to` snapshot delivered through the
-//! platform's save dialog. The whole scene is one table (https://daybrite.dev/docs/persistence):
+//! platform's save dialog. The whole scene is one table (https://daybrite.dev/docs/reference/persistence):
 //! a heterogeneous tree of rows whose `kind` says what the geometry columns mean; a `Group`
 //! row is just a node whose children point at it and whose frame is derived, never stored.
 //!

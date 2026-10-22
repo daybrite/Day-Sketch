@@ -515,7 +515,7 @@ flow:
   - assert_text: { id: sk_frame, text: "300,44 96x64" }
   - drag: { id: canvas, from: [348, 76], to: [358, 76] }
   - assert_text: { id: sk_frame, text: "310,40 96x64" }
-  # Settings is the shared surface (https://daybrite.dev/docs/settings): a group's own id routes
+  # Settings is the shared surface (https://daybrite.dev/docs/reference/settings): a group's own id routes
   # to its tab in the window a desktop opens, and to its page in the cover the web presents
   # (web-dom emulates the App menu, so the routes land on the cover too). A phone has no App
   # menu and this window is no nav host, so its bar carries a Settings item (`tb-settings`,

@@ -24,7 +24,7 @@ pub mod res {
 }
 
 /// Whether a drag snaps to the alignment guides (canvas.rs): the Editing group's one setting,
-/// persisted under `sketch.snap` (https://daybrite.dev/docs/settings).
+/// persisted under `sketch.snap` (https://daybrite.dev/docs/reference/settings).
 pub(crate) static SNAP: Pref<bool> = Pref::new("sketch.snap", || true);
 
 /// ⌘/Ctrl + the localized key: the letter comes from the command's `.key` attribute in the
@@ -241,7 +241,7 @@ fn toolbar() -> Vec<ToolbarEntry> {
         })
         .tooltip(res::str::menu_inspector()),
     ]);
-    // Settings: the desktops reach the shared surface (https://daybrite.dev/docs/settings)
+    // Settings: the desktops reach the shared surface (https://daybrite.dev/docs/reference/settings)
     // from the App menu and the web from its emulated one, so only a phone, which has neither,
     // carries the command on its bar. It trails with the other secondary items, and `open()`
     // presents the surface as a cover: this window is a canvas, not a nav host, so no nav item
@@ -495,7 +495,7 @@ pub(crate) fn scene() -> Scene {
 pub fn root() -> impl Piece {
     res::locales::install();
     day::prefs::install_nav_store();
-    // Settings and About (https://daybrite.dev/docs/settings): appearance and language from
+    // Settings and About (https://daybrite.dev/docs/reference/settings): appearance and language from
     // Day's catalog, the Editing group below, the app's name and version from Day.toml. On a
     // desktop this adds the App menu's Settings… and About items and their windows; a phone
     // reaches the same pages from the bar's Settings item (`toolbar`), as a cover.

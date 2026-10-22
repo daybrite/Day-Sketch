@@ -8,7 +8,7 @@
 //! the store (and therefore the canvas and the status readouts) follows the pointer, while
 //! nothing durable fires until the pointer lifts, when committing all touched fields in one
 //! turn makes the whole drag one undo step and one statement per table
-//! (https://daybrite.dev/docs/model). A band edits nothing at all: it writes the selection,
+//! (https://daybrite.dev/docs/explanation/model). A band edits nothing at all: it writes the selection,
 //! which lives outside the store, so sweeping the canvas is neither a row nor an undo step.
 
 use crate::model::{self, Node, NodeFields, NodeKind};
