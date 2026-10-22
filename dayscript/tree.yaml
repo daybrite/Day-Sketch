@@ -9,6 +9,8 @@ description: >-
   top level through the Selected tab's pluralized title.
 flow:
   - wait_for: { id: canvas }
+  # A preceding walkthrough may have hidden the inspector; make this script self-contained.
+  - toolbar: { item: tb_inspector, on: true, only_on: [windows-winui] }
   # iOS presents the trailing inspector as a fullscreen sheet, and a fullscreen modal
   # removes the presenting view from the window, where a detached UICollectionView will
   # never create cells. Close it before the layers pane opens (a pane mounted behind the

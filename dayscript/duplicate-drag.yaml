@@ -2,6 +2,8 @@ name: sketch-duplicate-drag
 description: Option/Alt-drag copies in place, moves the copy, and undoes in one step.
 flow:
   - wait_for: { id: canvas }
+  # A preceding walkthrough may have hidden the inspector; make this script self-contained.
+  - toolbar: { item: tb_inspector, on: true, only_on: [windows-winui] }
   - menu: { key: menu_new }
   - menu: { key: tool_rect, path: [menu_insert] }
   - input: { id: insp_x, text: "50" }

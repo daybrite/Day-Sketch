@@ -34,6 +34,9 @@ jobs:
       # (`cargo update -p day`) when a new framework API lands, so a local build matches.
       update-day-deps: true
       scripts: dayscript/demo.yaml
+      # Keep the focused Windows regressions in CI, including persisted image round trips.
+      target-scripts: |
+        windows-winui: dayscript/demo.yaml dayscript/aspect-resize.yaml dayscript/duplicate-drag.yaml dayscript/tree.yaml dayscript/images.yaml dayscript/clipboard-images.yaml dayscript/export.yaml
       #launch-env: WEATHER_MOCK=1
       locales: en
       deploy-web: true

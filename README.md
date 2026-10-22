@@ -90,6 +90,11 @@ target to produce the gallery:
 day launch -t macos-appkit --script dayscript/demo.yaml
 ```
 
+Windows CI also runs the focused resize, duplicate-drag, layers-tree, image, clipboard-image,
+and export walkthroughs. The main demo checks native canvas keyboard nudging and ensures that
+arrow keys in an inspector field do not move the selection. PNG/PDF drawing export is not yet
+supported by WinUI, so those export operations remain explicitly skipped.
+
 To build against a local `day` checkout instead of the pinned git revision, let the CLI write and
 verify the patch table:
 
@@ -162,7 +167,7 @@ node properties for a Day-Sketch round trip. Pasting a screenshot or other suppo
 image creates a new embedded Image node. Cut removes nodes only after clipboard publication
 succeeds. Text fields keep their normal text clipboard behavior.
 
-Run `dayscript/clipboard-images.yaml` with the image fixture staged as described above, or
+Run `dayscript/clipboard-images.yaml` with the bundled image fixture described above, or
 `scripts/web-clipboard-check.mjs` for a real browser clipboard/persistence check. The native
 binary probe lives in `day/parts/day-part-clipboard/examples/binary_clipboard.rs`.
 

@@ -7,6 +7,8 @@ description: >-
   (not ArkUI, the web or WinUI), and the item is disabled elsewhere.
 flow:
   - wait_for: { id: canvas }
+  # A preceding walkthrough may have hidden the inspector; make this script self-contained.
+  - toolbar: { item: tb_inspector, on: true, only_on: [windows-winui] }
   - menu: { key: menu_new }
   - assert_text: { id: sk_count, key: status_count, args: { n: 0 } }
   - menu: { key: tool_rect, path: [menu_insert] }

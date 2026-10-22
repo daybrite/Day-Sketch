@@ -6,6 +6,8 @@ description: >-
   needed after insertion; the exported drawing contains its original bytes.
 flow:
   - wait_for: { id: canvas }
+  # A preceding walkthrough may have hidden the inspector; make this script self-contained.
+  - toolbar: { item: tb_inspector, on: true, only_on: [windows-winui] }
   - menu: { key: menu_new }
   - menu: { key: tool_image, path: [menu_insert] }
   - assert_presented: {}
