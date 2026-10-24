@@ -1049,7 +1049,7 @@ fn text_section() -> AnyPiece {
             ),
             labeled(
                 crate::res::str::insp_size(),
-                day_piece_stepper::stepper(FONT_SIZE)
+                day::stepper::stepper(FONT_SIZE)
                     .range(model::MIN_FONT_SIZE..=model::MAX_FONT_SIZE)
                     .step(1.0)
                     .decimals(0)
@@ -1072,7 +1072,7 @@ fn paint_row(
     field: day::ElementId,
 ) -> impl Piece {
     column((
-        day_piece_colorpicker::color_picker(well).id(well_id),
+        day::colorpicker::color_picker(well).id(well_id),
         opacity_row(num, slider_id, field).grow(),
     ))
     .spacing(4.0)
@@ -1127,7 +1127,7 @@ fn style_section() -> impl Piece {
         when(selection_has_stroke, || {
             labeled(
                 crate::res::str::insp_stroke_width(),
-                day_piece_stepper::stepper(STROKE_WIDTH)
+                day::stepper::stepper(STROKE_WIDTH)
                     .range(0.0..=64.0)
                     .step(1.0)
                     .decimals(0)
@@ -1150,7 +1150,7 @@ fn rotation_row() -> AnyPiece {
 fn rotation_field() -> impl Piece {
     labeled(
         crate::res::str::insp_rotation(),
-        day_piece_stepper::stepper(DegField { num: ROTATION })
+        day::stepper::stepper(DegField { num: ROTATION })
             // 360 is IN the range so the stepper's own up-arrow can reach it; the binding
             // wraps it back to 0, which is what a full turn means.
             .range(0.0..=360.0)
@@ -1170,7 +1170,7 @@ fn corner_row() -> AnyPiece {
     when(selection_is_rects, || {
         labeled(
             crate::res::str::insp_corner(),
-            day_piece_stepper::stepper(CORNER_RADIUS)
+            day::stepper::stepper(CORNER_RADIUS)
                 .range(0.0..=200.0)
                 .step(1.0)
                 .decimals(0)
@@ -1212,7 +1212,7 @@ fn selected_panel() -> impl Piece {
 fn canvas_panel() -> impl Piece {
     form((section((labeled(
         crate::res::str::insp_background(),
-        day_piece_colorpicker::color_picker(BgColor).id(day::id!(insp_bg)),
+        day::colorpicker::color_picker(BgColor).id(day::id!(insp_bg)),
     ),)),))
 }
 

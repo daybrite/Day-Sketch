@@ -216,7 +216,7 @@ checksum = "914a755b7c2d4af2bdcff7ce1739e2db9a1b81a9b07123d8015786ae03c0980d"
 name = "day"
 version = "0.6.0"
 dependencies = [
- "day-android",
+ "day-android-runtime",
  "day-appkit",
  "day-arkui",
  "day-core",
@@ -225,31 +225,31 @@ dependencies = [
  "day-geometry",
  "day-gtk",
  "day-macros",
+ "day-mdc",
  "day-mock",
  "day-model",
  "day-part-clipboard",
  "day-part-prefs",
+ "day-piece-settings",
+ "day-piece-swiftui",
+ "day-piece-texteditor",
  "day-pieces",
  "day-qt",
  "day-reactive",
  "day-script",
  "day-spec",
  "day-uikit",
- "day-xaml",
+ "day-winui",
  "log",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "day-android"
+name = "day-android-runtime"
 version = "0.6.0"
 dependencies = [
- "day-core",
  "day-macros",
- "day-pieces",
- "day-reactive",
- "day-spec",
  "jni",
  "linkme",
  "log",
@@ -265,6 +265,7 @@ dependencies = [
  "day-fluent",
  "day-l10n",
  "day-pieces",
+ "day-reactive",
  "day-spec",
  "dispatch2",
  "linkme",
@@ -350,9 +351,12 @@ dependencies = [
  "day-core",
  "day-geometry",
  "day-l10n",
+ "day-pieces",
+ "day-reactive",
  "day-spec",
  "getrandom",
  "log",
+ "serde_json",
 ]
 
 [[package]]
@@ -380,7 +384,9 @@ dependencies = [
  "day-core",
  "day-dbus",
  "day-pieces",
+ "day-reactive",
  "day-spec",
+ "day-windows-runtime",
  "gtk4",
  "libadwaita",
  "libc",
@@ -393,7 +399,6 @@ dependencies = [
  "objc2-foundation",
  "pangocairo",
  "pkg-config",
- "windows",
 ]
 
 [[package]]
@@ -432,6 +437,20 @@ name = "day-macros"
 version = "0.6.0"
 
 [[package]]
+name = "day-mdc"
+version = "0.6.0"
+dependencies = [
+ "day-android-runtime",
+ "day-core",
+ "day-pieces",
+ "day-reactive",
+ "day-spec",
+ "jni",
+ "linkme",
+ "log",
+]
+
+[[package]]
 name = "day-mock"
 version = "0.6.0"
 dependencies = [
@@ -452,7 +471,7 @@ name = "day-part-clipboard"
 version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
- "day-android",
+ "day-android-runtime",
  "day-async",
  "day-bridge",
  "day-build",
@@ -466,11 +485,12 @@ dependencies = [
 name = "day-part-prefs"
 version = "0.6.0"
 dependencies = [
- "day-android",
+ "day-android-runtime",
  "day-bridge",
  "day-build",
  "day-core",
  "day-reactive",
+ "log",
  "objc2",
  "objc2-foundation",
 ]
@@ -497,48 +517,85 @@ name = "day-persistence-macros"
 version = "0.1.0"
 
 [[package]]
-name = "day-piece-colorpicker"
-version = "0.6.0"
-dependencies = [
- "cc",
- "day-core",
- "day-l10n",
- "day-pieces",
- "day-reactive",
- "day-spec",
- "day-toolchain",
- "linkme",
-]
-
-[[package]]
 name = "day-piece-settings"
 version = "0.6.0"
 dependencies = [
  "cc",
+ "day-android-runtime",
+ "day-appkit",
+ "day-arkui",
  "day-build",
  "day-core",
  "day-fluent",
+ "day-gtk",
  "day-l10n",
+ "day-mdc",
  "day-part-clipboard",
  "day-part-prefs",
  "day-pieces",
+ "day-qt",
  "day-reactive",
  "day-spec",
  "day-toolchain",
+ "day-uikit",
+ "day-winui",
+ "day-xaml-sys",
+ "gtk4",
+ "libadwaita",
  "linkme",
  "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-ui-kit",
 ]
 
 [[package]]
-name = "day-piece-stepper"
+name = "day-piece-swiftui"
 version = "0.6.0"
 dependencies = [
- "cc",
+ "day-appkit",
  "day-core",
  "day-pieces",
  "day-reactive",
  "day-spec",
+ "day-uikit",
  "linkme",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-ui-kit",
+]
+
+[[package]]
+name = "day-piece-texteditor"
+version = "0.6.0"
+dependencies = [
+ "cc",
+ "day-android-runtime",
+ "day-appkit",
+ "day-arkui",
+ "day-core",
+ "day-dom",
+ "day-gtk",
+ "day-mdc",
+ "day-pieces",
+ "day-qt",
+ "day-reactive",
+ "day-spec",
+ "day-toolchain",
+ "day-uikit",
+ "day-winui",
+ "day-xaml-sys",
+ "gtk4",
+ "linkme",
+ "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-ui-kit",
 ]
 
 [[package]]
@@ -567,10 +624,11 @@ dependencies = [
  "day-macos-tabs",
  "day-pieces",
  "day-qt-sys",
+ "day-reactive",
  "day-spec",
+ "day-windows-runtime",
  "linkme",
  "log",
- "windows",
 ]
 
 [[package]]
@@ -621,9 +679,7 @@ dependencies = [
  "day-core",
  "day-mock",
  "day-persistence",
- "day-piece-colorpicker",
  "day-piece-settings",
- "day-piece-stepper",
 ]
 
 [[package]]
@@ -655,6 +711,7 @@ dependencies = [
  "block2",
  "day-core",
  "day-pieces",
+ "day-reactive",
  "day-spec",
  "dispatch2",
  "linkme",
@@ -668,17 +725,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "day-xaml"
+name = "day-windows-runtime"
+version = "0.6.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
+name = "day-winui"
 version = "0.6.0"
 dependencies = [
  "day-core",
  "day-l10n",
  "day-pieces",
+ "day-reactive",
  "day-spec",
+ "day-windows-runtime",
  "day-xaml-sys",
  "linkme",
  "log",
- "windows",
 ]
 
 [[package]]
@@ -3151,3 +3216,91 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "day-cli"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-conformance-registry-fixture"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "day-id-registry-fixture"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "day-part-biometrics"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-connectivity"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-device"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-downloads"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-fs"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-haptics"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-http"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-keychain"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-local-notify"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-location"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-permissions"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-sensors"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-sound"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-part-wakelock"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-tweak-button-bezel"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-tweak-slider-tickmarks"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-tweak-tooltip"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-tweak-tree-style"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "day-vector"
+version = "0.6.0"

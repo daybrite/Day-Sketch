@@ -47,8 +47,6 @@ day-persistence = { git = "https://github.com/daybrite/day-persistence.git", ver
 day-piece-settings = { git = "https://github.com/daybrite/day.git" }
 # The inspector's Style group: the platform color chooser and the stepper field. `day build`
 # unions each piece's per-backend feature automatically (Tier A.2).
-day-piece-colorpicker = { git = "https://github.com/daybrite/day.git" }
-day-piece-stepper = { git = "https://github.com/daybrite/day.git" }
 
 [build-dependencies]
 day-build = { git = "https://github.com/daybrite/day.git" }
