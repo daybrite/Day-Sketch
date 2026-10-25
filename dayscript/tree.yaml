@@ -22,8 +22,8 @@ flow:
   # Compact windows start with the layers pane closed (a phone's canvas needs the room):
   # open it for the whole run on the phone targets, before anything waits on its rows.
   # Visibility only, undo-neutral.
-  - menu: { key: menu_layers, only_on: [uikit, mdc, arkui] }
-  - pause: { secs: 1, only_on: [uikit, mdc, arkui] }
+  - menu: { key: menu_layers, only_on: [uikit, material, arkui] }
+  - pause: { secs: 1, only_on: [uikit, material, arkui] }
   - wait_for: { id: layers }
   # A fresh numbered document every run: node ids (and so row ids) are deterministic.
   - menu: { key: menu_new }

@@ -34,8 +34,8 @@ their platform expects.
 <p align="center">
   <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/iphone/en/editor.png" width="200" alt="The editor on iPhone"></kbd>
   <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/iphone/en/palette.png" width="200" alt="The palette on iPhone"></kbd>
-  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/phone/en/rotation-fan.png" width="200" alt="A fan of rotated shapes on Android"></kbd>
-  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/phone/en/translucency.png" width="200" alt="Three translucent circles on Android"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-material/phone/en/rotation-fan.png" width="200" alt="A fan of rotated shapes on Android"></kbd>
+  <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-material/phone/en/translucency.png" width="200" alt="Three translucent circles on Android"></kbd>
 </p>
 
 Under the canvas, a drawing is one observable table in a SQLite file. A drag edits it live through
@@ -60,7 +60,7 @@ publishes the results to the [gallery](https://daybrite.dev/gallery/Day-Sketch/)
 
 | macOS · type specimen | iPad · type specimen | Android tablet · type specimen |
 |:---:|:---:|:---:|
-| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/type-specimen.png" width="300" alt="Six lines of type in four styles on macOS"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/ipad/en/type-specimen.png" width="300" alt="The type specimen on iPad"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-mdc/tablet/en/type-specimen.png" width="300" alt="The type specimen on an Android tablet"></kbd> |
+| <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/macos-appkit/en/type-specimen.png" width="300" alt="Six lines of type in four styles on macOS"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/ios-uikit/ipad/en/type-specimen.png" width="300" alt="The type specimen on iPad"></kbd> | <kbd><img src="https://daybrite.github.io/Day-Sketch/gallery/android-material/tablet/en/type-specimen.png" width="300" alt="The type specimen on an Android tablet"></kbd> |
 
 ## Build from a clone
 
@@ -71,7 +71,7 @@ target the app ships is listed in `Day.toml`.
 day doctor                       # toolchains present and missing, with fixes
 day launch -t macos-appkit       # build + run
 day launch -t ios-uikit          # needs a booted Simulator
-day launch -t android-mdc        # needs a JDK and a running emulator or device
+day launch -t android-material        # needs a JDK and a running emulator or device
 day launch -t web-dom            # serves the WebAssembly build locally
 ```
 
@@ -79,7 +79,7 @@ A bare `cargo build` uses the crate's default `mock` backend, which is what lets
 `cargo check` work with no flags. To pick a toolkit from plain cargo, turn the default off first:
 
 ```sh
-cargo build --no-default-features --features appkit    # or gtk / qt / uikit / mdc / xaml / dom
+cargo build --no-default-features --features appkit    # or gtk / qt / uikit / material / xaml / dom
 ```
 
 `dayscript/demo.yaml` is a [dayscript](https://daybrite.dev/docs/dayscript) that draws, arranges,
@@ -169,7 +169,7 @@ succeeds. Text fields keep their normal text clipboard behavior.
 
 Run `dayscript/clipboard-images.yaml` with the bundled image fixture described above, or
 `scripts/web-clipboard-check.mjs` for a real browser clipboard/persistence check. The native
-binary probe lives in `day/parts/day-part-clipboard/examples/binary_clipboard.rs`.
+binary probe lives in `day/crates/day-part-clipboard/examples/binary_clipboard.rs`.
 
 
 ## Generated native projects

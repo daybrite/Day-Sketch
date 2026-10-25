@@ -255,7 +255,7 @@ flow:
   # arrows must not nudge from.)
   #
   # `only_on` the toolkits whose canvas can hold keyboard focus (docs/menus.md) and that were
-  # verified natively, including windows-winui. HarmonyOS remains unverified; android-mdc
+  # verified natively, including windows-winui. HarmonyOS remains unverified; android-material
   # has no focusable canvas at all. This block used to "pass" everywhere because the key went to a
   # window-level handler inside day-core and no platform was involved.
   #
@@ -285,7 +285,7 @@ flow:
   # matter here: each move is a document edit, so this keeps the undo history the same depth
   # everywhere. Without it the block above is the only writer, and every `undo` after this
   # section lands four entries deeper on the backends that skipped it, which is exactly how
-  # android-mdc came to read a shape at "56,56" where the rest of the fleet reads "40,40".
+  # android-material came to read a shape at "56,56" where the rest of the fleet reads "40,40".
   - input: { id: insp_x, text: "41", skip_on: [appkit, gtk, qt, dom, uikit, windows-winui] }
   - submit: { id: insp_x, skip_on: [appkit, gtk, qt, dom, uikit, windows-winui] }
   - assert_text: { id: sk_frame, text: "41,40 96x64", skip_on: [appkit, gtk, qt, dom, uikit, windows-winui] }
@@ -521,23 +521,23 @@ flow:
   # menu and this window is no nav host, so its bar carries a Settings item (`tb-settings`,
   # src/lib.rs) that presents the cover on its root, where the group's row is tapped. The cover
   # draws inside the main window, so one capture key serves every presentation.
-  - navigate: { route: general, skip_on: [uikit, mdc, arkui] }
-  - toolbar: { item: tb_settings, only_on: [uikit, mdc, arkui] }
-  - tap: { id: prefs_group:general, only_on: [uikit, mdc, arkui] }
+  - navigate: { route: general, skip_on: [uikit, material, arkui] }
+  - toolbar: { item: tb_settings, only_on: [uikit, material, arkui] }
+  - tap: { id: prefs_group:general, only_on: [uikit, material, arkui] }
   - wait_for: { id: language_picker }
   - screenshot: { name: settings, window: day.preferences }
   - close_window: { window: day.preferences }
-  - navigate: { route: editing, skip_on: [uikit, mdc, arkui] }
-  - toolbar: { item: tb_settings, only_on: [uikit, mdc, arkui] }
-  - tap: { id: prefs_group:editing, only_on: [uikit, mdc, arkui] }
+  - navigate: { route: editing, skip_on: [uikit, material, arkui] }
+  - toolbar: { item: tb_settings, only_on: [uikit, material, arkui] }
+  - tap: { id: prefs_group:editing, only_on: [uikit, material, arkui] }
   - wait_for: { id: pref_snap }
   - toggle: { id: pref_snap, value: false }
   - close_window: { window: day.preferences }
   - drag: { id: canvas, from: [358, 72], to: [358, 76] }
   - assert_text: { id: sk_frame, text: "310,44 96x64" }
-  - navigate: { route: editing, skip_on: [uikit, mdc, arkui] }
-  - toolbar: { item: tb_settings, only_on: [uikit, mdc, arkui] }
-  - tap: { id: prefs_group:editing, only_on: [uikit, mdc, arkui] }
+  - navigate: { route: editing, skip_on: [uikit, material, arkui] }
+  - toolbar: { item: tb_settings, only_on: [uikit, material, arkui] }
+  - tap: { id: prefs_group:editing, only_on: [uikit, material, arkui] }
   - wait_for: { id: pref_snap }
   - toggle: { id: pref_snap, value: true }
   - close_window: { window: day.preferences }
