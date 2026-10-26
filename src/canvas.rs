@@ -1765,6 +1765,7 @@ fn nudge_by_key(ev: &day::KeyEvent) {
 }
 
 pub(crate) fn editor_canvas() -> impl Piece {
+    let scope = day::reactive::Scope::current();
     let images = crate::images::ImageCache::mount(model::nodes());
     // Export draws the same decoded images the canvas does (`document_drawing`).
     *crate::scene().cells.images.borrow_mut() = Some(images.clone());
@@ -1775,8 +1776,11 @@ pub(crate) fn editor_canvas() -> impl Piece {
     // into itself.
     let pinch_base: Rc<Cell<(f64, Point)>> = Rc::new(Cell::new((1.0, Point::ZERO)));
     canvas(move |d, size| {
-        crate::scene().cells.viewport.set((size.width, size.height));
-        draw_scene(d, size, &images)
+        // A background drawing window still repaints while Settings owns focus.
+        scope.enter(|| {
+            crate::scene().cells.viewport.set((size.width, size.height));
+            draw_scene(d, size, &images)
+        })
     })
     // The live modifiers are read here, at the edge, and travel into the machine as data:
     // shift-drag and shift-click both change meaning, and a handler that reads them itself

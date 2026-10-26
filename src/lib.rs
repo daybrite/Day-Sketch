@@ -52,13 +52,18 @@ pub(crate) fn arrange_menu_entries() -> Vec<MenuEntry> {
 /// canvas context menu is lowered once at build, so it keeps every item enabled and lets the
 /// actions no-op on an empty selection instead of freezing the launch-time state.
 fn arrange_entries(track: bool) -> Vec<MenuEntry> {
-    let sel = if track {
-        model::selection().get()
-    } else {
-        model::selection().get_untracked()
-    };
-    let some = !track || !sel.is_empty();
-    let two = !track || sel.len() >= 2;
+    // Settings/About are windows too, but have no drawing scene. The app menu must
+    // remain buildable while they are focused; their Arrange commands are unavailable.
+    let (some, two) = try_scene()
+        .map(|scene| {
+            let sel = if track {
+                scene.selection.get()
+            } else {
+                scene.selection.get_untracked()
+            };
+            (!track || !sel.is_empty(), !track || sel.len() >= 2)
+        })
+        .unwrap_or((false, false));
     vec![
         menu_item(res::str::menu_group())
             .action(model::group_selection)
@@ -338,6 +343,8 @@ pub(crate) fn selection_context_menu() -> Vec<MenuEntry> {
 }
 
 fn status_row() -> impl Piece {
+    let selection = model::selection();
+    let zoom = canvas::zoom();
     row((
         label(move || {
             let store = model::nodes();
@@ -349,7 +356,7 @@ fn status_row() -> impl Piece {
         .id(day::id!(sk_count)),
         // The single selection's frame, integer-rounded: what walkthrough drags assert on.
         label(move || {
-            let sel = model::selection().get();
+            let sel = selection.get();
             model::nodes().with(|_| {});
             match sel.as_slice() {
                 [only] => match model::node_bounds(*only) {
@@ -367,11 +374,9 @@ fn status_row() -> impl Piece {
         })
         .tabular()
         .id(day::id!(sk_frame)),
-        label(move || {
-            res::str::status_zoom((canvas::zoom().get() * 100.0).round() as i64).format()
-        })
-        .tabular()
-        .id(day::id!(sk_zoom)),
+        label(move || res::str::status_zoom((zoom.get() * 100.0).round() as i64).format())
+            .tabular()
+            .id(day::id!(sk_zoom)),
         label(move || export_status().get())
             .font(Font::Footnote)
             .id(day::id!(sk_export_status)),
@@ -487,9 +492,12 @@ impl Ambient for Scene {
 /// This window's `Scene`: the ambient one while a piece builds, the focused window's when a
 /// command runs later from a handler that belongs to no scope (docs/state.md).
 pub(crate) fn scene() -> Scene {
-    Scene::try_ambient()
-        .or_else(Scene::focused)
-        .expect("no window is open, so there is no Scene to act on")
+    try_scene().expect("this action requires a drawing window's Scene")
+}
+
+/// App-wide menus also run while Settings/About has focus, without a drawing scene.
+pub(crate) fn try_scene() -> Option<Scene> {
+    Scene::try_ambient().or_else(Scene::focused)
 }
 
 pub fn root() -> impl Piece {
@@ -518,7 +526,7 @@ pub fn root() -> impl Piece {
 
 /// One window's UI: the first window's, and every File ▸ New Window's.
 fn window_shell() -> impl Piece {
-    Scene::scoped(|_scene| {
+    Scene::scoped(|scene| {
         // Installed from inside the scope, because both read what this window is looking at:
         // the toolbar per window (docs/toolbars.md), and the menu bar's enabled/checked states
         // through `scene()`. The menu bar is one bar for the app, so it installs once.
@@ -540,10 +548,13 @@ fn window_shell() -> impl Piece {
         });
         // The selection drives the inspector's tab, per window: any change lands it on the tab
         // that talks about the current state. Inside the scope, so the bind reads this window's
-        // selection.
+        // selection. Reactions do not restore their creation scope, so capture the
+        // selection and re-enter this window's scope when updating its inspector.
+        let selection = scene.selection;
+        let scope = day::reactive::Scope::current();
         day::reactive::bind(
-            || model::selection().get(),
-            |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
+            move || selection.get(),
+            move |sel: &Vec<u64>| scope.enter(|| inspector::retarget(!sel.is_empty())),
         );
         // Rebuild the whole editor when a different document becomes current: the editor is
         // keyed on the document rev, and each build is fresh in its own scope. The inspector
@@ -599,4 +610,19 @@ fn zoom_reset_command() -> Command {
     )
     .icon(Symbol::ZoomReset)
     .shortcut(cmd(res::str::menu_zoom_reset_key()))
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::*;
+
+    #[test]
+    fn arrange_menu_can_rebuild_without_a_drawing_scene() {
+        assert!(try_scene().is_none());
+        res::locales::install();
+        // Settings/About has no Scene. Both reactive and context-menu construction must
+        // tolerate that state instead of panicking inside a native event callback.
+        let _ = arrange_entries(true);
+        let _ = arrange_entries(false);
+    }
 }

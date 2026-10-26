@@ -10,6 +10,47 @@
 use crate::model::{self, NodeFields, NodeKind};
 use day::prelude::*;
 
+// Inspector callbacks belong to a drawing window even when a different window has focus.
+// Reactive computations do not restore their creation scope; preserve it at the UI boundary.
+fn window_read<T>(read: impl Fn() -> T + 'static) -> impl Fn() -> T {
+    let scope = day::reactive::Scope::current();
+    move || scope.enter(&read)
+}
+
+#[derive(Clone)]
+struct WindowBinding<B> {
+    scope: day::reactive::Scope,
+    binding: B,
+}
+
+fn window_binding<B>(binding: B) -> WindowBinding<B> {
+    WindowBinding {
+        scope: day::reactive::Scope::current(),
+        binding,
+    }
+}
+
+impl<T: 'static, B: Binding<T>> Binding<T> for WindowBinding<B> {
+    fn read(&self) -> T {
+        self.scope.enter(|| self.binding.read())
+    }
+    fn peek(&self) -> T {
+        self.scope.enter(|| self.binding.peek())
+    }
+    fn write(&self, value: T) {
+        self.scope.enter(|| self.binding.write(value));
+    }
+    fn write_preview(&self, value: T) {
+        self.scope.enter(|| self.binding.write_preview(value));
+    }
+    fn write_commit(&self, value: T) {
+        self.scope.enter(|| self.binding.write_commit(value));
+    }
+    fn write_teardown(&self, value: T) {
+        self.scope.enter(|| self.binding.write_teardown(value));
+    }
+}
+
 /// Whether the inspector pane is showing. Shown by default, since the panel is the app's main
 /// property surface, and per-run (not persisted): every target starts from the same state,
 /// which is what the walkthrough scripts assume.
@@ -65,6 +106,7 @@ pub(crate) fn layers_panel() -> AnyPiece {
 /// is [`model::open_groups`], and a drag commits through [`model::reparent`]: one model,
 /// three surfaces.
 fn layers_tree() -> AnyPiece {
+    let selection = model::selection();
     tree(
         model::nodes().tree(model::children_of),
         |slot: ModelSlot<model::Node>| {
@@ -86,8 +128,8 @@ fn layers_tree() -> AnyPiece {
     .expanded(model::open_groups())
     .expandable(|id| model::node_kind(*id) == Some(NodeKind::Group))
     .multi_select()
-    .selected(|| model::selection().get())
-    .on_selection(|keys| model::selection().set(keys))
+    .selected(move || selection.get())
+    .on_selection(move |keys| selection.set(keys))
     .movable(Move::new(model::reparent))
     .type_ahead(|id| {
         model::node_kind(*id)
@@ -342,14 +384,14 @@ fn prop_row(ix: usize) -> AnyPiece {
     let p = &geometry_props()[ix];
     labeled(
         (p.label)(),
-        text_field(PropField { ix })
-            .placeholder(move || {
+        text_field(window_binding(PropField { ix }))
+            .placeholder(window_read(move || {
                 if is_mixed(ix) {
                     crate::res::str::insp_multi().format()
                 } else {
                     String::new()
                 }
-            })
+            }))
             .id((p.id)()),
     )
     .any()
@@ -658,9 +700,15 @@ const STROKE_COLOR: StyleColor = StyleColor {
 /// A slider with its attached percentage field, the opacity rows' control.
 fn opacity_row(num: StyleNum, slider_id: day::ElementId, field: day::ElementId) -> impl Piece {
     row((
-        slider(num).range(0.0..=1.0).step(0.01).id(slider_id).grow(),
+        slider(window_binding(num))
+            .range(0.0..=1.0)
+            .step(0.01)
+            .id(slider_id)
+            .grow(),
         // 72, not 64: Material's text field pads its text enough that "100%" clipped at 64.
-        text_field(PctField { num }).id(field).width(72.0),
+        text_field(window_binding(PctField { num }))
+            .id(field)
+            .width(72.0),
     ))
     .spacing(6.0)
     .align(VAlign::Center)
@@ -1033,23 +1081,25 @@ impl Binding<Face> for StyleChoice {
 /// The Text section, mounted only while every target is a text node (`when` disposes it
 /// otherwise, so its fields are never dead dayscript targets on a shape).
 fn text_section() -> AnyPiece {
-    when(selection_is_text, || {
+    when(window_read(selection_is_text), || {
         section((
             labeled(
                 crate::res::str::insp_content(),
-                text_field(TextContent).id(day::id!(insp_text)),
+                text_field(window_binding(TextContent)).id(day::id!(insp_text)),
             ),
             labeled(
                 crate::res::str::insp_font(),
-                picker(FamilyChoice, family_options).id(day::id!(insp_font)),
+                picker(window_binding(FamilyChoice), window_read(family_options))
+                    .id(day::id!(insp_font)),
             ),
             labeled(
                 crate::res::str::insp_style(),
-                picker(StyleChoice, style_options).id(day::id!(insp_style)),
+                picker(window_binding(StyleChoice), window_read(style_options))
+                    .id(day::id!(insp_style)),
             ),
             labeled(
                 crate::res::str::insp_size(),
-                day::stepper::stepper(FONT_SIZE)
+                day::stepper::stepper(window_binding(FONT_SIZE))
                     .range(model::MIN_FONT_SIZE..=model::MAX_FONT_SIZE)
                     .step(1.0)
                     .decimals(0)
@@ -1072,7 +1122,7 @@ fn paint_row(
     field: day::ElementId,
 ) -> impl Piece {
     column((
-        day::colorpicker::color_picker(well).id(well_id),
+        day::colorpicker::color_picker(window_binding(well)).id(well_id),
         opacity_row(num, slider_id, field).grow(),
     ))
     .spacing(4.0)
@@ -1082,7 +1132,7 @@ fn paint_row(
 fn style_section() -> impl Piece {
     section((
         when(
-            || every_target(|k| k == NodeKind::Image),
+            window_read(|| every_target(|k| k == NodeKind::Image)),
             || {
                 labeled(
                     crate::res::str::insp_opacity(),
@@ -1097,7 +1147,7 @@ fn style_section() -> impl Piece {
         ),
         // The fill row mounts only for shapes that have an interior (docs: `when` disposes
         // the arm, so a line's inspector has no fill row at all rather than a dead one).
-        when(selection_has_fill, || {
+        when(window_read(selection_has_fill), || {
             labeled(
                 crate::res::str::insp_fill(),
                 paint_row(
@@ -1111,7 +1161,7 @@ fn style_section() -> impl Piece {
             )
         }),
         // The stroke pair mounts for what strokes: shapes and lines, never type.
-        when(selection_has_stroke, || {
+        when(window_read(selection_has_stroke), || {
             labeled(
                 crate::res::str::insp_stroke(),
                 paint_row(
@@ -1124,10 +1174,10 @@ fn style_section() -> impl Piece {
                 .grow(),
             )
         }),
-        when(selection_has_stroke, || {
+        when(window_read(selection_has_stroke), || {
             labeled(
                 crate::res::str::insp_stroke_width(),
-                day::stepper::stepper(STROKE_WIDTH)
+                day::stepper::stepper(window_binding(STROKE_WIDTH))
                     .range(0.0..=64.0)
                     .step(1.0)
                     .decimals(0)
@@ -1143,14 +1193,14 @@ fn style_section() -> impl Piece {
 /// The geometry section's transform rows: rotation always, corner radius only where it means
 /// something. Both are steppers over the same fan-out binding the style numbers use.
 fn rotation_row() -> AnyPiece {
-    when(selection_can_rotate, rotation_field).any()
+    when(window_read(selection_can_rotate), rotation_field).any()
 }
 
 /// The angle field itself; see [`rotation_row`] for when it is shown.
 fn rotation_field() -> impl Piece {
     labeled(
         crate::res::str::insp_rotation(),
-        day::stepper::stepper(DegField { num: ROTATION })
+        day::stepper::stepper(window_binding(DegField { num: ROTATION }))
             // 360 is IN the range so the stepper's own up-arrow can reach it; the binding
             // wraps it back to 0, which is what a full turn means.
             .range(0.0..=360.0)
@@ -1167,10 +1217,10 @@ fn rotation_field() -> impl Piece {
 /// disposes it with the selection's kind, because a hidden field would still be a dayscript
 /// target, and a disabled one still reads as a property ovals have.
 fn corner_row() -> AnyPiece {
-    when(selection_is_rects, || {
+    when(window_read(selection_is_rects), || {
         labeled(
             crate::res::str::insp_corner(),
-            day::stepper::stepper(CORNER_RADIUS)
+            day::stepper::stepper(window_binding(CORNER_RADIUS))
                 .range(0.0..=200.0)
                 .step(1.0)
                 .decimals(0)
@@ -1220,14 +1270,16 @@ fn canvas_panel() -> impl Piece {
 /// breathing room; the inspector hosts hand the panel the full pane rect, so the inset
 /// lives here, once, for every target.
 pub(crate) fn panel() -> impl Piece {
+    let scope = day::reactive::Scope::current();
+    let tab = active_tab();
     column((
         // The Selected tab names its selection ("No Items" / "1 Item" / "3 Items"), so its
         // label changes with the count: a reactive option list (docs/picker.md).
-        picker(active_tab(), tab_options)
+        picker(tab, move || scope.enter(tab_options))
             .segmented()
             .id(day::id!(insp_tab)),
         switch(
-            || active_tab().get(),
+            move || tab.get(),
             |tab| match tab {
                 Tab::Canvas => canvas_panel().any(),
                 Tab::Selected => selected_panel().any(),
@@ -1246,6 +1298,45 @@ mod tests {
     const X: PropField = PropField { ix: 0 };
     const Y: PropField = PropField { ix: 1 };
     const W: PropField = PropField { ix: 2 };
+
+    #[test]
+    fn inspector_binding_keeps_its_window_when_another_scope_is_current() {
+        let _doc = install_test_doc();
+        let first = model::place_shape(NodeKind::Rect, 10.0, 20.0);
+        let second = model::place_shape(NodeKind::Rect, 100.0, 200.0);
+        let drawing = day::reactive::Scope::child();
+        let other = day::reactive::Scope::child();
+        let (scene, field, options) = drawing.enter(|| {
+            let scene = crate::Scene::create();
+            drawing.provide(scene.clone());
+            scene.selection.set(vec![first]);
+            (scene, window_binding(X), window_read(tab_options))
+        });
+        other.enter(|| {
+            let scene = crate::Scene::create();
+            other.provide(scene.clone());
+            scene.selection.set(vec![second]);
+            assert_eq!(field.read(), "10");
+            field.write_commit("25".into());
+            assert_eq!(model::node_bounds(first).unwrap().0, 25.0);
+            assert_eq!(model::node_bounds(second).unwrap().0, 100.0);
+        });
+        let observed = Signal::new(String::new());
+        let read = field.clone();
+        drawing.enter(|| {
+            day::reactive::bind(
+                move || read.read(),
+                move |v: &String| observed.set(v.clone()),
+            );
+        });
+        // A background window's selection still updates its own bindings and tab labels.
+        other.enter(|| scene.selection.set(vec![second]));
+        day::reactive::flush_sync();
+        assert_eq!(observed.get_untracked(), "100");
+        assert_eq!(options()[1].0, Tab::Selected);
+        drawing.dispose();
+        other.dispose();
+    }
 
     #[test]
     fn fields_show_the_common_value_and_multi_when_mixed() {

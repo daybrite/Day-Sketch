@@ -28,8 +28,7 @@ dom = ["day/dom"]
 mock = ["day/mock"]
 
 # rlib for the desktop bin; the mobile pipeline requests the iOS staticlib / Android cdylib
-# explicitly via `cargo rustc --crate-type` (a desktop cdylib blows past the windows-gnu PE
-# export cap).
+# explicitly via `cargo rustc --crate-type`.
 [lib]
 # A constant name, not the package's. Every artifact Day stages is named after the lib target
 # (`libdayapp.a` for the iOS/macOS staticlib, `libdayapp.so` for the Android cdylib, and the
@@ -42,21 +41,21 @@ crate-type = ["rlib"]
 base64 = "0.22"
 # The drawing is a SQLite file per document on every target; the web build opens the same
 # container over the OPFS-mirrored wasm driver (docs/persistence.md).
-day = { git = "https://github.com/daybrite/day.git", features = ["model"] }
-day-persistence = { git = "https://github.com/daybrite/day-persistence.git", version = "0.1" }
-day-piece-settings = { git = "https://github.com/daybrite/day.git" }
+day = { package = "day-app", version = "0.6", features = ["model"] }
+day-persistence = "0.1"
+day-piece-settings = "0.6"
 # The inspector's Style group: the platform color chooser and the stepper field. `day build`
 # unions each piece's per-backend feature automatically (Tier A.2).
 
 [build-dependencies]
-day-build = { git = "https://github.com/daybrite/day.git" }
+day-build = "0.6"
 
 
 [workspace]
 
 [dev-dependencies]
-day-core = { git = "https://github.com/daybrite/day.git" }
-day-mock = { git = "https://github.com/daybrite/day.git" }
+day-core = "0.6"
+day-mock = "0.6"
 
 [workspace.package]
 version = "0.1.3"

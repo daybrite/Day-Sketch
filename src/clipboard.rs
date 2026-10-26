@@ -32,7 +32,10 @@ const TYPES: &[&str] = &[
 pub(crate) fn install() {
     day::install_edit_bridge(
         || {
-            let can = !model::selection().get().is_empty();
+            let Some(scene) = crate::try_scene() else {
+                return day::EditState::default();
+            };
+            let can = !scene.selection.get().is_empty();
             day::EditState {
                 can_copy: can,
                 can_cut: can,
@@ -40,11 +43,16 @@ pub(crate) fn install() {
                 can_select_all: true,
             }
         },
-        |op| match op {
-            day::EditOp::Copy => copy(false),
-            day::EditOp::Cut => copy(true),
-            day::EditOp::Paste => paste(),
-            day::EditOp::SelectAll => model::select_all(),
+        |op| {
+            if crate::try_scene().is_none() {
+                return;
+            }
+            match op {
+                day::EditOp::Copy => copy(false),
+                day::EditOp::Cut => copy(true),
+                day::EditOp::Paste => paste(),
+                day::EditOp::SelectAll => model::select_all(),
+            }
         },
     );
 }
