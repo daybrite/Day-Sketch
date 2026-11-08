@@ -274,8 +274,7 @@ mod tests {
         assert!(doc.stack.redo());
         day::reactive::flush_sync();
 
-        let path =
-            std::env::temp_dir().join(format!("day-sketch-image-{}.sqlite", std::process::id()));
+        let path = std::env::temp_dir().join(format!("day-sketch-image-{}.db", std::process::id()));
         doc.container.as_ref().unwrap().backup_to(&path).unwrap();
         {
             let mut connection = day_persistence::Sqlite::at(&path).open().unwrap();

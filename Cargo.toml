@@ -41,21 +41,21 @@ crate-type = ["rlib"]
 base64 = "0.22"
 # The drawing is a SQLite file per document on every target; the web build opens the same
 # container over the OPFS-mirrored wasm driver (docs/persistence.md).
-day = { package = "day-app", version = "0.6", features = ["model"] }
-day-persistence = "0.1"
-day-piece-settings = "0.6"
+day = { package = "day-app", version = "0.*", features = ["model"] }
+day-persistence = "0.*"
+day-piece-settings = "0.*"
 # The inspector's Style group: the platform color chooser and the stepper field. `day build`
 # unions each piece's per-backend feature automatically (Tier A.2).
 
 [build-dependencies]
-day-build = "0.6"
+day-build = "0.*"
 
 
 [workspace]
 
 [dev-dependencies]
-day-core = "0.6"
-day-mock = "0.6"
+day-core = "0.*"
+day-mock = "0.*"
 
 [workspace.package]
 version = "0.1.3"
