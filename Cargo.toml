@@ -59,4 +59,4 @@ day-core = "0.*"
 day-mock = "0.*"
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
