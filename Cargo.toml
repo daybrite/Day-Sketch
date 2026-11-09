@@ -54,6 +54,7 @@ day-build = "0.*"
 [workspace]
 
 [dev-dependencies]
+day-spec = "0.*"
 day-core = "0.*"
 day-mock = "0.*"
 

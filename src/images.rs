@@ -236,7 +236,7 @@ mod tests {
                 });
             })
             .unwrap();
-        assert!(sql.iter().any(|sql| sql.starts_with("UPDATE nodes")));
+        assert!(sql.iter().any(|sql| sql.starts_with(r#"UPDATE "nodes""#)));
         assert!(
             sql.iter().all(|sql| !sql.contains("image_bytes")),
             "{sql:?}"

@@ -548,13 +548,11 @@ fn window_shell() -> impl Piece {
         });
         // The selection drives the inspector's tab, per window: any change lands it on the tab
         // that talks about the current state. Inside the scope, so the bind reads this window's
-        // selection. Reactions do not restore their creation scope, so capture the
-        // selection and re-enter this window's scope when updating its inspector.
+        // selection. The binding retains this window's scope when another window has focus.
         let selection = scene.selection;
-        let scope = day::reactive::Scope::current();
         day::reactive::bind(
             move || selection.get(),
-            move |sel: &Vec<u64>| scope.enter(|| inspector::retarget(!sel.is_empty())),
+            move |sel: &Vec<u64>| inspector::retarget(!sel.is_empty()),
         );
         // Rebuild the whole editor when a different document becomes current: the editor is
         // keyed on the document rev, and each build is fresh in its own scope. The inspector

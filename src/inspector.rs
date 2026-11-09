@@ -10,47 +10,6 @@
 use crate::model::{self, NodeFields, NodeKind};
 use day::prelude::*;
 
-// Inspector callbacks belong to a drawing window even when a different window has focus.
-// Reactive computations do not restore their creation scope; preserve it at the UI boundary.
-fn window_read<T>(read: impl Fn() -> T + 'static) -> impl Fn() -> T {
-    let scope = day::reactive::Scope::current();
-    move || scope.enter(&read)
-}
-
-#[derive(Clone)]
-struct WindowBinding<B> {
-    scope: day::reactive::Scope,
-    binding: B,
-}
-
-fn window_binding<B>(binding: B) -> WindowBinding<B> {
-    WindowBinding {
-        scope: day::reactive::Scope::current(),
-        binding,
-    }
-}
-
-impl<T: 'static, B: Binding<T>> Binding<T> for WindowBinding<B> {
-    fn read(&self) -> T {
-        self.scope.enter(|| self.binding.read())
-    }
-    fn peek(&self) -> T {
-        self.scope.enter(|| self.binding.peek())
-    }
-    fn write(&self, value: T) {
-        self.scope.enter(|| self.binding.write(value));
-    }
-    fn write_preview(&self, value: T) {
-        self.scope.enter(|| self.binding.write_preview(value));
-    }
-    fn write_commit(&self, value: T) {
-        self.scope.enter(|| self.binding.write_commit(value));
-    }
-    fn write_teardown(&self, value: T) {
-        self.scope.enter(|| self.binding.write_teardown(value));
-    }
-}
-
 /// Whether the inspector pane is showing. Shown by default, since the panel is the app's main
 /// property surface, and per-run (not persisted): every target starts from the same state,
 /// which is what the walkthrough scripts assume.
@@ -97,7 +56,7 @@ fn kind_glyph(kind: NodeKind) -> &'static str {
 pub(crate) fn layers_panel() -> AnyPiece {
     column((
         crate::transfer::selection_handle(),
-        keyed(move || Some(model::doc_rev().get()), |_| layers_tree()).grow(),
+        keyed(move || Some(model::doc_rev().get()), |_| layers_tree()).grow(Dimension::Both),
     ))
     .any()
 }
@@ -384,14 +343,14 @@ fn prop_row(ix: usize) -> AnyPiece {
     let p = &geometry_props()[ix];
     labeled(
         (p.label)(),
-        text_field(window_binding(PropField { ix }))
-            .placeholder(window_read(move || {
+        text_field(PropField { ix })
+            .placeholder(move || {
                 if is_mixed(ix) {
                     crate::res::str::insp_multi().format()
                 } else {
                     String::new()
                 }
-            }))
+            })
             .id((p.id)()),
     )
     .any()
@@ -548,49 +507,6 @@ impl Binding<f64> for DegField {
     }
 }
 
-/// The opacity row's percentage field: the same bound value, shown as a localized percent
-/// ("85%") and accepting one typed back with or without the suffix.
-#[derive(Clone, Copy)]
-struct PctField {
-    num: StyleNum,
-}
-
-fn percent_field_text(value: f64) -> String {
-    // This is the entire editable value, not an interpolation inside surrounding prose.
-    // WinUI's TextBox displays Fluent's isolate controls as FSI/PDI boxes.
-    crate::res::str::insp_percent((value * 100.0).round() as i64)
-        .format()
-        .chars()
-        .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
-        .collect()
-}
-
-impl Binding<String> for PctField {
-    fn read(&self) -> String {
-        percent_field_text(self.num.read())
-    }
-    fn peek(&self) -> String {
-        percent_field_text(self.num.peek())
-    }
-    fn write(&self, s: String) {
-        self.write_commit(s);
-    }
-    fn write_preview(&self, _s: String) {}
-    fn write_commit(&self, s: String) {
-        // Fluent wraps interpolations in bidi isolates (U+2068/U+2069); a value the app
-        // formatted and the user edited in place still carries them.
-        let cleaned: String = s
-            .chars()
-            .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
-            .collect();
-        let cleaned = cleaned.trim().trim_end_matches('%').trim();
-        if let Ok(pct) = cleaned.parse::<f64>() {
-            self.num.write_commit((pct / 100.0).clamp(0.0, 1.0));
-        }
-        refresh_fields();
-    }
-}
-
 const FILL_OPACITY: StyleNum = StyleNum {
     read: |t| model::nodes().elem(t).fill_opacity().read(),
     preview: |t, v| model::nodes().elem(t).fill_opacity().write_preview(v),
@@ -700,13 +616,15 @@ const STROKE_COLOR: StyleColor = StyleColor {
 /// A slider with its attached percentage field, the opacity rows' control.
 fn opacity_row(num: StyleNum, slider_id: day::ElementId, field: day::ElementId) -> impl Piece {
     row((
-        slider(window_binding(num))
+        slider(num)
             .range(0.0..=1.0)
             .step(0.01)
             .id(slider_id)
-            .grow(),
+            .grow(Dimension::Both),
         // 72, not 64: Material's text field pads its text enough that "100%" clipped at 64.
-        text_field(window_binding(PctField { num }))
+        number_field(num)
+            .range(0.0..=1.0)
+            .format(NumberFormat::percent())
             .id(field)
             .width(72.0),
     ))
@@ -1081,30 +999,28 @@ impl Binding<Face> for StyleChoice {
 /// The Text section, mounted only while every target is a text node (`when` disposes it
 /// otherwise, so its fields are never dead dayscript targets on a shape).
 fn text_section() -> AnyPiece {
-    when(window_read(selection_is_text), || {
+    when(selection_is_text, || {
         section((
             labeled(
                 crate::res::str::insp_content(),
-                text_field(window_binding(TextContent)).id(day::id!(insp_text)),
+                text_field(TextContent).id(day::id!(insp_text)),
             ),
             labeled(
                 crate::res::str::insp_font(),
-                picker(window_binding(FamilyChoice), window_read(family_options))
-                    .id(day::id!(insp_font)),
+                picker(FamilyChoice, family_options).id(day::id!(insp_font)),
             ),
             labeled(
                 crate::res::str::insp_style(),
-                picker(window_binding(StyleChoice), window_read(style_options))
-                    .id(day::id!(insp_style)),
+                picker(StyleChoice, style_options).id(day::id!(insp_style)),
             ),
             labeled(
                 crate::res::str::insp_size(),
-                day::stepper::stepper(window_binding(FONT_SIZE))
+                day::stepper::stepper(FONT_SIZE)
                     .range(model::MIN_FONT_SIZE..=model::MAX_FONT_SIZE)
                     .step(1.0)
                     .decimals(0)
                     .id(day::id!(insp_size))
-                    .grow(),
+                    .grow(Dimension::Both),
             ),
         ))
         .title(crate::res::str::insp_text())
@@ -1122,8 +1038,8 @@ fn paint_row(
     field: day::ElementId,
 ) -> impl Piece {
     column((
-        day::colorpicker::color_picker(window_binding(well)).id(well_id),
-        opacity_row(num, slider_id, field).grow(),
+        day::colorpicker::color_picker(well).id(well_id),
+        opacity_row(num, slider_id, field).grow(Dimension::Both),
     ))
     .spacing(4.0)
     .align(HAlign::Leading)
@@ -1132,7 +1048,7 @@ fn paint_row(
 fn style_section() -> impl Piece {
     section((
         when(
-            window_read(|| every_target(|k| k == NodeKind::Image)),
+            || every_target(|k| k == NodeKind::Image),
             || {
                 labeled(
                     crate::res::str::insp_opacity(),
@@ -1141,13 +1057,13 @@ fn style_section() -> impl Piece {
                         day::id!(insp_image_op_slider),
                         day::id!(insp_image_op),
                     )
-                    .grow(),
+                    .grow(Dimension::Both),
                 )
             },
         ),
         // The fill row mounts only for shapes that have an interior (docs: `when` disposes
         // the arm, so a line's inspector has no fill row at all rather than a dead one).
-        when(window_read(selection_has_fill), || {
+        when(selection_has_fill, || {
             labeled(
                 crate::res::str::insp_fill(),
                 paint_row(
@@ -1157,11 +1073,11 @@ fn style_section() -> impl Piece {
                     day::id!(insp_fill_op_slider),
                     day::id!(insp_fill_op),
                 )
-                .grow(),
+                .grow(Dimension::Both),
             )
         }),
         // The stroke pair mounts for what strokes: shapes and lines, never type.
-        when(window_read(selection_has_stroke), || {
+        when(selection_has_stroke, || {
             labeled(
                 crate::res::str::insp_stroke(),
                 paint_row(
@@ -1171,19 +1087,19 @@ fn style_section() -> impl Piece {
                     day::id!(insp_stroke_op_slider),
                     day::id!(insp_stroke_op),
                 )
-                .grow(),
+                .grow(Dimension::Both),
             )
         }),
-        when(window_read(selection_has_stroke), || {
+        when(selection_has_stroke, || {
             labeled(
                 crate::res::str::insp_stroke_width(),
-                day::stepper::stepper(window_binding(STROKE_WIDTH))
+                day::stepper::stepper(STROKE_WIDTH)
                     .range(0.0..=64.0)
                     .step(1.0)
                     .decimals(0)
                     .id(day::id!(insp_stroke_w))
                     // Same right edge as the paint rows above it.
-                    .grow(),
+                    .grow(Dimension::Both),
             )
         }),
     ))
@@ -1193,14 +1109,14 @@ fn style_section() -> impl Piece {
 /// The geometry section's transform rows: rotation always, corner radius only where it means
 /// something. Both are steppers over the same fan-out binding the style numbers use.
 fn rotation_row() -> AnyPiece {
-    when(window_read(selection_can_rotate), rotation_field).any()
+    when(selection_can_rotate, rotation_field).any()
 }
 
 /// The angle field itself; see [`rotation_row`] for when it is shown.
 fn rotation_field() -> impl Piece {
     labeled(
         crate::res::str::insp_rotation(),
-        day::stepper::stepper(window_binding(DegField { num: ROTATION }))
+        day::stepper::stepper(DegField { num: ROTATION })
             // 360 is IN the range so the stepper's own up-arrow can reach it; the binding
             // wraps it back to 0, which is what a full turn means.
             .range(0.0..=360.0)
@@ -1209,7 +1125,7 @@ fn rotation_field() -> impl Piece {
             .id(day::id!(insp_rotation))
             // Fill the row like the text fields above, so every control in the section shares
             // one right edge instead of the steppers ending short.
-            .grow(),
+            .grow(Dimension::Both),
     )
 }
 
@@ -1217,15 +1133,15 @@ fn rotation_field() -> impl Piece {
 /// disposes it with the selection's kind, because a hidden field would still be a dayscript
 /// target, and a disabled one still reads as a property ovals have.
 fn corner_row() -> AnyPiece {
-    when(window_read(selection_is_rects), || {
+    when(selection_is_rects, || {
         labeled(
             crate::res::str::insp_corner(),
-            day::stepper::stepper(window_binding(CORNER_RADIUS))
+            day::stepper::stepper(CORNER_RADIUS)
                 .range(0.0..=200.0)
                 .step(1.0)
                 .decimals(0)
                 .id(day::id!(insp_corner))
-                .grow(),
+                .grow(Dimension::Both),
         )
     })
     .any()
@@ -1270,14 +1186,11 @@ fn canvas_panel() -> impl Piece {
 /// breathing room; the inspector hosts hand the panel the full pane rect, so the inset
 /// lives here, once, for every target.
 pub(crate) fn panel() -> impl Piece {
-    let scope = day::reactive::Scope::current();
     let tab = active_tab();
     column((
         // The Selected tab names its selection ("No Items" / "1 Item" / "3 Items"), so its
         // label changes with the count: a reactive option list (docs/picker.md).
-        picker(tab, move || scope.enter(tab_options))
-            .segmented()
-            .id(day::id!(insp_tab)),
+        picker(tab, tab_options).segmented().id(day::id!(insp_tab)),
         switch(
             move || tab.get(),
             |tab| match tab {
@@ -1300,40 +1213,41 @@ mod tests {
     const W: PropField = PropField { ix: 2 };
 
     #[test]
-    fn inspector_binding_keeps_its_window_when_another_scope_is_current() {
+    fn inspector_reactions_keep_their_window_when_another_scope_is_current() {
         let _doc = install_test_doc();
         let first = model::place_shape(NodeKind::Rect, 10.0, 20.0);
         let second = model::place_shape(NodeKind::Rect, 100.0, 200.0);
-        let drawing = day::reactive::Scope::child();
-        let other = day::reactive::Scope::child();
-        let (scene, field, options) = drawing.enter(|| {
+        let drawing = Scope::child();
+        let other = Scope::child();
+        let observed = Signal::new(String::new());
+        let options = Signal::new(Vec::new());
+        let scene = drawing.enter(|| {
             let scene = crate::Scene::create();
             drawing.provide(scene.clone());
             scene.selection.set(vec![first]);
-            (scene, window_binding(X), window_read(tab_options))
+            bind(move || X.read(), move |v: &String| observed.set(v.clone()));
+            bind(
+                || {
+                    tab_options()
+                        .into_iter()
+                        .map(|(tab, text)| (tab, text.format()))
+                        .collect::<Vec<_>>()
+                },
+                move |v| options.set(v.clone()),
+            );
+            scene
         });
         other.enter(|| {
-            let scene = crate::Scene::create();
-            other.provide(scene.clone());
+            let other_scene = crate::Scene::create();
+            other.provide(other_scene.clone());
+            other_scene.selection.set(vec![first]);
+            assert_eq!(observed.get_untracked(), "10");
             scene.selection.set(vec![second]);
-            assert_eq!(field.read(), "10");
-            field.write_commit("25".into());
-            assert_eq!(model::node_bounds(first).unwrap().0, 25.0);
-            assert_eq!(model::node_bounds(second).unwrap().0, 100.0);
+            day::reactive::flush_sync();
+            assert_eq!(observed.get_untracked(), "100");
+            assert_eq!(options.get_untracked()[1].0, Tab::Selected);
+            assert_eq!(crate::scene().selection.get(), vec![first]);
         });
-        let observed = Signal::new(String::new());
-        let read = field.clone();
-        drawing.enter(|| {
-            day::reactive::bind(
-                move || read.read(),
-                move |v: &String| observed.set(v.clone()),
-            );
-        });
-        // A background window's selection still updates its own bindings and tab labels.
-        other.enter(|| scene.selection.set(vec![second]));
-        day::reactive::flush_sync();
-        assert_eq!(observed.get_untracked(), "100");
-        assert_eq!(options()[1].0, Tab::Selected);
         drawing.dispose();
         other.dispose();
     }
@@ -1448,35 +1362,48 @@ mod tests {
     }
 
     #[test]
-    fn the_percent_field_localizes_and_parses_both_forms() {
-        let _doc = install_test_doc();
-        let a = model::place_shape(NodeKind::Rect, 0.0, 0.0);
-        day::reactive::flush_sync();
-        model::selection().set(vec![a]);
-        crate::res::locales::install();
-
-        let pct = PctField { num: FILL_OPACITY };
-        // Assert the actual editable text: normalizing away isolates here hid the
-        // visible FSI/PDI boxes in native Windows text fields.
-        assert_eq!(pct.peek(), "100%");
-        assert_eq!(pct.read(), "100%");
-        pct.write_commit("25%".into());
-        day::reactive::flush_sync();
-        assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 0.25);
-        pct.write_commit("80".into());
-        day::reactive::flush_sync();
-        assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 0.8);
-        assert_eq!(pct.peek(), "80%");
-        pct.write_commit("\u{2068}50\u{2069}%".into());
-        day::reactive::flush_sync();
-        assert_eq!(pct.peek(), "50%");
-        // Out-of-range clamps; garbage leaves the value alone.
-        pct.write_commit("250".into());
-        day::reactive::flush_sync();
-        assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 1.0);
-        pct.write_commit("opaque".into());
-        day::reactive::flush_sync();
-        assert_eq!(model::nodes().elem(a).fill_opacity().peek(), 1.0);
+    fn the_percent_field_commits_to_the_selection_and_restores_invalid_edits() {
+        day_core::uninstall_tree();
+        let (mock, probe) = day_mock::MockToolkit::new();
+        day_core::launch_with(mock, day::WindowOptions::default(), || {
+            let _doc = install_test_doc();
+            let shape = model::place_shape(NodeKind::Rect, 0.0, 0.0);
+            day::reactive::flush_sync();
+            model::selection().set(vec![shape]);
+            crate::res::locales::install();
+            opacity_row(
+                FILL_OPACITY,
+                day::id!(fixture_slider),
+                day::id!(fixture_percent),
+            )
+            .any()
+        });
+        let field = day_core::with_tree(|tree| {
+            day_core::rnode_to_id(tree.find_by_id("fixture_percent").unwrap())
+        });
+        let text = || {
+            probe
+                .find_by_kind("day.text_field")
+                .into_iter()
+                .find(|(_, w)| w.node == field.0)
+                .unwrap()
+                .1
+                .text
+        };
+        assert_eq!(text(), "100%");
+        for (input, expected, displayed) in [
+            ("25%", 0.25, "25%"),
+            ("80", 0.8, "80%"),
+            ("\u{2068}50\u{2069}%", 0.5, "50%"),
+            ("250", 1.0, "100%"),
+            ("opaque", 1.0, "100%"),
+        ] {
+            probe.emit(field, day_spec::Event::TextChanged(input.into()));
+            probe.emit(field, day_spec::Event::Submitted);
+            day::reactive::flush_sync();
+            assert_eq!(FILL_OPACITY.peek(), expected);
+            assert_eq!(text(), displayed);
+        }
     }
 
     #[test]

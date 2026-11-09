@@ -1765,7 +1765,6 @@ fn nudge_by_key(ev: &day::KeyEvent) {
 }
 
 pub(crate) fn editor_canvas() -> impl Piece {
-    let scope = day::reactive::Scope::current();
     let images = crate::images::ImageCache::mount(model::nodes());
     // Export draws the same decoded images the canvas does (`document_drawing`).
     *crate::scene().cells.images.borrow_mut() = Some(images.clone());
@@ -1777,10 +1776,8 @@ pub(crate) fn editor_canvas() -> impl Piece {
     let pinch_base: Rc<Cell<(f64, Point)>> = Rc::new(Cell::new((1.0, Point::ZERO)));
     canvas(move |d, size| {
         // A background drawing window still repaints while Settings owns focus.
-        scope.enter(|| {
-            crate::scene().cells.viewport.set((size.width, size.height));
-            draw_scene(d, size, &images)
-        })
+        crate::scene().cells.viewport.set((size.width, size.height));
+        draw_scene(d, size, &images)
     })
     // The live modifiers are read here, at the edge, and travel into the machine as data:
     // shift-drag and shift-click both change meaning, and a handler that reads them itself
@@ -1836,7 +1833,7 @@ pub(crate) fn editor_canvas() -> impl Piece {
     .focused(canvas_focused())
     .id(day::id!(canvas))
     .drop_target(crate::transfer::canvas_target())
-    .grow()
+    .grow(Dimension::Both)
 }
 
 #[cfg(test)]
@@ -2067,7 +2064,8 @@ mod tests {
             DrawOp::Image {
                 image: images.get(id).unwrap().id(),
                 rect: Rect::new(20.0, 30.0, 100.0, 80.0),
-                opacity: 0.4
+                opacity: 0.4,
+                source: None,
             }
         );
         assert_eq!(
@@ -2558,6 +2556,7 @@ mod tests {
     fn key(name: &str) -> day::KeyEvent {
         day::KeyEvent {
             key: name.into(),
+            text: None,
             modifiers: 0,
         }
     }
@@ -2694,19 +2693,27 @@ mod tests {
 
         // Straight across: y ends exactly where it started, so it has nothing to say.
         let sql = drag_sql(&doc, (120.0, 120.0), (220.0, 120.0));
-        assert_eq!(sql, ["UPDATE nodes SET x = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(
+            sql,
+            [r#"UPDATE "nodes" SET "x" = ? WHERE "id" = ?"#],
+            "{sql:?}"
+        );
         assert_eq!(model::nodes().elem(id).x().peek(), 200.0);
         assert_eq!(model::nodes().elem(id).y().peek(), 100.0);
 
         // And straight down is the mirror of it.
         let sql = drag_sql(&doc, (220.0, 120.0), (220.0, 200.0));
-        assert_eq!(sql, ["UPDATE nodes SET y = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(
+            sql,
+            [r#"UPDATE "nodes" SET "y" = ? WHERE "id" = ?"#],
+            "{sql:?}"
+        );
 
         // A diagonal drag still needs both.
         let sql = drag_sql(&doc, (220.0, 200.0), (260.0, 240.0));
         assert_eq!(
             sql,
-            ["UPDATE nodes SET x = ?, y = ? WHERE id = ?"],
+            [r#"UPDATE "nodes" SET "x" = ?, "y" = ? WHERE "id" = ?"#],
             "{sql:?}"
         );
     }
@@ -2788,7 +2795,7 @@ mod tests {
         let sql = drag_sql(&doc, (hx, hy), (hx + 30.0, hy + 20.0));
         assert_eq!(
             sql,
-            ["UPDATE nodes SET w = ?, h = ? WHERE id = ?"],
+            [r#"UPDATE "nodes" SET "w" = ?, "h" = ? WHERE "id" = ?"#],
             "{sql:?}"
         );
         let e = model::nodes().elem(id);
@@ -2799,7 +2806,7 @@ mod tests {
         let sql = drag_sql(&doc, (100.0, 100.0), (90.0, 90.0));
         assert_eq!(
             sql,
-            ["UPDATE nodes SET x = ?, y = ?, w = ?, h = ? WHERE id = ?"],
+            [r#"UPDATE "nodes" SET "x" = ?, "y" = ?, "w" = ?, "h" = ? WHERE "id" = ?"#],
             "{sql:?}"
         );
     }
@@ -2816,13 +2823,21 @@ mod tests {
         let sql = container
             .record_sql(|| canvas_key(&key("ArrowRight"), true))
             .expect("flush");
-        assert_eq!(sql, ["UPDATE nodes SET x = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(
+            sql,
+            [r#"UPDATE "nodes" SET "x" = ? WHERE "id" = ?"#],
+            "{sql:?}"
+        );
         assert_eq!(model::nodes().elem(id).x().peek(), 101.0);
 
         let sql = container
             .record_sql(|| canvas_key(&key("ArrowDown"), true))
             .expect("flush");
-        assert_eq!(sql, ["UPDATE nodes SET y = ? WHERE id = ?"], "{sql:?}");
+        assert_eq!(
+            sql,
+            [r#"UPDATE "nodes" SET "y" = ? WHERE "id" = ?"#],
+            "{sql:?}"
+        );
         assert_eq!(model::nodes().elem(id).y().peek(), 101.0);
     }
 

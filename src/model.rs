@@ -2785,7 +2785,7 @@ mod tests {
             })
             .expect("save");
         assert_eq!(sql.len(), 1, "{sql:?}");
-        assert!(sql[0].starts_with("INSERT INTO nodes"));
+        assert!(sql[0].starts_with(r#"INSERT INTO "nodes""#));
 
         day::reactive::flush_sync();
         assert!(doc.stack.undo(), "one step removes it");
@@ -2823,7 +2823,7 @@ mod tests {
             .expect("save");
         assert_eq!(
             sql,
-            ["UPDATE nodes SET x = ?, y = ?, w = ?, h = ? WHERE id = ?"],
+            [r#"UPDATE "nodes" SET "x" = ?, "y" = ?, "w" = ?, "h" = ? WHERE "id" = ?"#],
             "sixty frames, one UPDATE of four columns"
         );
 
@@ -2859,7 +2859,10 @@ mod tests {
         // One table, one shape: the group and its four shapes leave in a single statement.
         let deletes: Vec<&String> = sql.iter().filter(|s| s.starts_with("DELETE")).collect();
         assert_eq!(deletes.len(), 1, "{sql:?}");
-        assert_eq!(deletes[0], "DELETE FROM nodes WHERE id IN (?, ?, ?, ?, ?)");
+        assert_eq!(
+            deletes[0],
+            r#"DELETE FROM "nodes" WHERE "id" IN (?, ?, ?, ?, ?)"#
+        );
     }
 
     #[test]

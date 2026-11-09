@@ -567,6 +567,7 @@ dependencies = [
  "day-mock",
  "day-persistence",
  "day-piece-settings",
+ "day-spec",
 ]
 
 [[package]]
