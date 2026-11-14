@@ -945,7 +945,11 @@ pub(crate) fn duplicate_for_drag() -> Vec<u64> {
         next: &mut u64,
     ) -> u64 {
         let children = children_of(Some(source));
-        let mut node = store.with_untracked(|rows| rows.get(source).unwrap().clone());
+        let mut node = store.with_untracked(|rows| {
+            rows.get(source)
+                .expect("`source` is a selected node or one of its children, so the store has it")
+                .clone()
+        });
         let id = *next;
         *next += 1;
         node.id = id;
