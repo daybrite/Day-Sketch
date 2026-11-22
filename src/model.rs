@@ -2475,11 +2475,8 @@ mod tests {
         let b = place_shape(NodeKind::Rect, 200.0, 0.0);
         day::reactive::flush_sync();
 
-        let plain = day::Modifiers::default();
-        let shift = day::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
+        let plain = day::Modifiers::NONE;
+        let shift = day::Modifiers::SHIFT;
         select_at(Point::new(10.0, 10.0), plain);
         assert_eq!(selection().get_untracked(), vec![a]);
         select_at(Point::new(210.0, 10.0), shift);
@@ -2493,10 +2490,7 @@ mod tests {
         select_at(Point::new(10.0, 10.0), plain);
         assert_eq!(selection().get_untracked(), vec![a], "plain replaces");
         // The command key works like shift (the platform's other multi-select modifier).
-        let primary = day::Modifiers {
-            primary: true,
-            ..Default::default()
-        };
+        let primary = day::Modifiers::PRIMARY;
         select_at(Point::new(210.0, 10.0), primary);
         assert_eq!(selection().get_untracked(), vec![a, b]);
     }
@@ -3353,7 +3347,7 @@ mod tests {
         e.w().write(100.0);
         e.h().write(100.0);
         day::reactive::flush_sync();
-        let plain = day::Modifiers::default();
+        let plain = day::Modifiers::NONE;
 
         select_at(Point::new(50.0, 52.0), plain);
         assert_eq!(selection().get_untracked(), vec![id], "on the segment");
@@ -3403,7 +3397,7 @@ mod tests {
         // A wide, short rectangle at the origin: 96×64 with its center at (48, 32).
         let a = place_shape(NodeKind::Rect, 0.0, 0.0);
         day::reactive::flush_sync();
-        let plain = day::Modifiers::default();
+        let plain = day::Modifiers::NONE;
 
         // Upright, a point past the right edge misses…
         select_at(Point::new(48.0, 60.0), plain);

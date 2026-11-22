@@ -2,7 +2,7 @@
 use crate::{clipboard, images::ImageBytes, model};
 use day::{
     prelude::*,
-    transfer::{Drop, Item, Operation, Target},
+    transfer::{Drop, Item},
 };
 use std::{io::Read, rc::Rc, sync::Arc};
 
@@ -136,31 +136,15 @@ fn receive(drop: Drop) -> bool {
     // Receipt only: the asynchronous import never authorizes deletion in the source app.
     true
 }
-pub(crate) fn canvas_target() -> Target {
+pub(crate) fn canvas_target() -> DropTarget {
     let mut types = vec![
         clipboard::DRAWING.into(),
         "image/svg+xml".into(),
         "text/uri-list".into(),
     ];
     types.extend(clipboard::IMAGE_TYPES.iter().map(|s| s.to_string()));
-    let accepted = types.clone();
-    Target {
-        types,
-        accept: Rc::new(move |at| {
-            let (w, h) = crate::scene().cells.viewport.get();
-            if at.position.x >= 0.
-                && at.position.y >= 0.
-                && at.position.x < w
-                && at.position.y < h
-                && accepted.iter().any(|mime| at.has(mime))
-            {
-                Operation::Copy
-            } else {
-                Operation::None
-            }
-        }),
-        receive: Rc::new(receive),
-    }
+    // Without an `accept` policy the target copies any offer that carries one of its types.
+    DropTarget::new(types).on_drop(receive)
 }
 
 /// An explicit handle leaves ordinary canvas manipulation and layer reordering intact.
@@ -190,6 +174,7 @@ pub(crate) fn selection_handle() -> impl Piece {
 mod tests {
     use super::*;
     use crate::model::NodeFields;
+    use day::transfer::Operation;
     #[test]
     fn image_drop_maps_pan_zoom_and_undoes_the_batch() {
         day_core::uninstall_tree();

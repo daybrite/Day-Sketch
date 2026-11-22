@@ -12,6 +12,7 @@
 //! which lives outside the store, so sweeping the canvas is neither a row nor an undo step.
 
 use crate::model::{self, Node, NodeFields, NodeKind};
+use day::Key;
 use day::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -1016,7 +1017,7 @@ fn round_rect_shape(x: f64, y: f64, w: f64, h: f64, r: f64) -> Shape {
 fn rotation_about_center(x: f64, y: f64, w: f64, h: f64, degrees: f64) -> Affine {
     let (cx, cy) = (x + w / 2.0, y + h / 2.0);
     Affine::translate(-cx, -cy)
-        .then(Affine::rotate(degrees.to_radians()))
+        .then(Affine::rotate(Angle::deg(degrees)))
         .then(Affine::translate(cx, cy))
 }
 
@@ -1142,7 +1143,7 @@ fn draw_children(
                             Point::new(node.x, node.y),
                             TextStyle {
                                 size: node.font_size,
-                                color: fill_color(&node.fill).with_alpha(node.fill_opacity),
+                                color: fill_color(&node.fill).with_alpha(node.fill_opacity).into(),
                                 anchor: TextAnchor::LEADING,
                                 font: model::canvas_font(
                                     &node.font_family,
@@ -1187,6 +1188,16 @@ fn draw_children(
             }
         }
     }
+}
+
+/// One selection handle: a white square on a soft shadow, so it stays legible over a white
+/// shape or a white canvas, under a hairline in the selection blue.
+fn draw_handle(d: &mut Draw, handle: Shape) {
+    d.shadowed(
+        Shadow::new(Color::rgba(0.0, 0.0, 0.0, 0.3), 2.0).offset(0.0, 0.5),
+        |d| d.fill(handle.clone(), HANDLE_FILL),
+    );
+    d.stroke(handle, HANDLE_STROKE, 1.0);
 }
 
 fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
@@ -1247,9 +1258,7 @@ fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
                 let ends = [(a.x, a.y), (z.x, z.y)];
                 d.stroke(segment_shape(ends[0], ends[1]), SELECTION, 1.5);
                 for (cx, cy) in ends {
-                    let handle = handle_shape(cx, cy, 0.0);
-                    d.fill(handle.clone(), HANDLE_FILL);
-                    d.stroke(handle, HANDLE_STROKE, 1.0);
+                    draw_handle(d, handle_shape(cx, cy, 0.0));
                 }
                 continue;
             }
@@ -1275,9 +1284,7 @@ fn draw_scene(d: &mut Draw, size: Size, images: &crate::images::ImageCache) {
         );
         if handles {
             for (_, cx, cy) in pts {
-                let handle = handle_shape(cx, cy, rotation);
-                d.fill(handle.clone(), HANDLE_FILL);
-                d.stroke(handle, HANDLE_STROKE, 1.0);
+                draw_handle(d, handle_shape(cx, cy, rotation));
             }
         }
     }
@@ -1385,7 +1392,7 @@ fn handle_click(p_screen: Point, mods: day::Modifiers, source: ClickSource) {
 /// there is no armed-tool mode to be in. A repeat plain tap (a double-click's second arrival)
 /// drills into a selected group instead.
 fn on_tap(p: Point, mods: day::Modifiers, repeat: bool) {
-    if repeat && !(mods.shift || mods.primary) && drill_at(p) {
+    if repeat && !(mods.shift() || mods.primary()) && drill_at(p) {
         return;
     }
     select_at(p, mods);
@@ -1442,7 +1449,7 @@ pub(crate) fn select_at(p: Point, mods: day::Modifiers) {
         None => model::selection().set(Vec::new()),
         Some(id) => {
             let sel = model::selection();
-            if mods.shift || mods.primary {
+            if mods.shift() || mods.primary() {
                 sel.update(|s| {
                     if let Some(i) = s.iter().position(|x| *x == id) {
                         s.remove(i);
@@ -1502,7 +1509,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 let covered = hit_leaf(m.x, m.y)
                     .is_some_and(|leaf| sel.iter().any(|s| model::is_within(leaf, *s)));
                 if !covered {
-                    if mods.shift || mods.primary {
+                    if mods.shift() || mods.primary() {
                         sel.push(top);
                     } else {
                         sel = vec![top];
@@ -1511,7 +1518,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                 }
                 // Alt is Option on macOS. Latch it at Began: releasing it during the
                 // gesture must not swap back to moving the originals.
-                let duplicate = mods.alt.then(|| {
+                let duplicate = mods.alt().then(|| {
                     let group = model::undo_stack().begin_group("duplicate");
                     sel = model::duplicate_for_drag();
                     group
@@ -1535,17 +1542,17 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
             } else {
                 // Blank canvas: sweep a band. Shift or the platform's command key keeps what
                 // was already selected and adds to it, the same modifier rule a click follows.
-                let base = if mods.shift || mods.primary {
+                let base = if mods.shift() || mods.primary() {
                     model::selection().get_untracked()
                 } else {
                     Vec::new()
                 };
                 // Anchor at the press, which is not always where `Began` is reported: appkit
                 // raises it on the first drag event, already carrying the translation from
-                // the press. Subtracting that back out lands where the pointer went down on
-                // every backend; anchoring on `location` alone would count the opening move
-                // twice and leave the band trailing the pointer.
-                let anchor = Point::new(p.x - drag.translation.x, p.y - drag.translation.y);
+                // the press. `start()` is where the pointer went down on every backend;
+                // anchoring on `location` alone would count the opening move twice and leave
+                // the band trailing the pointer.
+                let anchor = drag.start();
                 DragOp::Band { anchor, base }
             };
             *op.borrow_mut() = next;
@@ -1572,7 +1579,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                     Point::new(drag.translation.x / zf, drag.translation.y / zf),
                     *rotation,
                     *id,
-                    mods.shift,
+                    mods.shift(),
                 );
                 apply_resize(*id, f, *start, false);
             }
@@ -1582,7 +1589,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                     *end,
                     Point::new(drag.translation.x / zf, drag.translation.y / zf),
                     *id,
-                    mods.shift,
+                    mods.shift(),
                 );
                 let f = line_dragged(*start, *end, dx, dy);
                 apply_resize(*id, f, *start, false);
@@ -1643,7 +1650,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                         Point::new(drag.translation.x / zf, drag.translation.y / zf),
                         rotation,
                         id,
-                        mods.shift,
+                        mods.shift(),
                     );
                     guides().set(Vec::new());
                     model::undo_stack().grouped("resize", || apply_resize(id, f, start, true));
@@ -1654,7 +1661,7 @@ fn on_drag(drag: Drag, mods: day::Modifiers, op: &Rc<RefCell<DragOp>>) {
                         end,
                         Point::new(drag.translation.x / zf, drag.translation.y / zf),
                         id,
-                        mods.shift,
+                        mods.shift(),
                     );
                     guides().set(Vec::new());
                     let f = line_dragged(start, end, dx, dy);
@@ -1742,22 +1749,25 @@ pub(crate) fn canvas_focused() -> Signal<bool> {
 /// accelerator, and this is the only route the key has. Read at the piece and passed in as
 /// data, like the gesture modifiers, so the decision is testable without a toolkit under it.
 pub(crate) fn canvas_key(ev: &day::KeyEvent, owns_delete: bool) {
-    match ev.key.as_str() {
-        // Both spellings: a full-size keyboard's Del arrives as "Delete", a laptop's ⌫ as
-        // "Backspace", and both mean "remove this" on a canvas.
-        "Delete" | "Backspace" if owns_delete => model::delete_selection(),
-        "Delete" | "Backspace" => {}
+    match ev.key {
+        // Both keys: a full-size keyboard's Del arrives as Delete, a laptop's ⌫ as Backspace,
+        // and both mean "remove this" on a canvas. A held key removes once.
+        Key::Delete | Key::Backspace if owns_delete && !ev.is_repeat() => {
+            model::delete_selection();
+        }
+        Key::Delete | Key::Backspace => {}
+        // A held arrow keeps nudging.
         _ => nudge_by_key(ev),
     }
 }
 
 /// Nudge the selection with the arrow keys: 1px, or 10 with shift (docs/menus.md).
 fn nudge_by_key(ev: &day::KeyEvent) {
-    let (dx, dy) = match ev.key.as_str() {
-        "ArrowLeft" => (-1.0, 0.0),
-        "ArrowRight" => (1.0, 0.0),
-        "ArrowUp" => (0.0, -1.0),
-        "ArrowDown" => (0.0, 1.0),
+    let (dx, dy) = match ev.key {
+        Key::ArrowLeft => (-1.0, 0.0),
+        Key::ArrowRight => (1.0, 0.0),
+        Key::ArrowUp => (0.0, -1.0),
+        Key::ArrowDown => (0.0, 1.0),
         _ => return,
     };
     let step = if ev.shift() { 10.0 } else { 1.0 };
@@ -1854,15 +1864,14 @@ mod tests {
         model::selection().set(vec![id]);
         day::reactive::flush_sync();
         let op = Rc::new(RefCell::new(DragOp::Idle));
-        let drag = |phase, dx, dy| Drag {
-            phase,
-            location: Point::new(180.0 + dx, 140.0 + dy),
-            translation: Point::new(dx, dy),
+        let drag = |phase, dx, dy| {
+            Drag::new(
+                phase,
+                Point::new(180.0 + dx, 140.0 + dy),
+                Point::new(dx, dy),
+            )
         };
-        let alt = day::Modifiers {
-            alt: true,
-            ..Default::default()
-        };
+        let alt = day::Modifiers::ALT;
         on_drag(drag(DragPhase::Began, 0.0, 0.0), alt, &op);
         let copy = model::selection().get_untracked()[0];
         assert_ne!(id, copy);
@@ -1896,24 +1905,21 @@ mod tests {
         model::selection().set(vec![id]);
         let op = Rc::new(RefCell::new(DragOp::Idle));
         on_drag(
-            Drag {
-                phase: DragPhase::Began,
-                location: Point::new(180.0, 140.0),
-                translation: Point::new(0.0, 0.0),
-            },
+            Drag::new(
+                DragPhase::Began,
+                Point::new(180.0, 140.0),
+                Point::new(0.0, 0.0),
+            ),
             plain(),
             &op,
         );
         on_drag(
-            Drag {
-                phase: DragPhase::Ended,
-                location: Point::new(230.0, 170.0),
-                translation: Point::new(50.0, 30.0),
-            },
-            day::Modifiers {
-                alt: true,
-                ..Default::default()
-            },
+            Drag::new(
+                DragPhase::Ended,
+                Point::new(230.0, 170.0),
+                Point::new(50.0, 30.0),
+            ),
+            day::Modifiers::ALT,
             &op,
         );
         assert_eq!(doc.store.keys(), vec![id]);
@@ -1967,11 +1973,8 @@ mod tests {
         day::reactive::flush_sync();
         let from = corner(id, Corner::BottomRight);
         let op = Rc::new(RefCell::new(DragOp::Idle));
-        let drag = |phase, dx| Drag {
-            phase,
-            location: Point::new(from.0 + dx, from.1),
-            translation: Point::new(dx, 0.0),
-        };
+        let drag =
+            |phase, dx| Drag::new(phase, Point::new(from.0 + dx, from.1), Point::new(dx, 0.0));
         on_drag(drag(DragPhase::Began, 0.0), plain(), &op);
         on_drag(drag(DragPhase::Changed, 100.0), plain(), &op);
         let e = doc.store.elem(id);
@@ -2158,10 +2161,8 @@ mod tests {
     /// release there. Screen coordinates, the way the toolkit delivers them.
     fn sweep_gesture(from: (f64, f64), to: (f64, f64), mods: day::Modifiers) {
         let op = Rc::new(RefCell::new(DragOp::Idle));
-        let at = |phase, (x, y): (f64, f64)| Drag {
-            phase,
-            location: Point::new(x, y),
-            translation: Point::new(x - from.0, y - from.1),
+        let at = |phase, (x, y): (f64, f64)| {
+            Drag::new(phase, Point::new(x, y), Point::new(x - from.0, y - from.1))
         };
         on_drag(at(DragPhase::Began, from), mods, &op);
         on_drag(at(DragPhase::Changed, to), mods, &op);
@@ -2169,14 +2170,11 @@ mod tests {
     }
 
     fn plain() -> day::Modifiers {
-        day::Modifiers::default()
+        day::Modifiers::NONE
     }
 
     fn shift() -> day::Modifiers {
-        day::Modifiers {
-            shift: true,
-            ..Default::default()
-        }
+        day::Modifiers::SHIFT
     }
 
     #[test]
@@ -2395,10 +2393,8 @@ mod tests {
         unzoomed();
         let id = rect_at(10.0, 10.0, 30.0, 30.0);
         let op = Rc::new(RefCell::new(DragOp::Idle));
-        let at = |phase, x: f64, y: f64| Drag {
-            phase,
-            location: Point::new(x, y),
-            translation: Point::new(x - 5.0, y - 5.0),
+        let at = |phase, x: f64, y: f64| {
+            Drag::new(phase, Point::new(x, y), Point::new(x - 5.0, y - 5.0))
         };
 
         on_drag(at(DragPhase::Began, 5.0, 5.0), plain(), &op);
@@ -2535,10 +2531,8 @@ mod tests {
 
         let op = Rc::new(RefCell::new(DragOp::Idle));
         // Pressed at (5, 5); the first event Day sees is already out at (105, 105).
-        let at = |phase, x: f64, y: f64| Drag {
-            phase,
-            location: Point::new(x, y),
-            translation: Point::new(x - 5.0, y - 5.0),
+        let at = |phase, x: f64, y: f64| {
+            Drag::new(phase, Point::new(x, y), Point::new(x - 5.0, y - 5.0))
         };
         on_drag(at(DragPhase::Began, 105.0, 105.0), plain(), &op);
         on_drag(at(DragPhase::Ended, 105.0, 105.0), plain(), &op);
@@ -2553,12 +2547,8 @@ mod tests {
     // The canvas keyboard
     // -----------------------------------------------------------------------
 
-    fn key(name: &str) -> day::KeyEvent {
-        day::KeyEvent {
-            key: name.into(),
-            text: None,
-            modifiers: 0,
-        }
+    fn key(key: Key) -> day::KeyEvent {
+        day::KeyEvent::new(key, day::Modifiers::NONE)
     }
 
     #[test]
@@ -2569,7 +2559,7 @@ mod tests {
         let b = rect_at(80.0, 10.0, 30.0, 30.0);
         model::selection().set(vec![a]);
 
-        canvas_key(&key("Delete"), true);
+        canvas_key(&key(Key::Delete), true);
         day::reactive::flush_sync();
         assert_eq!(
             model::children_of(None),
@@ -2580,7 +2570,7 @@ mod tests {
 
         // ⌫ is the same command; a laptop keyboard has no Del.
         model::selection().set(vec![b]);
-        canvas_key(&key("Backspace"), true);
+        canvas_key(&key(Key::Backspace), true);
         day::reactive::flush_sync();
         assert!(model::children_of(None).is_empty());
     }
@@ -2594,8 +2584,8 @@ mod tests {
         let a = rect_at(10.0, 10.0, 30.0, 30.0);
         model::selection().set(vec![a]);
 
-        canvas_key(&key("Delete"), false);
-        canvas_key(&key("Backspace"), false);
+        canvas_key(&key(Key::Delete), false);
+        canvas_key(&key(Key::Backspace), false);
         day::reactive::flush_sync();
         assert_eq!(
             model::children_of(None),
@@ -2613,7 +2603,7 @@ mod tests {
         model::selection().set(Vec::new());
         let depth = doc.stack.can_undo().get_untracked();
 
-        canvas_key(&key("Delete"), true);
+        canvas_key(&key(Key::Delete), true);
         day::reactive::flush_sync();
         assert_eq!(model::children_of(None), vec![a]);
         assert_eq!(
@@ -2631,7 +2621,7 @@ mod tests {
         let a = rect_at(10.0, 10.0, 30.0, 30.0);
         model::selection().set(vec![a]);
 
-        canvas_key(&key("ArrowRight"), true);
+        canvas_key(&key(Key::ArrowRight), true);
         day::reactive::flush_sync();
         assert_eq!(model::nodes().elem(a).x().peek(), 11.0);
         assert_eq!(model::children_of(None), vec![a], "nudging deletes nothing");
@@ -2645,7 +2635,7 @@ mod tests {
         let b = rect_at(80.0, 10.0, 30.0, 30.0);
         model::selection().set(vec![a, b]);
 
-        canvas_key(&key("Delete"), true);
+        canvas_key(&key(Key::Delete), true);
         day::reactive::flush_sync();
         assert!(model::children_of(None).is_empty());
 
@@ -2668,10 +2658,8 @@ mod tests {
         container
             .record_sql(|| {
                 let op = Rc::new(RefCell::new(DragOp::Idle));
-                let at = |phase, (x, y): (f64, f64)| Drag {
-                    phase,
-                    location: Point::new(x, y),
-                    translation: Point::new(x - from.0, y - from.1),
+                let at = |phase, (x, y): (f64, f64)| {
+                    Drag::new(phase, Point::new(x, y), Point::new(x - from.0, y - from.1))
                 };
                 on_drag(at(DragPhase::Began, from), plain(), &op);
                 for i in 1..=8 {
@@ -2733,10 +2721,8 @@ mod tests {
         let sql = container
             .record_sql(|| {
                 let op = Rc::new(RefCell::new(DragOp::Idle));
-                let at = |phase, x: f64, y: f64| Drag {
-                    phase,
-                    location: Point::new(x, y),
-                    translation: Point::new(x - 120.0, y - 120.0),
+                let at = |phase, x: f64, y: f64| {
+                    Drag::new(phase, Point::new(x, y), Point::new(x - 120.0, y - 120.0))
                 };
                 on_drag(at(DragPhase::Began, 120.0, 120.0), plain(), &op);
                 on_drag(at(DragPhase::Changed, 200.0, 180.0), plain(), &op);
@@ -2821,7 +2807,7 @@ mod tests {
         container.save().expect("settle");
 
         let sql = container
-            .record_sql(|| canvas_key(&key("ArrowRight"), true))
+            .record_sql(|| canvas_key(&key(Key::ArrowRight), true))
             .expect("flush");
         assert_eq!(
             sql,
@@ -2831,7 +2817,7 @@ mod tests {
         assert_eq!(model::nodes().elem(id).x().peek(), 101.0);
 
         let sql = container
-            .record_sql(|| canvas_key(&key("ArrowDown"), true))
+            .record_sql(|| canvas_key(&key(Key::ArrowDown), true))
             .expect("flush");
         assert_eq!(
             sql,
@@ -3231,10 +3217,8 @@ mod tests {
         // Press on B's middle and move 5 to the right: B's top sits 3 from A's top, within
         // reach, so it snaps to 10 while x follows the pointer.
         let op = Rc::new(RefCell::new(DragOp::Idle));
-        let at = |phase, (x, y): (f64, f64)| Drag {
-            phase,
-            location: Point::new(x, y),
-            translation: Point::new(x - 120.0, y - 33.0),
+        let at = |phase, (x, y): (f64, f64)| {
+            Drag::new(phase, Point::new(x, y), Point::new(x - 120.0, y - 33.0))
         };
         on_drag(at(DragPhase::Began, (120.0, 33.0)), plain(), &op);
         on_drag(at(DragPhase::Changed, (125.0, 33.0)), plain(), &op);
@@ -3258,10 +3242,8 @@ mod tests {
         // Off in the preferences: the same drag lands where the pointer left it.
         crate::SNAP.set(false);
         let c = rect_at(200.0, 13.0, 40.0, 24.0);
-        let at = |phase, (x, y): (f64, f64)| Drag {
-            phase,
-            location: Point::new(x, y),
-            translation: Point::new(x - 220.0, y - 33.0),
+        let at = |phase, (x, y): (f64, f64)| {
+            Drag::new(phase, Point::new(x, y), Point::new(x - 220.0, y - 33.0))
         };
         on_drag(at(DragPhase::Began, (220.0, 33.0)), plain(), &op);
         on_drag(at(DragPhase::Changed, (225.0, 33.0)), plain(), &op);
@@ -3287,10 +3269,8 @@ mod tests {
         // bottom at 50, and snaps onto it; the width follows the pointer.
         let (cx, cy) = corner(b, Corner::BottomRight);
         let op = Rc::new(RefCell::new(DragOp::Idle));
-        let at = |phase, (x, y): (f64, f64)| Drag {
-            phase,
-            location: Point::new(x, y),
-            translation: Point::new(x - cx, y - cy),
+        let at = |phase, (x, y): (f64, f64)| {
+            Drag::new(phase, Point::new(x, y), Point::new(x - cx, y - cy))
         };
         on_drag(at(DragPhase::Began, (cx, cy)), plain(), &op);
         on_drag(at(DragPhase::Changed, (cx + 10.0, cy - 16.0)), plain(), &op);
@@ -3316,7 +3296,7 @@ mod tests {
             .ops()
             .iter()
             .filter_map(|op| match op {
-                DrawOp::Stroke(Shape::Path(p), Paint::Solid(c), _) if *c == GUIDE => {
+                DrawOp::Stroke(Shape::Path(p), Paint::Solid(c), _) if c.resolved() == GUIDE => {
                     let mut pts = p.segs.iter().filter_map(|s| match s {
                         PathSeg::Move(p) | PathSeg::Line(p) => Some(*p),
                         _ => None,
@@ -3337,9 +3317,9 @@ mod tests {
             &crate::images::ImageCache::empty(),
         );
         assert!(
-            !d.ops()
-                .iter()
-                .any(|op| matches!(op, DrawOp::Stroke(_, Paint::Solid(c), _) if *c == GUIDE)),
+            !d.ops().iter().any(
+                |op| matches!(op, DrawOp::Stroke(_, Paint::Solid(c), _) if c.resolved() == GUIDE)
+            ),
             "no guides, no hairlines"
         );
     }
